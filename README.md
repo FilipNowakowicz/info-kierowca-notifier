@@ -1,15 +1,44 @@
 # info-kierowca-notifier
 
+[![CI](https://github.com/FilipNowakowicz/info-kierowca-notifier/actions/workflows/ci.yml/badge.svg)](https://github.com/FilipNowakowicz/info-kierowca-notifier/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://www.python.org/)
+
 A notification-only slot checker for [info-kierowca.pl](https://info-kierowca.pl), the Polish
 driving exam booking portal. It polls for open exam slots and alerts you via a local dashboard and
 a phone push when one appears, plus a desktop notification on errors (session expired, unexpected
 API response, etc.) — it never books, reserves, or clicks anything on your behalf. You always do
 the final booking yourself, in your own browser.
 
+## Features
+
+- Polls info-kierowca.pl's own API for real exam slot availability
+- Phone push via [ntfy.sh](https://ntfy.sh) when a slot appears within your chosen window
+- Local read-only dashboard at `http://127.0.0.1:8787`
+- Strictly read-only — never books, reserves, or submits anything
+- Zero dependencies (Python standard library only) — works on Linux, macOS, and Windows
+
+## How it works
+
 It reads exactly two endpoints:
 
 - `GET /bknd/auth/api/v1/jwt/refresh` — keeps your session alive
 - `POST /bknd/exam/api/v1/Schedules/user/MultipleCentersExams` — reads slot availability
+
+Both are the same endpoints info-kierowca.pl's own web app calls; this project just automates
+checking them on a timer using your existing logged-in session cookies, instead of you refreshing
+the page by hand.
+
+## Responsible use
+
+This does the minimum necessary to notify you, on purpose:
+
+- Polls at a modest default interval (once a minute) — please don't tighten that or bolt on
+  booking automation; that changes this from a notifier into something else entirely.
+- Never sends your session cookies or PKK number anywhere except info-kierowca.pl itself. Only
+  plain, human-readable notification text goes to ntfy.sh.
+- Relies on an undocumented, reverse-engineered API that info-kierowca.pl could change or block
+  at any time — use at your own risk and in line with the site's terms of service.
 
 Requires Python 3.9+ and nothing else (standard library only).
 
@@ -94,6 +123,10 @@ want to resume.
 systemctl --user stop info-kierowca-notifier.timer   # pause
 systemctl --user start info-kierowca-notifier.timer  # resume (refresh session.json first if it's been a while)
 ```
+
+## Contributing
+
+Issues and PRs welcome — this is a small, single-purpose tool, so please keep changes focused.
 
 ## License
 
