@@ -1,0 +1,7 @@
+[Unit]
+Description=Check info-kierowca.pl for exam slots (read-only, notification only)
+
+[Service]
+Type=oneshot
+Environment=PATH=/etc/profiles/per-user/%u/bin:/run/current-system/sw/bin
+ExecStart=/etc/profiles/per-user/%u/bin/python3 %h/infokierowca/notifier.py

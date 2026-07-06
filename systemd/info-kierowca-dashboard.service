@@ -1,0 +1,11 @@
+[Unit]
+Description=Local read-only dashboard for info-kierowca notifier (127.0.0.1 only)
+
+[Service]
+Type=simple
+Environment=PATH=/etc/profiles/per-user/%u/bin:/run/current-system/sw/bin
+ExecStart=/etc/profiles/per-user/%u/bin/python3 %h/infokierowca/dashboard_server.py
+Restart=on-failure
+
+[Install]
+WantedBy=default.target
