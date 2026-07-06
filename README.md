@@ -10,6 +10,8 @@ a phone push when one appears, plus a desktop notification on errors (session ex
 API response, etc.) — it never books, reserves, or clicks anything on your behalf. You always do
 the final booking yourself, in your own browser.
 
+![Dashboard showing a found slot](docs/dashboard.png)
+
 ## Features
 
 - Polls info-kierowca.pl's own API for real exam slot availability
