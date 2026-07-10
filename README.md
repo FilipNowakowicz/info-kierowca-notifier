@@ -65,10 +65,27 @@ Requires Python 3.9+ and nothing else (standard library only).
    ```
    (no `chmod` equivalent needed — the folder is already private to your Windows user account)
 
-2. Log in to info-kierowca.pl in your browser, open DevTools → Application/Storage → Cookies, and
-   copy the `__Secure-PUDOJT` and `__Secure-PUDOJTMD` values into `session.json`. The notifier
-   refreshes these itself on every run, so you only need to do this once — and again if the
-   session is ever invalidated (e.g. by logging in fresh elsewhere).
+2. Get your session cookies into `session.json`. The notifier refreshes these itself on every run,
+   so you only need to do this once — and again if the session is ever invalidated (e.g. by
+   logging in fresh elsewhere).
+
+   **Option A — `pull_session_cookies.py` (Chrome/Chromium, automatic):** quit Chrome completely,
+   relaunch it with its remote-debugging port open, log in to info-kierowca.pl, then run the
+   script:
+   ```
+   google-chrome --remote-debugging-port=9222   # macOS: .../Google Chrome.app/Contents/MacOS/Google Chrome
+   python pull_session_cookies.py
+   ```
+   It talks to Chrome over that debug port on `127.0.0.1` only, pulls the `__Secure-PUDOJT` and
+   `__Secure-PUDOJTMD` cookies for info-kierowca.pl, and writes them straight to `session.json`.
+   Nothing is sent anywhere else. Use `--port` if you started Chrome on a different port, and
+   `--all` to dump every cookie for the domain instead of just the two required ones. See the
+   script's docstring for the Windows launch command and a security note about the debug port
+   (it grants full control of the browser, so don't expose it beyond localhost).
+
+   **Option B — DevTools (manual, any browser):** log in to info-kierowca.pl, open DevTools →
+   Application/Storage → Cookies, and copy the `__Secure-PUDOJT` and `__Secure-PUDOJTMD` values
+   into `session.json` by hand.
 
 3. Edit `config.json`:
 
