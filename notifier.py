@@ -91,10 +91,25 @@ def short_word(name):
     return name[len(prefix):] if name.startswith(prefix) else name
 
 
-def update_status(status, outcome, message="", current_hits=None):
+def is_urgent(fastest_dt, config):
+    """Whether fastest_dt clears the configured alert threshold.
+
+    push_before_date (a fixed, exclusive calendar cutoff) takes priority over
+    push_below_days (a rolling day count) when both are set.
+    """
+    push_before_date = config.get("push_before_date")
+    if push_before_date:
+        return fastest_dt < datetime.fromisoformat(push_before_date)
+    push_threshold = config.get("push_below_days", 10)
+    days_until = (fastest_dt - datetime.now()).total_seconds() / 86400
+    return days_until <= push_threshold
+
+
+def update_status(status, outcome, message="", current_hits=None, urgent=False):
     status["last_check"] = datetime.now().isoformat()
     status["outcome"] = outcome
     status["message"] = message
+    status["urgent"] = urgent
     if current_hits is not None:
         status["current_hits"] = current_hits
         signature = fastest_of(current_hits)
@@ -298,9 +313,8 @@ def run_check(logger, dash_status):
         logger.info("outcome=slot_found status=%s detail=%r", status, "; ".join(lines))
 
         fastest = fastest_of(hit_dicts)
-        days_until = (datetime.fromisoformat(fastest["datetime"]) - datetime.now()).total_seconds() / 86400
-        push_threshold = config.get("push_below_days", 10)
-        if days_until <= push_threshold:
+        urgent = is_urgent(datetime.fromisoformat(fastest["datetime"]), config)
+        if urgent:
             if fastest != dash_status.get("last_push_signature"):
                 push_body = "{} · {} · {} spots".format(
                     datetime.fromisoformat(fastest["datetime"]).strftime("%a %d %b, %H:%M"),
@@ -320,7 +334,7 @@ def run_check(logger, dash_status):
         else:
             dash_status["last_push_signature"] = None
 
-        update_status(dash_status, "slot_found", "", hit_dicts)
+        update_status(dash_status, "slot_found", "", hit_dicts, urgent=urgent)
     else:
         logger.info("outcome=no_slot status=%s", status)
         dash_status["last_push_signature"] = None
