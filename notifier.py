@@ -211,7 +211,7 @@ def run_check(logger, dash_status):
     if status == 204:
         save_json(SESSION_FILE, session)
         logger.info("outcome=refresh_ok status=%s", status)
-    elif status in (401, 403):
+    elif status in (401, 403, 404):
         logger.info("outcome=auth_expired status=%s stage=refresh", status)
         notify(
             "info-kierowca: session expired",
@@ -362,7 +362,10 @@ def main():
     if args.loop:
         logger.info("outcome=loop_start interval=%s", args.interval)
         while True:
-            run_check(logger, dash_status)
+            try:
+                run_check(logger, dash_status)
+            except Exception:
+                logger.exception("outcome=crash stage=run_check")
             time.sleep(args.interval)
     else:
         run_check(logger, dash_status)

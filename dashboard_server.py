@@ -45,7 +45,7 @@ PAGE = """<!doctype html>
   body.hit-soon { background: #8b1e1e; }
   body.hit-far  { background: #3a3a3a; }
   body.none     { background: #1c1c1c; }
-  body.error    { background: #7a4a12; }
+  body.error    { background: #2e3a5c; }
 
   #main { text-align: center; max-width: 800px; }
   #headline { font-size: 3rem; font-weight: 700; margin-bottom: 0.5rem; letter-spacing: -0.02em; }
@@ -80,7 +80,8 @@ PAGE = """<!doctype html>
   <div id="history"></div>
 
 <script>
-let lastCheckMs = null;
+let lastCheckRaw = null;
+let lastCheckPerf = null;
 
 function fmtDateTime(iso) {
   if (!iso) return "";
@@ -152,7 +153,10 @@ async function poll() {
   }
 
   meta.textContent = data.last_check ? `Last checked: ${fmtDateTime(data.last_check)}` : "No checks yet";
-  lastCheckMs = data.last_check ? new Date(data.last_check).getTime() : null;
+  if (data.last_check !== lastCheckRaw) {
+    lastCheckRaw = data.last_check;
+    lastCheckPerf = data.last_check ? performance.now() : null;
+  }
 
   history.innerHTML = "";
   (data.history || []).slice().reverse().forEach(entry => {
@@ -166,8 +170,8 @@ async function poll() {
 
 function tickCountdown() {
   const el = document.getElementById("countdown");
-  if (lastCheckMs === null) { el.textContent = ""; return; }
-  const remaining = Math.round((lastCheckMs + POLL_INTERVAL_MS - Date.now()) / 1000);
+  if (lastCheckPerf === null) { el.textContent = ""; return; }
+  const remaining = Math.round((lastCheckPerf + POLL_INTERVAL_MS - performance.now()) / 1000);
   if (remaining <= 0) {
     el.textContent = "Checking any moment now…";
   } else {
