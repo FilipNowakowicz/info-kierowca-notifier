@@ -98,7 +98,8 @@ Requires Python 3.9+ and nothing else (standard library only).
    | `exam_types` | Which exam(s) to watch: `["Theoretical"]`, `["Practice"]`, or both `["Theoretical", "Practice"]` |
    | `max_days_ahead` | Only alert on slots within this many days |
    | `ntfy_topic` | Your [ntfy.sh](https://ntfy.sh) topic for phone push (pick a long random string — anyone who knows it can read your notifications) |
-   | `push_below_days` | Only send a phone push when the fastest slot is within this many days |
+   | `push_below_days` | Only send a phone push (and turn the dashboard red) when the fastest slot is within this many days |
+   | `push_before_date` *(optional)* | A fixed date (`"YYYY-MM-DD"`), exclusive — alert on any slot before this date instead of using a rolling day count. Takes priority over `push_below_days` when set. |
 
 4. Run it — pick whichever fits your OS:
 
