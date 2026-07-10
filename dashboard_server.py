@@ -15,7 +15,7 @@ PORT = 8787
 
 EMPTY_STATUS = (
     b'{"last_check": null, "outcome": null, "message": "", '
-    b'"current_hits": [], "history": []}'
+    b'"urgent": false, "current_hits": [], "history": []}'
 )
 
 # Must match the .timer unit's OnUnitActiveSec - used only to estimate the
@@ -99,10 +99,6 @@ function fmtShort(iso) {
   });
 }
 
-function daysUntil(iso) {
-  return (new Date(iso).getTime() - Date.now()) / 86400000;
-}
-
 function fastestOf(hits) {
   if (!hits || !hits.length) return null;
   return hits.reduce((a, b) => (new Date(a.datetime) < new Date(b.datetime) ? a : b));
@@ -129,8 +125,7 @@ async function poll() {
   const fastest = fastestOf(data.current_hits);
 
   if (data.outcome === "slot_found" && fastest) {
-    const d = daysUntil(fastest.datetime);
-    body.className = d <= 10 ? "hit-soon" : "hit-far";
+    body.className = data.urgent ? "hit-soon" : "hit-far";
     headline.textContent = fmtDateTime(fastest.datetime);
     subline.textContent = `${fastest.word} · ${fastest.places} spots`;
     detail.textContent = "";
