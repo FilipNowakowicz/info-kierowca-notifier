@@ -2,6 +2,11 @@
 Description=Run info-kierowca.pl notifier every minute
 
 [Timer]
+# OnActiveSec is relative to when the *timer* unit is started, so `systemctl --user start`
+# always schedules a first run shortly after — including hours/days after boot. Without this,
+# a timer started long after boot has no valid trigger (OnBootSec is already in the past and
+# OnUnitActiveSec has no reference point until the service has run once) and silently never fires.
+OnActiveSec=10s
 OnBootSec=1min
 OnUnitActiveSec=1min
 RandomizedDelaySec=10
