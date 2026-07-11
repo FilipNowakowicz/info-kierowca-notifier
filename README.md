@@ -131,7 +131,14 @@ Requires Python 3.9+ and nothing else (standard library only).
    get pushes.
 
 **Note:** desktop error notifications use `notify-send` and only work on Linux. On Windows/macOS
-you won't get a popup on errors — check the dashboard or `notifier.log` instead.
+you won't get a popup on errors — check the dashboard or the log file instead, at
+`~/.local/state/info-kierowca-notifier/notifier.log` (not in the repo directory).
+
+**Troubleshooting the dashboard:** if `info-kierowca-dashboard.service` fails to start with
+`OSError: [Errno 98] Address already in use`, something else (often a stale instance from a
+previous run) is already bound to port 8787. Find and stop it, then
+`systemctl --user reset-failed info-kierowca-dashboard.service` before starting again — systemd
+stops retrying after a few rapid failures (`start-limit-hit`).
 
 ## Pausing / resuming
 
@@ -143,6 +150,23 @@ want to resume.
 systemctl --user stop info-kierowca-notifier.timer   # pause
 systemctl --user start info-kierowca-notifier.timer  # resume (refresh session.json first if it's been a while)
 ```
+After `start`, confirm it actually scheduled a next run:
+```
+systemctl --user list-timers info-kierowca-notifier.timer
+```
+`NEXT`/`Trigger` should show a real upcoming time. If it shows `n/a`, the unit file you have
+installed predates the `OnActiveSec=10s` fix below — reinstall it (`cp systemd/*.timer
+~/.config/systemd/user/ && systemctl --user daemon-reload && systemctl --user restart
+info-kierowca-notifier.timer`).
+
+**Why `OnActiveSec` matters:** the timer also uses `OnBootSec=1min` + `OnUnitActiveSec=1min` for
+its normal every-60s cadence. Those alone are not enough to resume reliably: `OnBootSec` is
+relative to *boot time*, so if you `start` the timer more than a minute after boot (the usual
+case), that trigger is already in the past and is skipped; `OnUnitActiveSec` has no reference
+point until the service has run at least once under this timer activation. Net effect: the timer
+reports `active` but never actually fires. `OnActiveSec=10s` is relative to when the *timer unit
+itself* starts, so every `start`/`restart` is guaranteed a first run ~10s later regardless of
+uptime, which then gives `OnUnitActiveSec` its reference point for the regular 60s cadence.
 
 ## Contributing
 
