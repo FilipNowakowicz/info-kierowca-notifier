@@ -4,7 +4,6 @@
   "category": 5,
   "profile_number": "YOUR_PKK_NUMBER_HERE",
   "exam_types": ["Theoretical"],
-  "max_days_ahead": 21,
   "ntfy_topic": "YOUR_RANDOM_NTFY_TOPIC_HERE",
   "push_below_days": 10,
   "auto_refresh_chrome": true

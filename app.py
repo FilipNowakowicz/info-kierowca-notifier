@@ -83,10 +83,9 @@ def build_config(payload):
 
     try:
         category = int(payload.get("category", 5))
-        max_days_ahead = int(payload.get("max_days_ahead", 21))
         push_below_days = int(payload.get("push_below_days", 10))
     except (TypeError, ValueError):
-        raise ValueError("Category / days-ahead / push-threshold must be numbers")
+        raise ValueError("Category / push-threshold must be numbers")
 
     config = {
         "organization_ids": organization_ids,
@@ -94,7 +93,6 @@ def build_config(payload):
         "category": category,
         "profile_number": profile_number,
         "exam_types": exam_types,
-        "max_days_ahead": max_days_ahead,
         "ntfy_topic": ntfy_topic,
         "push_below_days": push_below_days,
         "auto_refresh_chrome": bool(payload.get("auto_refresh_chrome", True)),
@@ -194,9 +192,6 @@ WIZARD_PAGE = """<!doctype html>
 
     <fieldset>
       <legend>Alerting</legend>
-      <label for="max_days_ahead">Only consider slots within this many days</label>
-      <input type="number" id="max_days_ahead" value="21">
-
       <label for="push_below_days">Push a phone notification when the fastest slot is within this many days</label>
       <input type="number" id="push_below_days" value="10">
 
@@ -273,7 +268,6 @@ document.getElementById('form').addEventListener('submit', async (e) => {
       watch_organization_ids: watchIds,
       category: category,
       exam_types: examTypes,
-      max_days_ahead: parseInt(document.getElementById('max_days_ahead').value, 10) || 21,
       push_below_days: parseInt(document.getElementById('push_below_days').value, 10) || 10,
       auto_refresh_chrome: document.getElementById('auto_refresh_chrome').checked,
       ntfy_topic: document.getElementById('ntfy_topic').value,
