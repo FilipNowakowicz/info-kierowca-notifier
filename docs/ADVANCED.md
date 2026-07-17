@@ -67,13 +67,14 @@ claim still holds either way).
 
    | Field | Meaning |
    |---|---|
-   | `organization_ids` | WORD center IDs to query (defaults are Warsaw-area centers) |
-   | `watch_organization_ids` | Subset of the above to actually alert on |
+   | `organization_ids` | WORD center IDs to watch (defaults are Warsaw-area centers) |
+   | `watch_organization_ids` | Which of the queried centers actually produce hits. The setup wizard keeps this identical to `organization_ids`; only hand-edit it apart if you want to query centers whose results you then ignore. |
    | `category` | License category (5 = category B) |
    | `profile_number` | Your PKK profile number |
    | `exam_types` | Which exam(s) to watch: `["Theoretical"]`, `["Practice"]`, or both `["Theoretical", "Practice"]` |
    | `ntfy_topic` | Your [ntfy.sh](https://ntfy.sh) topic for phone push (pick a long random string — anyone who knows it can read your notifications) |
-   | `current_slot_date` | Date (`"YYYY-MM-DD"`) of your current booked slot. Send a phone push (and turn the dashboard red) for any found slot on or before this date, inclusive — an earlier date, or the same date at a different time. |
+   | `current_slot_date` | Date (`"YYYY-MM-DD"`) of your current booked slot. A found slot on or before this date counts as *urgent* (turns the dashboard red, and — when `phone_alerts` is on — sends a phone push), inclusive — an earlier date, or the same date at a different time. |
+   | `phone_alerts` *(optional, default `true`)* | Whether an urgent slot sends a phone push at all. Set to `false` to just watch the dashboard silently; the dashboard, urgency colouring, and `auto_open_browser` still work. |
    | `auto_refresh_chrome` *(optional, default `true`)* | Whether an `auth_expired` outcome should automatically launch `auto_refresh_session.py` (see below). Set to `false` to fall back to a manual relogin. |
    | `auto_open_browser` *(optional, default `true`)* | Whether a matching urgent slot should also launch `open_logged_in_browser.py` (see [Reschedule assist](#reschedule-assist) below). Set to `false` to disable. |
 

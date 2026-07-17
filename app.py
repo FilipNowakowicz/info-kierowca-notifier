@@ -109,6 +109,7 @@ def build_config(payload):
         "exam_types": exam_types,
         "ntfy_topic": ntfy_topic,
         "current_slot_date": current_slot_date,
+        "phone_alerts": bool(payload.get("phone_alerts", True)),
         "auto_refresh_chrome": bool(payload.get("auto_refresh_chrome", True)),
         "auto_open_browser": bool(payload.get("auto_open_browser", True)),
     }
@@ -147,6 +148,10 @@ WIZARD_PAGE = """<!doctype html>
 <title>info-kierowca watcher — setup</title>
 <style>
   * { box-sizing: border-box; }
+  :root {
+    --accent: #e0a13c; --accent-soft: #f0c47e;
+    --accent-dim: rgba(224,161,60,0.15); --accent-line: rgba(224,161,60,0.55);
+  }
   body {
     margin: 0; min-height: 100vh; font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
     background: #1c1c1c; color: #eee; padding: 2rem; display: flex; justify-content: center;
@@ -161,23 +166,58 @@ WIZARD_PAGE = """<!doctype html>
     width: 100%; padding: 0.5rem; background: #2a2a2a; color: #eee; border: 1px solid #555;
     border-radius: 6px; margin-bottom: 0.8rem; font-size: 0.95rem;
   }
+  input[type=text]:focus, input[type=number]:focus, input[type=date]:focus, select:focus {
+    outline: none; border-color: var(--accent-line); box-shadow: 0 0 0 3px var(--accent-dim);
+  }
   .row { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.4rem; }
+  input[type=checkbox] { accent-color: var(--accent); }
   .row input[type=checkbox] { width: auto; margin: 0; }
   .hint { opacity: 0.6; font-size: 0.85rem; margin-top: -0.4rem; margin-bottom: 0.8rem; }
-  .centers-head { display: flex; align-items: center; gap: 1rem; opacity: 0.6; font-size: 0.8rem; margin-bottom: 0.3rem; }
-  .centers-head .checks-head { display: flex; gap: 1.6rem; width: 8rem; flex-shrink: 0; white-space: nowrap; }
-  #centers-list { max-height: 260px; overflow-y: auto; margin-bottom: 0.6rem; }
-  .center-row { display: flex; align-items: center; gap: 1rem; margin-bottom: 0.3rem; }
-  .center-row .checks { display: flex; gap: 1.6rem; width: 8rem; flex-shrink: 0; }
+  .combobox { position: relative; margin-bottom: 0.8rem; }
+  .combobox input[type=text] { margin-bottom: 0; }
+  #center-dropdown {
+    display: none; position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 10;
+    background: #2a2a2a; border: 1px solid #555; border-radius: 6px; max-height: 220px; overflow-y: auto;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+  }
+  .dropdown-item { padding: 0.5rem 0.7rem; cursor: pointer; font-size: 0.9rem; display: flex;
+    justify-content: space-between; gap: 0.75rem; align-items: center; }
+  .dropdown-item .dd-loc { opacity: 0.5; font-size: 0.8rem; white-space: nowrap; }
+  .dropdown-item:hover, .dropdown-item.active { background: var(--accent-dim); }
+  .dropdown-empty { padding: 0.5rem 0.7rem; opacity: 0.6; font-size: 0.85rem; }
+  #selected-centers { max-height: 280px; overflow-y: auto; margin-bottom: 0.6rem; }
+  .selected-row { display: flex; align-items: center; gap: 0.8rem; padding: 0.55rem 0; border-bottom: 1px solid #2a2a2a; }
+  .selected-row:last-child { border-bottom: none; }
+  .center-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); opacity: 0.8; flex: none; }
+  .selected-name { flex: 1; min-width: 0; }
+  .selected-name .sn-name { font-size: 0.9rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .selected-name .sn-loc { font-size: 0.76rem; opacity: 0.4; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .remove-btn { background: none; border: none; color: rgba(238,238,238,0.4); font-size: 1.15rem; line-height: 1; cursor: pointer; padding: 0 0.2rem; transition: color 0.12s; }
+  .remove-btn:hover { color: #ff8080; }
+  .no-selection { opacity: 0.5; font-size: 0.85rem; padding: 0.4rem 0; }
+  .center-count { font-size: 0.82rem; opacity: 0.6; margin-top: 0.2rem; }
+  .center-count b { opacity: 1; font-weight: 600; }
+  .toggle-row { display: flex; align-items: center; gap: 1rem; margin-bottom: 0.2rem; }
+  .toggle-row .toggle-text { flex: 1; }
+  .toggle-row .toggle-text .tt-title { font-size: 0.95rem; }
+  .toggle-row .toggle-text .tt-sub { font-size: 0.82rem; opacity: 0.55; margin-top: 0.1rem; }
+  .switch { position: relative; width: 46px; height: 26px; border-radius: 999px; flex: none;
+    background: #2a2a2a; border: 1px solid #555; cursor: pointer; transition: 0.15s; }
+  .switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 20px; height: 20px;
+    border-radius: 50%; background: rgba(238,238,238,0.45); transition: 0.15s; }
+  .switch.on { background: var(--accent); border-color: var(--accent); }
+  .switch.on::after { transform: translateX(20px); background: #1c1c1c; }
+  #ntfy-field { margin-top: 1rem; padding-top: 1rem; border-top: 1px solid #2a2a2a; transition: opacity 0.15s; }
+  #ntfy-field.disabled { opacity: 0.4; pointer-events: none; }
   button[type=submit] {
-    width: 100%; padding: 0.8rem; background: #3a6ea5; color: #fff; border: none;
-    border-radius: 6px; font-size: 1rem; cursor: pointer;
+    width: 100%; padding: 0.8rem; background: var(--accent); color: #1c1c1c; border: none;
+    border-radius: 6px; font-size: 1rem; font-weight: 600; cursor: pointer;
   }
   #copy-ntfy { padding: 0.4rem 0.8rem; margin-left: 0.5rem; background: #444; color: #eee;
     border: 1px solid #666; border-radius: 6px; cursor: pointer; }
   #error { color: #ff8080; margin-bottom: 1rem; white-space: pre-line; }
   #done { display: none; text-align: center; padding: 2rem 0; }
-  #done a { color: #8ab4f8; }
+  #done a { color: var(--accent-soft); }
 </style>
 </head>
 <body>
@@ -207,17 +247,20 @@ WIZARD_PAGE = """<!doctype html>
 
     <fieldset>
       <legend>WORD centers (__CENTER_COUNT__ nationwide)</legend>
-      <input type="text" id="center-search" placeholder="Search by name or city...">
-      <div class="centers-head"><span class="checks-head"><span>Query</span><span>Alert me</span></span><span>Center</span></div>
-      <div id="centers-list"></div>
+      <div class="combobox">
+        <input type="text" id="center-search" placeholder="Click to browse all centers, or type to filter..." autocomplete="off">
+        <div id="center-dropdown"></div>
+      </div>
+      <div id="selected-centers"></div>
+      <div class="center-count" id="center-count"></div>
       <label for="manual-ids" style="margin-top:0.6rem;">Other center IDs (comma-separated, optional)</label>
       <input type="text" id="manual-ids" placeholder="e.g. 12345, 67890">
-      <div class="hint">Don't see your center? This list is a snapshot and may be missing a newly opened one — add its numeric ID here instead (added IDs are both queried and alerted on).</div>
+      <div class="hint">Don't see your center? This list is a snapshot and may be missing a newly opened one — add its numeric ID here instead.</div>
     </fieldset>
 
     <fieldset>
       <legend>Alerting</legend>
-      <label for="current_slot_date">Date of your current booked slot — push a phone notification for any found slot on or before this date (e.g. an earlier date, or a different time the same day)</label>
+      <label for="current_slot_date">Date of your current booked slot — a found slot on or before this counts as urgent (an earlier date, or a different time the same day)</label>
       <input type="date" id="current_slot_date" required>
 
       <div class="row"><input type="checkbox" id="auto_refresh_chrome" checked><label for="auto_refresh_chrome" style="margin:0;">Automatically reopen Chrome to log back in when my session expires</label></div>
@@ -227,12 +270,21 @@ WIZARD_PAGE = """<!doctype html>
 
     <fieldset>
       <legend>Phone notifications</legend>
-      <label>Your private notification link — install the <a href="https://ntfy.sh/app" target="_blank" style="color:#8ab4f8;">ntfy app</a> and subscribe to it exactly:</label>
-      <div style="display:flex;align-items:center;">
-        <input type="text" id="ntfy_topic" value="__NTFY_TOPIC__" readonly style="margin-bottom:0;">
-        <button type="button" id="copy-ntfy">Copy link</button>
+      <div class="toggle-row">
+        <div class="toggle-text">
+          <div class="tt-title">Send a phone alert on an urgent slot</div>
+          <div class="tt-sub">Buzzes your phone when a watched center opens a slot on or before your booked date. Turn off to just watch the dashboard.</div>
+        </div>
+        <div class="switch on" id="phone-alerts" role="switch" aria-checked="true" tabindex="0"></div>
       </div>
-      <div class="hint">Anyone who knows this link can read your notifications — don't share it.</div>
+      <div id="ntfy-field">
+        <label>Your private notification link — install the <a href="https://ntfy.sh/app" target="_blank" style="color:var(--accent-soft);">ntfy app</a> and subscribe to it exactly:</label>
+        <div style="display:flex;align-items:center;">
+          <input type="text" id="ntfy_topic" value="__NTFY_TOPIC__" readonly style="margin-bottom:0;">
+          <button type="button" id="copy-ntfy">Copy link</button>
+        </div>
+        <div class="hint" style="margin-top:0.8rem;">Anyone who knows this link can read your notifications — don't share it.</div>
+      </div>
     </fieldset>
 
     <button type="submit" id="submit-btn">Save and log in</button>
@@ -248,43 +300,158 @@ WIZARD_PAGE = """<!doctype html>
 const CENTERS = __CENTERS_JSON__;
 const EXISTING_CONFIG = __EXISTING_CONFIG_JSON__;
 const KNOWN_IDS = new Set(CENTERS.map(c => c.id));
-const checkedOrgIds = new Set((EXISTING_CONFIG ? EXISTING_CONFIG.organization_ids : []).filter(id => KNOWN_IDS.has(id)));
-const checkedWatchIds = new Set((EXISTING_CONFIG ? EXISTING_CONFIG.watch_organization_ids : []).filter(id => KNOWN_IDS.has(id)));
+const CENTERS_BY_ID = new Map(CENTERS.map(c => [c.id, c]));
+const selectedIds = new Set([
+  ...(EXISTING_CONFIG ? EXISTING_CONFIG.organization_ids : []),
+  ...(EXISTING_CONFIG ? EXISTING_CONFIG.watch_organization_ids : []),
+].filter(id => KNOWN_IDS.has(id)));
 
-const centersList = document.getElementById('centers-list');
-function renderCenters(filter) {
-  const f = filter.trim().toLowerCase();
-  centersList.innerHTML = '';
-  CENTERS.forEach(c => {
-    const label = `${c.name} (${c.location})`;
-    if (f && !label.toLowerCase().includes(f)) return;
+const searchInput = document.getElementById('center-search');
+const dropdown = document.getElementById('center-dropdown');
+const selectedList = document.getElementById('selected-centers');
+const centerCount = document.getElementById('center-count');
+let currentMatches = [];
+let activeIndex = -1;
+
+function centerLabel(c) { return `${c.name} (${c.location})`; }
+
+function renderSelected() {
+  selectedList.innerHTML = '';
+  if (!selectedIds.size) {
+    const empty = document.createElement('div');
+    empty.className = 'no-selection';
+    empty.textContent = 'No centers yet — search above to add one.';
+    selectedList.appendChild(empty);
+    centerCount.innerHTML = '';
+    return;
+  }
+  selectedIds.forEach(id => {
+    const c = CENTERS_BY_ID.get(id);
+    if (!c) return;
     const row = document.createElement('div');
-    row.className = 'center-row';
-    const checks = document.createElement('div');
-    checks.className = 'checks';
-    const orgCb = document.createElement('input');
-    orgCb.type = 'checkbox'; orgCb.className = 'org'; orgCb.value = c.id;
-    orgCb.checked = checkedOrgIds.has(c.id);
-    orgCb.addEventListener('change', () => {
-      if (orgCb.checked) checkedOrgIds.add(c.id); else checkedOrgIds.delete(c.id);
+    row.className = 'selected-row';
+
+    const dot = document.createElement('span');
+    dot.className = 'center-dot';
+    row.appendChild(dot);
+
+    const name = document.createElement('div');
+    name.className = 'selected-name';
+    const nameLine = document.createElement('div');
+    nameLine.className = 'sn-name';
+    nameLine.textContent = c.name;
+    const locLine = document.createElement('div');
+    locLine.className = 'sn-loc';
+    locLine.textContent = c.location;
+    name.appendChild(nameLine);
+    name.appendChild(locLine);
+    name.title = centerLabel(c);
+    row.appendChild(name);
+
+    const removeBtn = document.createElement('button');
+    removeBtn.type = 'button';
+    removeBtn.className = 'remove-btn';
+    removeBtn.title = 'Remove';
+    removeBtn.textContent = '×';
+    removeBtn.addEventListener('click', () => {
+      selectedIds.delete(id);
+      renderSelected();
     });
-    const watchCb = document.createElement('input');
-    watchCb.type = 'checkbox'; watchCb.className = 'watch'; watchCb.value = c.id;
-    watchCb.checked = checkedWatchIds.has(c.id);
-    watchCb.addEventListener('change', () => {
-      if (watchCb.checked) checkedWatchIds.add(c.id); else checkedWatchIds.delete(c.id);
-    });
-    checks.appendChild(orgCb);
-    checks.appendChild(watchCb);
-    const span = document.createElement('span');
-    span.textContent = label;
-    row.appendChild(checks);
-    row.appendChild(span);
-    centersList.appendChild(row);
+    row.appendChild(removeBtn);
+
+    selectedList.appendChild(row);
   });
+  const n = selectedIds.size;
+  centerCount.innerHTML = `Watching <b>${n}</b> center${n === 1 ? '' : 's'} for open slots.`;
 }
-renderCenters('');
-document.getElementById('center-search').addEventListener('input', (e) => renderCenters(e.target.value));
+
+function closeDropdown() {
+  dropdown.style.display = 'none';
+  dropdown.innerHTML = '';
+  currentMatches = [];
+  activeIndex = -1;
+}
+
+function selectCenter(id) {
+  selectedIds.add(id);
+  renderSelected();
+  searchInput.value = '';
+  renderDropdown('');
+  searchInput.focus();
+}
+
+function updateActiveItem() {
+  Array.from(dropdown.children).forEach((el, i) => el.classList.toggle('active', i === activeIndex));
+  if (activeIndex >= 0 && dropdown.children[activeIndex]) {
+    dropdown.children[activeIndex].scrollIntoView({ block: 'nearest' });
+  }
+}
+
+function renderDropdown(filter) {
+  const f = filter.trim().toLowerCase();
+  currentMatches = CENTERS.filter(c => !selectedIds.has(c.id) && (!f || centerLabel(c).toLowerCase().includes(f)));
+  activeIndex = currentMatches.length ? 0 : -1;
+  dropdown.innerHTML = '';
+  if (!currentMatches.length) {
+    const empty = document.createElement('div');
+    empty.className = 'dropdown-empty';
+    empty.textContent = f ? 'No matching centers.' : 'All centers added.';
+    dropdown.appendChild(empty);
+  } else {
+    currentMatches.forEach((c, i) => {
+      const item = document.createElement('div');
+      item.className = 'dropdown-item' + (i === activeIndex ? ' active' : '');
+      const nm = document.createElement('span');
+      nm.textContent = c.name;
+      const loc = document.createElement('span');
+      loc.className = 'dd-loc';
+      loc.textContent = c.location;
+      item.appendChild(nm);
+      item.appendChild(loc);
+      item.addEventListener('mousedown', (e) => { e.preventDefault(); selectCenter(c.id); });
+      dropdown.appendChild(item);
+    });
+  }
+  dropdown.style.display = 'block';
+}
+
+searchInput.addEventListener('input', (e) => renderDropdown(e.target.value));
+searchInput.addEventListener('focus', (e) => renderDropdown(e.target.value));
+searchInput.addEventListener('blur', () => setTimeout(closeDropdown, 150));
+searchInput.addEventListener('keydown', (e) => {
+  if (!currentMatches.length) return;
+  if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    activeIndex = (activeIndex + 1) % currentMatches.length;
+    updateActiveItem();
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    activeIndex = (activeIndex - 1 + currentMatches.length) % currentMatches.length;
+    updateActiveItem();
+  } else if (e.key === 'Enter') {
+    e.preventDefault();
+    if (activeIndex >= 0) selectCenter(currentMatches[activeIndex].id);
+  } else if (e.key === 'Escape') {
+    closeDropdown();
+  }
+});
+
+const phoneAlertsSwitch = document.getElementById('phone-alerts');
+const ntfyField = document.getElementById('ntfy-field');
+function setPhoneAlerts(on) {
+  phoneAlertsSwitch.classList.toggle('on', on);
+  phoneAlertsSwitch.setAttribute('aria-checked', on ? 'true' : 'false');
+  ntfyField.classList.toggle('disabled', !on);
+}
+phoneAlertsSwitch.addEventListener('click', () => setPhoneAlerts(!phoneAlertsSwitch.classList.contains('on')));
+phoneAlertsSwitch.addEventListener('keydown', (e) => {
+  if (e.key === ' ' || e.key === 'Enter') {
+    e.preventDefault();
+    setPhoneAlerts(!phoneAlertsSwitch.classList.contains('on'));
+  }
+});
+
+renderSelected();
 
 if (EXISTING_CONFIG) {
   document.getElementById('page-title').textContent = 'info-kierowca watcher — settings';
@@ -314,6 +481,7 @@ if (EXISTING_CONFIG) {
   document.getElementById('manual-ids').value = manualPrefillIds.join(', ');
 
   document.getElementById('current_slot_date').value = EXISTING_CONFIG.current_slot_date || '';
+  setPhoneAlerts(EXISTING_CONFIG.phone_alerts !== false);
   document.getElementById('auto_refresh_chrome').checked = EXISTING_CONFIG.auto_refresh_chrome !== false;
   document.getElementById('auto_open_browser').checked = EXISTING_CONFIG.auto_open_browser !== false;
 }
@@ -342,9 +510,9 @@ document.getElementById('form').addEventListener('submit', async (e) => {
     if (!examTypes.length) throw new Error('Pick at least one exam type.');
 
     const manualIds = parseManual(document.getElementById('manual-ids').value);
-    const orgIds = Array.from(new Set([...checkedOrgIds, ...manualIds]));
+    const orgIds = Array.from(new Set([...selectedIds, ...manualIds]));
     if (!orgIds.length) throw new Error('Pick or enter at least one WORD center.');
-    const watchIds = Array.from(new Set([...checkedWatchIds, ...manualIds]));
+    const watchIds = orgIds;
 
     const profileNumber = document.getElementById('profile_number').value.trim();
     if (!profileNumber) throw new Error('PKK number is required.');
@@ -365,6 +533,7 @@ document.getElementById('form').addEventListener('submit', async (e) => {
       category: category,
       exam_types: examTypes,
       current_slot_date: currentSlotDate,
+      phone_alerts: phoneAlertsSwitch.classList.contains('on'),
       auto_refresh_chrome: document.getElementById('auto_refresh_chrome').checked,
       auto_open_browser: document.getElementById('auto_open_browser').checked,
       ntfy_topic: document.getElementById('ntfy_topic').value,
