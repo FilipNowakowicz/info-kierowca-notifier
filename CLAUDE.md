@@ -81,6 +81,15 @@ dependencies (stdlib only).
 - `fetch_word_centers.py` — maintenance script, run by hand (using your own `session.json`) to
   refresh `word_centers.json` if info-kierowca.pl adds/renames/closes a center. Reuses
   `notifier.BASE`/`SESSION_FILE`/`do_request()` rather than duplicating cookie/request logic.
+- `categories.json` — static snapshot (id, code, label) of license categories, used by the setup
+  wizard's "License category" dropdown so the user picks "B — car" instead of the bare numeric id
+  the API wants (B is 5). Seeded with only the confirmed B=5; the wizard also keeps an "Other —
+  enter number" escape hatch. Extend with `fetch_categories.py`.
+- `fetch_categories.py` — maintenance script like `fetch_word_centers.py`, but the exact dict path
+  for categories is unknown (all `/bknd/config/api/v1/dict/*` candidates 404'd when probed from a
+  no-network sandbox), so it **probes a list of candidate endpoint names** and uses the first that
+  returns category-shaped rows. If none match, it tells you to find the real dict path via the
+  site's Network tab and add it to `CANDIDATES`. Not yet verified against the live API.
 - `pyinstaller.spec` — builds `app.py` into the single-file, no-console release binary; used by
   `.github/workflows/release.yml` (matrix over Windows/macOS/Linux, triggered on `v*` tags) and
   identical for manual local builds (`pyinstaller pyinstaller.spec`). PyInstaller is a build-time

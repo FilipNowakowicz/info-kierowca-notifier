@@ -90,7 +90,8 @@ claim still holds either way).
    ```
    Opens a browser tab automatically; if `config.json` doesn't exist yet it replaces steps 1-3
    above with an in-browser setup wizard (using real WORD center names — see `word_centers.json` /
-   `fetch_word_centers.py`). No console window management needed here either — use the page's Stop
+   `fetch_word_centers.py` — and license-category names from `categories.json` /
+   `fetch_categories.py`). No console window management needed here either — use the page's Stop
    button, not Ctrl+C.
 
    **Option B — built-in loop (works on Windows, macOS, Linux):**
