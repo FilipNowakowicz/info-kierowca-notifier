@@ -75,6 +75,7 @@ claim still holds either way).
    | `push_below_days` | Only send a phone push (and turn the dashboard red) when the fastest slot is within this many days |
    | `push_before_date` *(optional)* | A fixed date (`"YYYY-MM-DD"`), exclusive — alert on any slot before this date instead of using a rolling day count. Takes priority over `push_below_days` when set. |
    | `auto_refresh_chrome` *(optional, default `true`)* | Whether an `auth_expired` outcome should automatically launch `auto_refresh_session.py` (see below). Set to `false` to fall back to a manual relogin. |
+   | `auto_open_browser` *(optional, default `true`)* | Whether a matching urgent slot should also launch `open_logged_in_browser.py` (see [Reschedule assist](#reschedule-assist) below). Set to `false` to disable. |
 
    Slots are only ever considered within 31 days out — that's a hard line on info-kierowca.pl
    itself, not something this project can (or needs to) make configurable.
@@ -149,6 +150,30 @@ systemd default). `systemd-run --user` needs the same graphical-session environm
 (`DISPLAY`/`WAYLAND_DISPLAY`) imported into your systemd user manager that any GUI app launched
 from a `systemd --user` unit would need; most desktop environments do this automatically at login.
 If Chrome never appears, check `journalctl --user -u info-kierowca-auto-refresh -n 20 --no-pager`.
+
+## Reschedule assist
+
+If you already have a paid booking and just want to move it to a fresher date, `notifier.py` can
+open a browser for you the moment a matching urgent slot appears (same gating as the phone push —
+see `push_below_days`/`push_before_date`), pre-authenticated with your saved session, and click
+through the first two steps of changing that booking's date:
+
+```
+python open_logged_in_browser.py   # or let a slot hit trigger it automatically
+```
+
+It launches Chrome in its own dedicated profile (a separate `--remote-debugging-port` from
+`auto_refresh_session.py`'s, so the two never collide), injects your `session.json` cookies so it
+opens straight into `/cases` already logged in, and suppresses the cookie-consent banner by
+pre-setting the same cookie the real banner would write on "necessary only". It then clicks
+"Zmień termin" on your booking, then "Zmień termin rezerwacji" in the confirm modal that opens —
+and stops there, on the date-range picker, with nothing about the booking changed yet. Picking the
+actual new date, the summary step, and any final confirm past that are always real clicks from
+you; no code in this project selects a date or submits a reservation change on its own.
+
+Skipped automatically if something's already listening on its debug port (`9555`), so a slot that
+keeps reappearing under a new signature won't pile up duplicate Chrome windows. Disable with
+`auto_open_browser: false` in `config.json`.
 
 ## Pausing / resuming
 

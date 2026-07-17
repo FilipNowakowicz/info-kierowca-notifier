@@ -1,9 +1,12 @@
 # info-kierowca-notifier
 
-A notification-only slot checker for [info-kierowca.pl](https://info-kierowca.pl), the Polish
-driving exam booking portal. It watches for open exam slots and alerts you — on a dashboard and
-your phone — the moment one appears. It never books or reserves anything for you; you always do
-that yourself, in your own browser.
+A slot checker for [info-kierowca.pl](https://info-kierowca.pl), the Polish driving exam booking
+portal. It watches for open exam slots and alerts you — on a dashboard and your phone — the moment
+one appears. Checking is always read-only. Optionally, if you already have a paid booking and want
+to move it earlier, it can also open a browser that's already logged in and click through to the
+reschedule date picker for you — but picking the new date and every confirm step after that is
+always a click you make yourself; nothing gets rebooked automatically. See
+[How it works](#how-it-works) below.
 
 ![Dashboard showing a found slot](docs/dashboard.png)
 
@@ -24,9 +27,16 @@ warning. Windows: click "More info" → "Run anyway". macOS: right-click the fil
 ## How it works
 
 It checks the same two endpoints info-kierowca.pl's own site uses to show you slots — it just
-does that automatically, on a timer, instead of you refreshing the page by hand. It's strictly
-read-only: no booking, no reserving, nothing beyond checking availability. Your session cookies
-and PKK number never go anywhere except info-kierowca.pl itself.
+does that automatically, on a timer, instead of you refreshing the page by hand. Checking is
+strictly read-only: no booking, no reserving, nothing beyond checking availability.
+
+If you turn on the reschedule assist (on by default, toggle with `auto_open_browser`), a matching
+slot also opens a Chrome window already logged in with your session, and clicks through to the
+"change date" screen for your existing booking. It stops there, on an empty date-range picker with
+nothing submitted — picking the new date and confirming is always done by you, by hand. See
+[docs/ADVANCED.md](docs/ADVANCED.md) for exactly what it clicks and why.
+
+Your session cookies and PKK number never go anywhere except info-kierowca.pl itself.
 
 It relies on an undocumented API that info-kierowca.pl could change or block at any time, so use
 it at your own risk and in line with the site's terms of service.

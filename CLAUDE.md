@@ -1,7 +1,10 @@
 # info-kierowca-notifier
 
-Read-only slot checker for info-kierowca.pl (Polish driving exam booking). Polls two endpoints on
-a timer, never books/reserves anything. Zero third-party dependencies (stdlib only).
+Slot checker for info-kierowca.pl (Polish driving exam booking). Polls two endpoints on a timer;
+on a matching hit it can also open a pre-authenticated browser and click through to the reschedule
+date-picker for your existing booking, but stops there — picking the new date and every confirm
+step past that is always a real click from you (see `open_logged_in_browser.py`). Zero third-party
+dependencies (stdlib only).
 
 ## Files
 
@@ -20,9 +23,36 @@ a timer, never books/reserves anything. Zero third-party dependencies (stdlib on
   `trigger_auto_refresh()`); guarded by a lock file at
   `~/.local/state/info-kierowca-notifier/auto-refresh.lock` so it won't relaunch while one's
   already in flight. Disable via `auto_refresh_chrome: false` in `config.json`.
-- `cdp_client.py` — shared Chrome DevTools Protocol helpers used by both `pull_session_cookies.py`
-  and `auto_refresh_session.py` (cookie reads, JS eval in the page, and registering a script to run
-  on every future document via `Page.addScriptToEvaluateOnNewDocument`).
+- `cdp_client.py` — shared Chrome DevTools Protocol helpers used by `pull_session_cookies.py`,
+  `auto_refresh_session.py`, and `open_logged_in_browser.py` (cookie reads *and* writes via
+  `Storage.getCookies`/`setCookies`, JS eval in the page, navigation, and registering a script to
+  run on every future document via `Page.addScriptToEvaluateOnNewDocument`).
+- `open_logged_in_browser.py` — launches Chrome in its own dedicated profile (port `9555`, distinct
+  from `auto_refresh_session.py`'s and from a regular browsing profile) and injects the cookies
+  already saved in `session.json` via `cdp_client.set_cookies()` before navigating to `/cases`, so
+  it opens already authenticated instead of at a login screen. `set_cookies()` deliberately sets
+  `httpOnly: False` — confirmed live that the site's own frontend reads the session cookies via
+  `document.cookie` to decide its logged-in UI state (it doesn't call `/jwt/refresh` on page load),
+  so an httpOnly copy is sent correctly on requests but invisible to the site's own JS, which then
+  renders as logged out. Runnable by hand, and auto-triggered by `notifier.py` on a matching urgent
+  slot hit (see `trigger_open_browser()`, called right alongside the ntfy push in `run_check()`) —
+  skipped if something's already listening on port `9555` so a slot that keeps reappearing under a
+  new signature doesn't pile up duplicate Chrome windows. Disable via `auto_open_browser: false` in
+  `config.json`. Also pre-sets a `CookieScriptConsent` cookie (`consent_cookie()`) shaped like what
+  the site's real cookie-consent banner writes on accept/reject, so that banner never renders either
+  — defaults to "necessary only", matching this project's minimal-footprint stance. After landing on
+  `/cases`, auto-clicks two buttons in sequence via the shared `wait_and_click()` poller: the
+  "Zmień termin" (change date) button on your active booking, then — once that opens the "Zmiana
+  terminu rezerwacji egzaminu" confirm-or-cancel modal — its own "Zmień termin rezerwacji" confirm
+  button. Both text matches are deliberately narrow (exact-ish match against just button/link/
+  `role=button` elements, not the login flow's fuzzy multi-target chooser) since the list page also
+  has an "Anuluj" (cancel the booking outright) button close by, and `CONFIRM_CHANGE_DATE_TEXT` is
+  the longer, more specific phrase so it can't also match `CHANGE_DATE_TEXT`'s own button. Confirmed
+  live this lands on the actual date-picker screen ("Wybierz datę początkową dla nowego terminu")
+  with an empty range and a disabled "Przejdź do podsumowania" button — nothing about the booking
+  has changed yet. Goes no further than that: picking the new date, the summary step, and any final
+  confirm past that stay real clicks from you. No reservation/booking calls of any kind happen in
+  this file. Reuses `find_chrome()` from `auto_refresh_session.py` rather than duplicating it.
 - `app.py` — the composed, zero-setup entry point: runs `notifier.loop()` in a background thread,
   serves a first-run setup wizard + the dashboard + a `POST /shutdown` (the page's Stop button;
   hard-exits via `os._exit(0)`) from one stdlib HTTP server, and auto-opens the browser. This is
@@ -30,13 +60,15 @@ a timer, never books/reserves anything. Zero third-party dependencies (stdlib on
   actually run. Shares `notifier.CONFIG_DIR`/`STATE_DIR` with the source/systemd path, so switching
   between "ran the binary" and "ran from source" never loses config/session/history. Detects an
   already-running instance on the dashboard port and just opens a browser tab at it instead of
-  binding twice. Inside a frozen build, `trigger_auto_refresh()` (in `notifier.py`) can't shell out
-  to `auto_refresh_session.py` as a loose file (it doesn't exist on disk, and `sys.executable` is
-  the bundled binary itself) — it re-invokes the binary with a hidden `--internal-auto-refresh`
-  flag instead, which `app.py:run_internal_auto_refresh()` dispatches straight to
-  `auto_refresh_session.main()`. This frozen-only path can only be verified against an actual
-  build, not `python app.py` — re-test it (delete `session.json`, confirm Chrome/Edge still opens)
-  after any change here before tagging a release.
+  binding twice. Inside a frozen build, neither `trigger_auto_refresh()` nor
+  `trigger_open_browser()` (both in `notifier.py`) can shell out to their respective `.py` files
+  (they don't exist on disk, and `sys.executable` is the bundled binary itself) — each re-invokes
+  the binary with its own hidden flag instead (`--internal-auto-refresh` / `--internal-open-browser`),
+  which `app.py:run_internal_auto_refresh()` / `run_internal_open_browser()` dispatch straight to
+  `auto_refresh_session.main()` / `open_logged_in_browser.main()`. These frozen-only paths can only
+  be verified against an actual build, not `python app.py` — re-test both (delete `session.json`,
+  confirm Chrome/Edge still opens for relogin; then, separately, confirm a slot hit still opens a
+  logged-in tab) after any change here before tagging a release.
 - `word_centers.json` — static snapshot (id, name, location) of every active DORD/WORD/MORD/
   PORD/ZORD exam center, used by `app.py`'s setup wizard to show real, searchable center names
   instead of bare numeric IDs. Baked in rather than fetched live because the wizard has to work
@@ -127,7 +159,11 @@ auto-refresh trigger itself in real isolation, set `auto_refresh_chrome: false` 
 
 ## Constraints to respect when changing this code
 
-- Read-only by design — no booking/reservation code, ever (see README "How it works").
+- Polling/checking stays strictly read-only. The one deliberate exception is
+  `open_logged_in_browser.py`'s reschedule assist, and even that has a hard line: it may click
+  through to the date-picker for an *existing, already-paid* booking, but nothing past that —
+  no code may ever pick a date, submit a summary, or hit a final confirm/reservation endpoint on
+  its own. That last step stays a real click from the user, always.
 - Don't tighten the poll interval below the current default without being asked; this is
   explicitly a design choice to stay a good citizen of an undocumented API.
 - Session cookies / PKK number must never be sent anywhere except info-kierowca.pl itself.
