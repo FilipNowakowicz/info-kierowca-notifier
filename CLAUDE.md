@@ -9,7 +9,18 @@ a timer, never books/reserves anything. Zero third-party dependencies (stdlib on
   systemd oneshot service).
 - `dashboard_server.py` — stdlib HTTP server, binds `127.0.0.1:8787`, serves `status.json` state.
 - `pull_session_cookies.py` — pulls session cookies from a running Chrome via remote-debugging
-  port; writes them into `session.json`.
+  port; writes them into `session.json`. Manual: you launch Chrome and log in first.
+- `auto_refresh_session.py` — launches Chrome itself (dedicated throwaway profile) at
+  `info-kierowca.pl/login`, auto-clicks through the gov.pl → "Aplikacja mObywatel" chooser via an
+  injected DOM-mutation-observer (see `AUTO_CLICK_TARGETS`/`AUTO_CLICK_OBSERVER_JS` — text-based,
+  will break if the site's login UI text/labels change), then waits **indefinitely** for you to
+  scan the QR and captures cookies the moment they appear. Auto-triggered by `notifier.py` on
+  `auth_expired` (see `trigger_auto_refresh()`); guarded by a lock file at
+  `~/.local/state/info-kierowca-notifier/auto-refresh.lock` so it won't relaunch while one's
+  already in flight. Disable via `auto_refresh_chrome: false` in `config.json`.
+- `cdp_client.py` — shared Chrome DevTools Protocol helpers used by both `pull_session_cookies.py`
+  and `auto_refresh_session.py` (cookie reads, JS eval in the page, and registering a script to run
+  on every future document via `Page.addScriptToEvaluateOnNewDocument`).
 - `systemd/*.service`, `systemd/*.timer` — source of truth for the systemd user units. These get
   copied to `~/.config/systemd/user/` — **edit the repo copy and re-`cp` + `daemon-reload`**, the
   deployed copy is not symlinked back to the repo.
@@ -46,6 +57,23 @@ starting the timer well after boot left `OnBootSec` already-elapsed (skipped) an
 reported `active` while `Trigger` stayed `n/a` forever — it silently never fired. Don't remove
 `OnActiveSec`. After any `start`/`restart`, verify with `systemctl --user list-timers
 info-kierowca-notifier.timer` that `NEXT` is a real timestamp, not `-`/`n/a`.
+
+### Known gotcha: auto-relogin (auto_refresh_session.py) needs a real GUI session
+
+Triggered automatically by `notifier.py` on `auth_expired` via `systemd-run --user` (see
+`trigger_auto_refresh()`), specifically so the launched Chrome + cookie-watcher survives after the
+triggering oneshot `info-kierowca-notifier.service` run exits — a plain child process would
+otherwise die with it under systemd's default `KillMode=control-group`. `systemd-run --user` still
+needs `DISPLAY`/`WAYLAND_DISPLAY` imported into the systemd user manager (normal on a machine
+you're desktop-logged-into; not there on a headless box or before first login) — if Chrome never
+appears, check `journalctl --user -u info-kierowca-auto-refresh -n 20 --no-pager`. Set
+`auto_refresh_chrome: false` in `config.json` to disable and fall back to manual relogin.
+
+The gov.pl → "Aplikacja mObywatel" click-through is text-based (`AUTO_CLICK_TARGETS` in
+`auto_refresh_session.py`) — if info-kierowca.pl or gov.pl ever change that UI's copy or the login
+click-path, the script will just sit on whatever screen it landed on without erring; it's still
+safe to click through by hand while it waits (it never times out — see `DEFAULT_TIMEOUT`), but the
+target list will need updating to restore full automation.
 
 ### Known gotcha: dashboard port-in-use crash loop
 
