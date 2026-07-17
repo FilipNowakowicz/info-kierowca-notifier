@@ -40,7 +40,7 @@ CONFIG_FILE = Path.home() / ".config" / "info-kierowca-notifier" / "config.json"
 # Deliberately distinct from pull_session_cookies.py's manual default (9222)
 # so this never fights over the port with a Chrome you started by hand.
 DEFAULT_PORT = 9333
-DEFAULT_URL = "https://login.mobywatel.gov.pl/#/"
+DEFAULT_URL = "https://info-kierowca.pl"
 DEFAULT_TIMEOUT = 600  # seconds to wait for you to scan the QR
 
 CHROME_CANDIDATES = ["google-chrome", "google-chrome-stable", "chromium", "chromium-browser"]
