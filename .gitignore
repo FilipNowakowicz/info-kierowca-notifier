@@ -2,3 +2,5 @@ __pycache__/
 *.pyc
 config.json
 session.json
+/build/
+/dist/
