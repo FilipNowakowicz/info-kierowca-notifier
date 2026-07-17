@@ -13,7 +13,7 @@ import os
 import shutil
 import subprocess
 import sys
-import time
+import threading
 import urllib.error
 import urllib.request
 from datetime import datetime, timedelta
@@ -164,6 +164,12 @@ def trigger_auto_refresh(logger, config):
     cgroup is torn down at exit; elsewhere a plain detached Popen is enough.
     Guarded by auto_refresh_session.py's own lock file so a stuck relogin
     doesn't get relaunched on every subsequent 60s tick.
+
+    Inside a PyInstaller-frozen build, sys.executable is the bundled binary
+    itself (not a Python interpreter that can run a loose .py file) and
+    AUTO_REFRESH_SCRIPT has no file on disk to point at — so instead we
+    re-invoke the binary with a hidden flag that app.py dispatches straight
+    to auto_refresh_session.main(), keeping it a separate detached process.
     """
     if not config.get("auto_refresh_chrome", True):
         return
@@ -175,18 +181,21 @@ def trigger_auto_refresh(logger, config):
             return
         except (ValueError, OSError):
             pass  # stale lock — let auto_refresh_session.py sort it out
-    if not AUTO_REFRESH_SCRIPT.exists():
-        return
-    python = sys.executable
-    if shutil.which("systemd-run"):
-        cmd = [
-            "systemd-run", "--user", "--collect",
-            "--unit=info-kierowca-auto-refresh",
-            "--description=info-kierowca.pl auto session refresh",
-            python, str(AUTO_REFRESH_SCRIPT),
-        ]
+    if getattr(sys, "frozen", False):
+        cmd = [sys.executable, "--internal-auto-refresh"]
     else:
-        cmd = [python, str(AUTO_REFRESH_SCRIPT)]
+        if not AUTO_REFRESH_SCRIPT.exists():
+            return
+        python = sys.executable
+        if shutil.which("systemd-run"):
+            cmd = [
+                "systemd-run", "--user", "--collect",
+                "--unit=info-kierowca-auto-refresh",
+                "--description=info-kierowca.pl auto session refresh",
+                python, str(AUTO_REFRESH_SCRIPT),
+            ]
+        else:
+            cmd = [python, str(AUTO_REFRESH_SCRIPT)]
     try:
         subprocess.Popen(
             cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True
@@ -391,6 +400,24 @@ def run_check(logger, dash_status):
         update_status(dash_status, "no_slot", "", hit_dicts)
 
 
+def loop(logger, dash_status, interval, stop_event=None):
+    """Check on a timer until stop_event is set (or forever, if none given).
+
+    Factored out of main()'s --loop branch so app.py can run this in a
+    background thread instead of shelling out to `python notifier.py --loop`
+    as a subprocess — stop_event lets that thread be told to exit cleanly.
+    """
+    if stop_event is None:
+        stop_event = threading.Event()
+    logger.info("outcome=loop_start interval=%s", interval)
+    while not stop_event.is_set():
+        try:
+            run_check(logger, dash_status)
+        except Exception:
+            logger.exception("outcome=crash stage=run_check")
+        stop_event.wait(interval)
+
+
 def main():
     parser = argparse.ArgumentParser(description="info-kierowca.pl slot checker")
     parser.add_argument(
@@ -410,13 +437,7 @@ def main():
     dash_status = load_status()
 
     if args.loop:
-        logger.info("outcome=loop_start interval=%s", args.interval)
-        while True:
-            try:
-                run_check(logger, dash_status)
-            except Exception:
-                logger.exception("outcome=crash stage=run_check")
-            time.sleep(args.interval)
+        loop(logger, dash_status, args.interval)
     else:
         run_check(logger, dash_status)
 

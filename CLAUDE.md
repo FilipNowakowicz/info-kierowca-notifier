@@ -10,17 +10,37 @@ a timer, never books/reserves anything. Zero third-party dependencies (stdlib on
 - `dashboard_server.py` — stdlib HTTP server, binds `127.0.0.1:8787`, serves `status.json` state.
 - `pull_session_cookies.py` — pulls session cookies from a running Chrome via remote-debugging
   port; writes them into `session.json`. Manual: you launch Chrome and log in first.
-- `auto_refresh_session.py` — launches Chrome itself (dedicated throwaway profile) at
-  `info-kierowca.pl/login`, auto-clicks through the gov.pl → "Aplikacja mObywatel" chooser via an
-  injected DOM-mutation-observer (see `AUTO_CLICK_TARGETS`/`AUTO_CLICK_OBSERVER_JS` — text-based,
-  will break if the site's login UI text/labels change), then waits **indefinitely** for you to
-  scan the QR and captures cookies the moment they appear. Auto-triggered by `notifier.py` on
-  `auth_expired` (see `trigger_auto_refresh()`); guarded by a lock file at
+- `auto_refresh_session.py` — launches Chrome (or, as a fallback via `CHROME_CANDIDATES`/
+  `EDGE_WIN_PATHS` in `find_chrome()`, Edge — preinstalled on Windows, unlike Chrome) itself
+  (dedicated throwaway profile) at `info-kierowca.pl/login`, auto-clicks through the gov.pl →
+  "Aplikacja mObywatel" chooser via an injected DOM-mutation-observer (see
+  `AUTO_CLICK_TARGETS`/`AUTO_CLICK_OBSERVER_JS` — text-based, will break if the site's login UI
+  text/labels change), then waits **indefinitely** for you to scan the QR and captures cookies the
+  moment they appear. Auto-triggered by `notifier.py` on `auth_expired` (see
+  `trigger_auto_refresh()`); guarded by a lock file at
   `~/.local/state/info-kierowca-notifier/auto-refresh.lock` so it won't relaunch while one's
   already in flight. Disable via `auto_refresh_chrome: false` in `config.json`.
 - `cdp_client.py` — shared Chrome DevTools Protocol helpers used by both `pull_session_cookies.py`
   and `auto_refresh_session.py` (cookie reads, JS eval in the page, and registering a script to run
   on every future document via `Page.addScriptToEvaluateOnNewDocument`).
+- `app.py` — the composed, zero-setup entry point: runs `notifier.loop()` in a background thread,
+  serves a first-run setup wizard + the dashboard + a `POST /shutdown` (the page's Stop button;
+  hard-exits via `os._exit(0)`) from one stdlib HTTP server, and auto-opens the browser. This is
+  what the packaged release binaries (`pyinstaller.spec`, built `--windowed` — no console window)
+  actually run. Shares `notifier.CONFIG_DIR`/`STATE_DIR` with the source/systemd path, so switching
+  between "ran the binary" and "ran from source" never loses config/session/history. Detects an
+  already-running instance on the dashboard port and just opens a browser tab at it instead of
+  binding twice. Inside a frozen build, `trigger_auto_refresh()` (in `notifier.py`) can't shell out
+  to `auto_refresh_session.py` as a loose file (it doesn't exist on disk, and `sys.executable` is
+  the bundled binary itself) — it re-invokes the binary with a hidden `--internal-auto-refresh`
+  flag instead, which `app.py:run_internal_auto_refresh()` dispatches straight to
+  `auto_refresh_session.main()`. This frozen-only path can only be verified against an actual
+  build, not `python app.py` — re-test it (delete `session.json`, confirm Chrome/Edge still opens)
+  after any change here before tagging a release.
+- `pyinstaller.spec` — builds `app.py` into the single-file, no-console release binary; used by
+  `.github/workflows/release.yml` (matrix over Windows/macOS/Linux, triggered on `v*` tags) and
+  identical for manual local builds (`pyinstaller pyinstaller.spec`). PyInstaller is a build-time
+  only dependency — doesn't change the "zero *runtime* dependencies" claim in the README.
 - `systemd/*.service`, `systemd/*.timer` — source of truth for the systemd user units. These get
   copied to `~/.config/systemd/user/` — **edit the repo copy and re-`cp` + `daemon-reload`**, the
   deployed copy is not symlinked back to the repo.
