@@ -33,6 +33,11 @@ SEARCH_URL = f"{BASE}/bknd/exam/api/v1/Schedules/user/MultipleCentersExams"
 
 NTFY_URL = "https://ntfy.sh"
 
+# The site itself won't show slots further out than this, so there's no
+# benefit to making it configurable — it's a hard line on info-kierowca.pl,
+# not a user preference.
+MAX_DAYS_AHEAD = 31
+
 USER_AGENT = (
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
@@ -336,7 +341,7 @@ def run_check(logger, dash_status):
 
     save_json(SESSION_FILE, session)
 
-    max_date = datetime.now() + timedelta(days=config["max_days_ahead"])
+    max_date = datetime.now() + timedelta(days=MAX_DAYS_AHEAD)
     wanted_types = set(config["exam_types"])
     watch_ids = set(config.get("watch_organization_ids", config["organization_ids"]))
     hits = []

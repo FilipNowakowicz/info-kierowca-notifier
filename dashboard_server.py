@@ -142,7 +142,7 @@ async function poll() {
     detail.textContent = data.message || "Unexpected response — check manually";
   } else if (data.outcome === "no_slot") {
     body.className = "none";
-    headline.textContent = "No slot in range yet";
+    headline.textContent = "No slots in the next 31 days";
     subline.textContent = "";
     detail.textContent = "";
   } else {
