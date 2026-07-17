@@ -87,10 +87,10 @@ claim still holds either way).
    ```
    python app.py
    ```
-   Opens a browser tab automatically; skips steps 1-3 above entirely if `config.json` doesn't
-   exist yet (it'll walk you through setup instead, using real WORD center names — see
-   `word_centers.json` / `fetch_word_centers.py`). No console window management needed here
-   either — use the page's Stop button, not Ctrl+C.
+   Opens a browser tab automatically; if `config.json` doesn't exist yet it replaces steps 1-3
+   above with an in-browser setup wizard (using real WORD center names — see `word_centers.json` /
+   `fetch_word_centers.py`). No console window management needed here either — use the page's Stop
+   button, not Ctrl+C.
 
    **Option B — built-in loop (works on Windows, macOS, Linux):**
    ```
@@ -107,6 +107,10 @@ claim still holds either way).
    systemctl --user daemon-reload
    systemctl --user enable --now info-kierowca-notifier.timer
    ```
+   The units run `python3` via `/usr/bin/env` and assume the repo is cloned to `~/infokierowca`. If
+   you cloned it elsewhere, edit the path at the end of each `ExecStart=` line in the two
+   `.service` files first. If `env` can't find `python3` (some minimal setups), add its directory
+   to the `Environment=PATH=` line in those files.
 
 5. If you used Option A, the dashboard is already running — skip this step. Otherwise, start it
    separately (same command on every OS — plain Python, no extra setup):
