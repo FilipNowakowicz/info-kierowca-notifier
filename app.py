@@ -24,6 +24,7 @@ from pathlib import Path
 import auto_refresh_session
 import dashboard_server
 import notifier
+import open_logged_in_browser
 
 HOST = dashboard_server.HOST
 PORT = dashboard_server.PORT
@@ -419,9 +420,20 @@ def run_internal_auto_refresh():
     auto_refresh_session.main()
 
 
+def run_internal_open_browser():
+    """Dispatch target for the frozen-binary re-invocation in
+    notifier.trigger_open_browser() — see its docstring for why this exists.
+    """
+    sys.argv = [arg for arg in sys.argv if arg != "--internal-open-browser"]
+    open_logged_in_browser.main()
+
+
 def main():
     if "--internal-auto-refresh" in sys.argv:
         run_internal_auto_refresh()
+        return
+    if "--internal-open-browser" in sys.argv:
+        run_internal_open_browser()
         return
 
     if already_running():

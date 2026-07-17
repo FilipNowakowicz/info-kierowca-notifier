@@ -210,6 +210,49 @@ def trigger_auto_refresh(logger, config):
         logger.info("outcome=auto_refresh_launch_failed detail=%r", str(e))
 
 
+OPEN_BROWSER_SCRIPT = Path(__file__).parent / "open_logged_in_browser.py"
+# Must match open_logged_in_browser.py's DEFAULT_PORT.
+OPEN_BROWSER_PORT = 9555
+
+
+def trigger_open_browser(logger, config):
+    """Best-effort: launch open_logged_in_browser.py so a pre-authenticated
+    tab is already open by the moment the push notification lands — skips
+    the login step that otherwise costs you the fastest-moving slots.
+
+    Skipped if something's already answering on OPEN_BROWSER_PORT (its own
+    dedicated debug port) so a slot that keeps reappearing under a new
+    signature doesn't pile up duplicate Chrome windows — you'll just have
+    the one from the first hit to work with.
+
+    Same frozen-build re-invocation trick as trigger_auto_refresh() — see
+    its docstring — since sys.executable is the bundled binary itself
+    inside a PyInstaller build, not a Python interpreter that can run a
+    loose .py file.
+    """
+    if not config.get("auto_open_browser", True):
+        return
+    try:
+        urllib.request.urlopen(f"http://127.0.0.1:{OPEN_BROWSER_PORT}/json/version", timeout=1)
+        logger.info("outcome=open_browser_skipped detail=already_running")
+        return
+    except Exception:
+        pass  # nothing listening on that port -> safe to launch
+    if getattr(sys, "frozen", False):
+        cmd = [sys.executable, "--internal-open-browser"]
+    else:
+        if not OPEN_BROWSER_SCRIPT.exists():
+            return
+        cmd = [sys.executable, str(OPEN_BROWSER_SCRIPT)]
+    try:
+        subprocess.Popen(
+            cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True
+        )
+        logger.info("outcome=open_browser_launched")
+    except Exception as e:
+        logger.info("outcome=open_browser_launch_failed detail=%r", str(e))
+
+
 def cookie_header(session):
     return "; ".join(f"{k}={v}" for k, v in session.get("cookies", {}).items())
 
@@ -395,6 +438,7 @@ def run_check(logger, dash_status):
                 )
                 logger.info("outcome=push_sent detail=%r", fastest)
                 dash_status["last_push_signature"] = fastest
+                trigger_open_browser(logger, config)
         else:
             dash_status["last_push_signature"] = None
 
