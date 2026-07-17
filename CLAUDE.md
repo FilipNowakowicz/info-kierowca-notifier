@@ -10,12 +10,17 @@ a timer, never books/reserves anything. Zero third-party dependencies (stdlib on
 - `dashboard_server.py` — stdlib HTTP server, binds `127.0.0.1:8787`, serves `status.json` state.
 - `pull_session_cookies.py` — pulls session cookies from a running Chrome via remote-debugging
   port; writes them into `session.json`. Manual: you launch Chrome and log in first.
-- `auto_refresh_session.py` — launches Chrome itself (dedicated throwaway profile), waits for you
-  to scan the mObywatel QR, captures cookies once they appear. Auto-triggered by `notifier.py` on
+- `auto_refresh_session.py` — launches Chrome itself (dedicated throwaway profile) at
+  `info-kierowca.pl/login`, auto-clicks through the gov.pl → "Aplikacja mObywatel" chooser via an
+  injected DOM-mutation-observer (see `AUTO_CLICK_TARGETS`/`AUTO_CLICK_OBSERVER_JS` — text-based,
+  will break if the site's login UI text/labels change), then waits **indefinitely** for you to
+  scan the QR and captures cookies the moment they appear. Auto-triggered by `notifier.py` on
   `auth_expired` (see `trigger_auto_refresh()`); guarded by a lock file at
-  `~/.local/state/info-kierowca-notifier/auto-refresh.lock`. Disable via `auto_refresh_chrome:
-  false` in `config.json`.
-- `cdp_client.py` — shared Chrome DevTools Protocol helpers used by both of the above.
+  `~/.local/state/info-kierowca-notifier/auto-refresh.lock` so it won't relaunch while one's
+  already in flight. Disable via `auto_refresh_chrome: false` in `config.json`.
+- `cdp_client.py` — shared Chrome DevTools Protocol helpers used by both `pull_session_cookies.py`
+  and `auto_refresh_session.py` (cookie reads, JS eval in the page, and registering a script to run
+  on every future document via `Page.addScriptToEvaluateOnNewDocument`).
 - `systemd/*.service`, `systemd/*.timer` — source of truth for the systemd user units. These get
   copied to `~/.config/systemd/user/` — **edit the repo copy and re-`cp` + `daemon-reload`**, the
   deployed copy is not symlinked back to the repo.
@@ -63,6 +68,12 @@ needs `DISPLAY`/`WAYLAND_DISPLAY` imported into the systemd user manager (normal
 you're desktop-logged-into; not there on a headless box or before first login) — if Chrome never
 appears, check `journalctl --user -u info-kierowca-auto-refresh -n 20 --no-pager`. Set
 `auto_refresh_chrome: false` in `config.json` to disable and fall back to manual relogin.
+
+The gov.pl → "Aplikacja mObywatel" click-through is text-based (`AUTO_CLICK_TARGETS` in
+`auto_refresh_session.py`) — if info-kierowca.pl or gov.pl ever change that UI's copy or the login
+click-path, the script will just sit on whatever screen it landed on without erring; it's still
+safe to click through by hand while it waits (it never times out — see `DEFAULT_TIMEOUT`), but the
+target list will need updating to restore full automation.
 
 ### Known gotcha: dashboard port-in-use crash loop
 

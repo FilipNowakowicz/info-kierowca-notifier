@@ -76,10 +76,11 @@ Requires Python 3.9+ and nothing else (standard library only).
    ```
    python auto_refresh_session.py
    ```
-   It launches Chrome in its own throwaway profile (your regular Chrome windows stay open), waits
-   for you to scan the mObywatel QR code in the app, then captures the resulting `__Secure-PUDOJT`
-   / `__Secure-PUDOJTMD` cookies and writes `session.json` for you. Nothing is sent anywhere but
-   info-kierowca.pl and your own machine.
+   It launches Chrome in its own throwaway profile (your regular Chrome windows stay open), clicks
+   through the gov.pl → "Aplikacja mObywatel" login chooser on its own, then waits — indefinitely,
+   no timeout — for you to scan the mObywatel QR code in the app. Once you do, it captures the
+   resulting `__Secure-PUDOJT` / `__Secure-PUDOJTMD` cookies and writes `session.json` for you.
+   Nothing is sent anywhere but info-kierowca.pl/gov.pl and your own machine.
 
    **Option B — `pull_session_cookies.py` (Chrome/Chromium, manual):** quit Chrome completely,
    relaunch it with its remote-debugging port open, log in to info-kierowca.pl, then run the
@@ -158,9 +159,11 @@ stops retrying after a few rapid failures (`start-limit-hit`).
 By default (`auto_refresh_chrome: true`), whenever a check comes back `auth_expired` — a 401,
 403, 404 on the refresh call, or a 401/403/500 on the search call, all of which have in practice
 turned out to be the same underlying cookie-expiry problem — `notifier.py` launches
-`auto_refresh_session.py` in the background. It opens Chrome to the login page in its own
-profile, sends you a push + desktop notification to scan the mObywatel QR in the app, and once you
-scan it, captures the new cookies and writes `session.json` automatically. A lock file
+`auto_refresh_session.py` in the background. It opens Chrome to the login page in its own profile,
+clicks through the gov.pl → "Aplikacja mObywatel" chooser on its own, and sends you a single
+(non-urgent) push + desktop notification to scan the QR in the app. It waits indefinitely — there's
+no timeout to race, since a relogin has to happen eventually anyway — and the moment you scan it,
+captures the new cookies and writes `session.json` automatically. A lock file
 (`~/.local/state/info-kierowca-notifier/auto-refresh.lock`) stops it firing again on every
 subsequent 60s tick while a relogin is already in flight; it's cleaned up when that run finishes
 (delete it by hand if a run ever crashes without cleaning up).
