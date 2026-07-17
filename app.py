@@ -97,9 +97,10 @@ def build_config(payload):
 
     try:
         category = int(payload.get("category", 5))
-        push_below_days = int(payload.get("push_below_days", 10))
     except (TypeError, ValueError):
-        raise ValueError("Category / push-threshold must be numbers")
+        raise ValueError("Category must be a number")
+
+    current_slot_date = require_str("current_slot_date", "Current slot date")
 
     config = {
         "organization_ids": organization_ids,
@@ -108,12 +109,9 @@ def build_config(payload):
         "profile_number": profile_number,
         "exam_types": exam_types,
         "ntfy_topic": ntfy_topic,
-        "push_below_days": push_below_days,
+        "current_slot_date": current_slot_date,
         "auto_refresh_chrome": bool(payload.get("auto_refresh_chrome", True)),
     }
-    push_before_date = payload.get("push_before_date")
-    if push_before_date:
-        config["push_before_date"] = push_before_date
     return config
 
 
@@ -127,6 +125,17 @@ document.getElementById('ikw-stop-btn').addEventListener('click', async () => {
   try { await fetch('/shutdown', {method: 'POST'}); } catch (e) {}
   document.body.innerHTML =
     '<div style="padding:4rem;text-align:center;font-family:sans-serif;color:#eee;">Stopped. You can close this tab.</div>';
+});
+</script>
+"""
+
+SETTINGS_BUTTON_HTML = """
+<button id="ikw-settings-btn" style="position:fixed;top:1rem;right:6.5rem;padding:0.5rem 1rem;
+  background:#444;color:#eee;border:1px solid #666;border-radius:6px;cursor:pointer;
+  font-family:-apple-system,'Segoe UI',system-ui,sans-serif;">Settings</button>
+<script>
+document.getElementById('ikw-settings-btn').addEventListener('click', () => {
+  window.location.href = '/settings';
 });
 </script>
 """
@@ -155,11 +164,11 @@ WIZARD_PAGE = """<!doctype html>
   .row { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.4rem; }
   .row input[type=checkbox] { width: auto; margin: 0; }
   .hint { opacity: 0.6; font-size: 0.85rem; margin-top: -0.4rem; margin-bottom: 0.8rem; }
-  .centers-head { display: flex; gap: 1rem; opacity: 0.6; font-size: 0.8rem; margin-bottom: 0.3rem; }
-  .centers-head span:first-child { width: 5.4rem; }
+  .centers-head { display: flex; align-items: center; gap: 1rem; opacity: 0.6; font-size: 0.8rem; margin-bottom: 0.3rem; }
+  .centers-head .checks-head { display: flex; gap: 1.6rem; width: 8rem; flex-shrink: 0; white-space: nowrap; }
   #centers-list { max-height: 260px; overflow-y: auto; margin-bottom: 0.6rem; }
   .center-row { display: flex; align-items: center; gap: 1rem; margin-bottom: 0.3rem; }
-  .center-row .checks { display: flex; gap: 2.1rem; width: 5.4rem; flex-shrink: 0; }
+  .center-row .checks { display: flex; gap: 1.6rem; width: 8rem; flex-shrink: 0; }
   button[type=submit] {
     width: 100%; padding: 0.8rem; background: #3a6ea5; color: #fff; border: none;
     border-radius: 6px; font-size: 1rem; cursor: pointer;
@@ -173,8 +182,8 @@ WIZARD_PAGE = """<!doctype html>
 </head>
 <body>
 <div id="card">
-  <h1>Set up info-kierowca watcher</h1>
-  <p class="lead">This runs entirely on your machine — nothing but info-kierowca.pl ever sees your PKK number or session.</p>
+  <h1 id="page-title">Set up info-kierowca watcher</h1>
+  <p class="lead" id="page-lead">This runs entirely on your machine — nothing but info-kierowca.pl ever sees your PKK number or session.</p>
 
   <div id="error"></div>
 
@@ -199,7 +208,7 @@ WIZARD_PAGE = """<!doctype html>
     <fieldset>
       <legend>WORD centers (__CENTER_COUNT__ nationwide)</legend>
       <input type="text" id="center-search" placeholder="Search by name or city...">
-      <div class="centers-head"><span></span><span>Query</span><span>Alert me</span></div>
+      <div class="centers-head"><span class="checks-head"><span>Query</span><span>Alert me</span></span><span>Center</span></div>
       <div id="centers-list"></div>
       <label for="manual-ids" style="margin-top:0.6rem;">Other center IDs (comma-separated, optional)</label>
       <input type="text" id="manual-ids" placeholder="e.g. 12345, 67890">
@@ -208,11 +217,8 @@ WIZARD_PAGE = """<!doctype html>
 
     <fieldset>
       <legend>Alerting</legend>
-      <label for="push_below_days">Push a phone notification when the fastest slot is within this many days</label>
-      <input type="number" id="push_below_days" value="10">
-
-      <label for="push_before_date">...or push for any slot before a fixed date (optional, overrides the above)</label>
-      <input type="date" id="push_before_date">
+      <label for="current_slot_date">Date of your current booked slot — push a phone notification for any found slot on or before this date (e.g. an earlier date, or a different time the same day)</label>
+      <input type="date" id="current_slot_date" required>
 
       <div class="row"><input type="checkbox" id="auto_refresh_chrome" checked><label for="auto_refresh_chrome" style="margin:0;">Automatically reopen Chrome to log back in when my session expires</label></div>
     </fieldset>
@@ -227,7 +233,7 @@ WIZARD_PAGE = """<!doctype html>
       <div class="hint">Anyone who knows this link can read your notifications — don't share it.</div>
     </fieldset>
 
-    <button type="submit">Save and log in</button>
+    <button type="submit" id="submit-btn">Save and log in</button>
   </form>
 
   <div id="done">
@@ -238,6 +244,10 @@ WIZARD_PAGE = """<!doctype html>
 
 <script>
 const CENTERS = __CENTERS_JSON__;
+const EXISTING_CONFIG = __EXISTING_CONFIG_JSON__;
+const KNOWN_IDS = new Set(CENTERS.map(c => c.id));
+const checkedOrgIds = new Set((EXISTING_CONFIG ? EXISTING_CONFIG.organization_ids : []).filter(id => KNOWN_IDS.has(id)));
+const checkedWatchIds = new Set((EXISTING_CONFIG ? EXISTING_CONFIG.watch_organization_ids : []).filter(id => KNOWN_IDS.has(id)));
 
 const centersList = document.getElementById('centers-list');
 function renderCenters(filter) {
@@ -252,8 +262,16 @@ function renderCenters(filter) {
     checks.className = 'checks';
     const orgCb = document.createElement('input');
     orgCb.type = 'checkbox'; orgCb.className = 'org'; orgCb.value = c.id;
+    orgCb.checked = checkedOrgIds.has(c.id);
+    orgCb.addEventListener('change', () => {
+      if (orgCb.checked) checkedOrgIds.add(c.id); else checkedOrgIds.delete(c.id);
+    });
     const watchCb = document.createElement('input');
     watchCb.type = 'checkbox'; watchCb.className = 'watch'; watchCb.value = c.id;
+    watchCb.checked = checkedWatchIds.has(c.id);
+    watchCb.addEventListener('change', () => {
+      if (watchCb.checked) checkedWatchIds.add(c.id); else checkedWatchIds.delete(c.id);
+    });
     checks.appendChild(orgCb);
     checks.appendChild(watchCb);
     const span = document.createElement('span');
@@ -266,6 +284,37 @@ function renderCenters(filter) {
 renderCenters('');
 document.getElementById('center-search').addEventListener('input', (e) => renderCenters(e.target.value));
 
+if (EXISTING_CONFIG) {
+  document.getElementById('page-title').textContent = 'info-kierowca watcher — settings';
+  document.getElementById('page-lead').textContent = 'Change anything below and save — takes effect on the next check.';
+  document.getElementById('submit-btn').textContent = 'Save changes';
+
+  document.getElementById('profile_number').value = EXISTING_CONFIG.profile_number || '';
+
+  const categorySel = document.getElementById('category');
+  const catStr = String(EXISTING_CONFIG.category);
+  if (Array.from(categorySel.options).some(o => o.value === catStr)) {
+    categorySel.value = catStr;
+  } else {
+    categorySel.value = 'other';
+    document.getElementById('category-other').style.display = 'block';
+    document.getElementById('category-other').value = EXISTING_CONFIG.category;
+  }
+
+  const examTypes = EXISTING_CONFIG.exam_types || [];
+  document.getElementById('exam-theoretical').checked = examTypes.includes('Theoretical');
+  document.getElementById('exam-practice').checked = examTypes.includes('Practice');
+
+  const manualPrefillIds = Array.from(new Set([
+    ...(EXISTING_CONFIG.organization_ids || []),
+    ...(EXISTING_CONFIG.watch_organization_ids || []),
+  ])).filter(id => !KNOWN_IDS.has(id));
+  document.getElementById('manual-ids').value = manualPrefillIds.join(', ');
+
+  document.getElementById('current_slot_date').value = EXISTING_CONFIG.current_slot_date || '';
+  document.getElementById('auto_refresh_chrome').checked = EXISTING_CONFIG.auto_refresh_chrome !== false;
+}
+
 document.getElementById('category').addEventListener('change', (e) => {
   document.getElementById('category-other').style.display = e.target.value === 'other' ? 'block' : 'none';
 });
@@ -274,10 +323,6 @@ document.getElementById('copy-ntfy').addEventListener('click', () => {
   const el = document.getElementById('ntfy_topic');
   navigator.clipboard.writeText(`https://ntfy.sh/${el.value}`);
 });
-
-function collectIds(selector) {
-  return Array.from(document.querySelectorAll(selector)).filter(el => el.checked).map(el => parseInt(el.value, 10));
-}
 
 function parseManual(text) {
   return text.split(',').map(s => s.trim()).filter(Boolean).map(Number).filter(n => !Number.isNaN(n));
@@ -294,9 +339,9 @@ document.getElementById('form').addEventListener('submit', async (e) => {
     if (!examTypes.length) throw new Error('Pick at least one exam type.');
 
     const manualIds = parseManual(document.getElementById('manual-ids').value);
-    const orgIds = Array.from(new Set([...collectIds('.org'), ...manualIds]));
+    const orgIds = Array.from(new Set([...checkedOrgIds, ...manualIds]));
     if (!orgIds.length) throw new Error('Pick or enter at least one WORD center.');
-    const watchIds = Array.from(new Set([...collectIds('.watch'), ...manualIds]));
+    const watchIds = Array.from(new Set([...checkedWatchIds, ...manualIds]));
 
     const profileNumber = document.getElementById('profile_number').value.trim();
     if (!profileNumber) throw new Error('PKK number is required.');
@@ -307,18 +352,19 @@ document.getElementById('form').addEventListener('submit', async (e) => {
       : parseInt(categorySel, 10);
     if (!category) throw new Error('Enter a valid category number.');
 
+    const currentSlotDate = document.getElementById('current_slot_date').value;
+    if (!currentSlotDate) throw new Error('Enter the date of your current booked slot.');
+
     const body = {
       profile_number: profileNumber,
       organization_ids: orgIds,
       watch_organization_ids: watchIds,
       category: category,
       exam_types: examTypes,
-      push_below_days: parseInt(document.getElementById('push_below_days').value, 10) || 10,
+      current_slot_date: currentSlotDate,
       auto_refresh_chrome: document.getElementById('auto_refresh_chrome').checked,
       ntfy_topic: document.getElementById('ntfy_topic').value,
     };
-    const pushBeforeDate = document.getElementById('push_before_date').value;
-    if (pushBeforeDate) body.push_before_date = pushBeforeDate;
 
     const res = await fetch('/setup', {
       method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)
@@ -326,8 +372,12 @@ document.getElementById('form').addEventListener('submit', async (e) => {
     const data = await res.json();
     if (!res.ok || !data.ok) throw new Error(data.error || 'Save failed.');
 
-    document.getElementById('form').style.display = 'none';
-    document.getElementById('done').style.display = 'block';
+    if (EXISTING_CONFIG) {
+      window.location.href = '/';
+    } else {
+      document.getElementById('form').style.display = 'none';
+      document.getElementById('done').style.display = 'block';
+    }
   } catch (err) {
     errorEl.textContent = err.message;
   }
@@ -338,11 +388,17 @@ document.getElementById('form').addEventListener('submit', async (e) => {
 """
 
 
-def render_wizard():
+def render_wizard(existing_config=None):
     centers_json = json.dumps(WORD_CENTERS, ensure_ascii=False).replace("</", "<\\/")
     page = WIZARD_PAGE.replace("__CENTERS_JSON__", centers_json)
     page = page.replace("__CENTER_COUNT__", str(len(WORD_CENTERS)))
-    page = page.replace("__NTFY_TOPIC__", secrets.token_urlsafe(24))
+    ntfy_topic = existing_config["ntfy_topic"] if existing_config else secrets.token_urlsafe(24)
+    page = page.replace("__NTFY_TOPIC__", ntfy_topic)
+    existing_json = (
+        json.dumps(existing_config, ensure_ascii=False).replace("</", "<\\/")
+        if existing_config else "null"
+    )
+    page = page.replace("__EXISTING_CONFIG_JSON__", existing_json)
     return page.encode("utf-8")
 
 
@@ -369,7 +425,13 @@ class AppHandler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path in ("/", "/index.html"):
             if notifier.CONFIG_FILE.exists():
-                self._send(200, dashboard_server.PAGE.replace("</body>", STOP_BUTTON_HTML + "</body>"))
+                buttons = STOP_BUTTON_HTML + SETTINGS_BUTTON_HTML
+                self._send(200, dashboard_server.PAGE.replace("</body>", buttons + "</body>"))
+            else:
+                self._send(200, render_wizard())
+        elif self.path == "/settings":
+            if notifier.CONFIG_FILE.exists():
+                self._send(200, render_wizard(notifier.load_json(notifier.CONFIG_FILE)))
             else:
                 self._send(200, render_wizard())
         elif self.path == "/status.json":

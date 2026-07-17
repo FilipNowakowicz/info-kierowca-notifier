@@ -55,7 +55,11 @@ dependencies (stdlib only).
   this file. Reuses `find_chrome()` from `auto_refresh_session.py` rather than duplicating it.
 - `app.py` — the composed, zero-setup entry point: runs `notifier.loop()` in a background thread,
   serves a first-run setup wizard + the dashboard + a `POST /shutdown` (the page's Stop button;
-  hard-exits via `os._exit(0)`) from one stdlib HTTP server, and auto-opens the browser. This is
+  hard-exits via `os._exit(0)`) from one stdlib HTTP server, and auto-opens the browser. The
+  dashboard's Settings button hits `GET /settings`, which reuses `render_wizard()` — passed the
+  existing `config.json` so the same form comes back prefilled — rather than a separate edit page;
+  submitting posts to the same `/setup` endpoint that first-run setup uses, so `build_config()`
+  stays the single place config validation lives. This is
   what the packaged release binaries (`pyinstaller.spec`, built `--windowed` — no console window)
   actually run. Shares `notifier.CONFIG_DIR`/`STATE_DIR` with the source/systemd path, so switching
   between "ran the binary" and "ran from source" never loses config/session/history. Detects an

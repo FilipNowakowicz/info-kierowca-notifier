@@ -62,7 +62,8 @@ claim still holds either way).
    Application/Storage → Cookies, and copy the `__Secure-PUDOJT` and `__Secure-PUDOJTMD` values
    into `session.json` by hand.
 
-3. Edit `config.json`:
+3. Edit `config.json` (or, once it's running, use the **Settings** button on the dashboard — same
+   form, prefilled with your current values, saves straight back to `config.json`):
 
    | Field | Meaning |
    |---|---|
@@ -72,8 +73,7 @@ claim still holds either way).
    | `profile_number` | Your PKK profile number |
    | `exam_types` | Which exam(s) to watch: `["Theoretical"]`, `["Practice"]`, or both `["Theoretical", "Practice"]` |
    | `ntfy_topic` | Your [ntfy.sh](https://ntfy.sh) topic for phone push (pick a long random string — anyone who knows it can read your notifications) |
-   | `push_below_days` | Only send a phone push (and turn the dashboard red) when the fastest slot is within this many days |
-   | `push_before_date` *(optional)* | A fixed date (`"YYYY-MM-DD"`), exclusive — alert on any slot before this date instead of using a rolling day count. Takes priority over `push_below_days` when set. |
+   | `current_slot_date` | Date (`"YYYY-MM-DD"`) of your current booked slot. Send a phone push (and turn the dashboard red) for any found slot on or before this date, inclusive — an earlier date, or the same date at a different time. |
    | `auto_refresh_chrome` *(optional, default `true`)* | Whether an `auth_expired` outcome should automatically launch `auto_refresh_session.py` (see below). Set to `false` to fall back to a manual relogin. |
    | `auto_open_browser` *(optional, default `true`)* | Whether a matching urgent slot should also launch `open_logged_in_browser.py` (see [Reschedule assist](#reschedule-assist) below). Set to `false` to disable. |
 
@@ -155,7 +155,7 @@ If Chrome never appears, check `journalctl --user -u info-kierowca-auto-refresh 
 
 If you already have a paid booking and just want to move it to a fresher date, `notifier.py` can
 open a browser for you the moment a matching urgent slot appears (same gating as the phone push —
-see `push_below_days`/`push_before_date`), pre-authenticated with your saved session, and click
+see `current_slot_date`), pre-authenticated with your saved session, and click
 through the first two steps of changing that booking's date:
 
 ```
