@@ -9,7 +9,10 @@ import argparse
 import json
 import logging
 import logging.handlers
+import os
+import shutil
 import subprocess
+import sys
 import time
 import urllib.error
 import urllib.request
@@ -149,6 +152,50 @@ def push_ntfy(logger, topic, title, message, priority="default", tags=None):
         logger.info("outcome=push_failed detail=%r", str(e))
 
 
+AUTO_REFRESH_SCRIPT = Path(__file__).parent / "auto_refresh_session.py"
+AUTO_REFRESH_LOCK = STATE_DIR / "auto-refresh.lock"
+
+
+def trigger_auto_refresh(logger, config):
+    """Best-effort: launch auto_refresh_session.py to relogin via Chrome+QR.
+
+    Detached so it survives this (oneshot) process exiting — on systemd it's
+    handed off via `systemd-run --user` so it isn't killed when this unit's
+    cgroup is torn down at exit; elsewhere a plain detached Popen is enough.
+    Guarded by auto_refresh_session.py's own lock file so a stuck relogin
+    doesn't get relaunched on every subsequent 60s tick.
+    """
+    if not config.get("auto_refresh_chrome", True):
+        return
+    if AUTO_REFRESH_LOCK.exists():
+        try:
+            pid = int(AUTO_REFRESH_LOCK.read_text().strip())
+            os.kill(pid, 0)
+            logger.info("outcome=auto_refresh_skipped detail=already_running pid=%s", pid)
+            return
+        except (ValueError, OSError):
+            pass  # stale lock — let auto_refresh_session.py sort it out
+    if not AUTO_REFRESH_SCRIPT.exists():
+        return
+    python = sys.executable
+    if shutil.which("systemd-run"):
+        cmd = [
+            "systemd-run", "--user", "--collect",
+            "--unit=info-kierowca-auto-refresh",
+            "--description=info-kierowca.pl auto session refresh",
+            python, str(AUTO_REFRESH_SCRIPT),
+        ]
+    else:
+        cmd = [python, str(AUTO_REFRESH_SCRIPT)]
+    try:
+        subprocess.Popen(
+            cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True
+        )
+        logger.info("outcome=auto_refresh_launched")
+    except Exception as e:
+        logger.info("outcome=auto_refresh_launch_failed detail=%r", str(e))
+
+
 def cookie_header(session):
     return "; ".join(f"{k}={v}" for k, v in session.get("cookies", {}).items())
 
@@ -203,6 +250,7 @@ def run_check(logger, dash_status):
             "critical",
         )
         update_status(dash_status, "auth_expired", "session.json missing")
+        trigger_auto_refresh(logger, config)
         return
     session = load_json(SESSION_FILE)
 
@@ -219,6 +267,7 @@ def run_check(logger, dash_status):
             "critical",
         )
         update_status(dash_status, "auth_expired", "Session expired during refresh")
+        trigger_auto_refresh(logger, config)
         return
     else:
         detail = body[:200].decode(errors="replace") if body else ""
@@ -249,6 +298,7 @@ def run_check(logger, dash_status):
             "critical",
         )
         update_status(dash_status, "auth_expired", "Session expired during search")
+        trigger_auto_refresh(logger, config)
         return
     if status != 200:
         detail = body[:200].decode(errors="replace") if body else ""

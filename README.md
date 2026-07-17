@@ -69,7 +69,19 @@ Requires Python 3.9+ and nothing else (standard library only).
    so you only need to do this once — and again if the session is ever invalidated (e.g. by
    logging in fresh elsewhere).
 
-   **Option A — `pull_session_cookies.py` (Chrome/Chromium, automatic):** quit Chrome completely,
+   **Option A — `auto_refresh_session.py` (Chrome/Chromium, hands-off):** run it once to seed
+   `session.json`, and from then on it also fires automatically whenever the notifier hits an
+   `auth_expired` outcome (session cookie expiry, or an HTTP 500 — see [Auto-relogin on session
+   expiry](#auto-relogin-on-session-expiry) below):
+   ```
+   python auto_refresh_session.py
+   ```
+   It launches Chrome in its own throwaway profile (your regular Chrome windows stay open), waits
+   for you to scan the mObywatel QR code in the app, then captures the resulting `__Secure-PUDOJT`
+   / `__Secure-PUDOJTMD` cookies and writes `session.json` for you. Nothing is sent anywhere but
+   info-kierowca.pl and your own machine.
+
+   **Option B — `pull_session_cookies.py` (Chrome/Chromium, manual):** quit Chrome completely,
    relaunch it with its remote-debugging port open, log in to info-kierowca.pl, then run the
    script:
    ```
@@ -83,7 +95,7 @@ Requires Python 3.9+ and nothing else (standard library only).
    script's docstring for the Windows launch command and a security note about the debug port
    (it grants full control of the browser, so don't expose it beyond localhost).
 
-   **Option B — DevTools (manual, any browser):** log in to info-kierowca.pl, open DevTools →
+   **Option C — DevTools (manual, any browser):** log in to info-kierowca.pl, open DevTools →
    Application/Storage → Cookies, and copy the `__Secure-PUDOJT` and `__Secure-PUDOJTMD` values
    into `session.json` by hand.
 
@@ -100,6 +112,7 @@ Requires Python 3.9+ and nothing else (standard library only).
    | `ntfy_topic` | Your [ntfy.sh](https://ntfy.sh) topic for phone push (pick a long random string — anyone who knows it can read your notifications) |
    | `push_below_days` | Only send a phone push (and turn the dashboard red) when the fastest slot is within this many days |
    | `push_before_date` *(optional)* | A fixed date (`"YYYY-MM-DD"`), exclusive — alert on any slot before this date instead of using a rolling day count. Takes priority over `push_below_days` when set. |
+   | `auto_refresh_chrome` *(optional, default `true`)* | Whether an `auth_expired` outcome should automatically launch `auto_refresh_session.py` (see below). Set to `false` to fall back to a manual relogin. |
 
 4. Run it — pick whichever fits your OS:
 
@@ -139,6 +152,31 @@ you won't get a popup on errors — check the dashboard or the log file instead,
 previous run) is already bound to port 8787. Find and stop it, then
 `systemctl --user reset-failed info-kierowca-dashboard.service` before starting again — systemd
 stops retrying after a few rapid failures (`start-limit-hit`).
+
+## Auto-relogin on session expiry
+
+By default (`auto_refresh_chrome: true`), whenever a check comes back `auth_expired` — a 401,
+403, 404 on the refresh call, or a 401/403/500 on the search call, all of which have in practice
+turned out to be the same underlying cookie-expiry problem — `notifier.py` launches
+`auto_refresh_session.py` in the background. It opens Chrome to the login page in its own
+profile, sends you a push + desktop notification to scan the mObywatel QR in the app, and once you
+scan it, captures the new cookies and writes `session.json` automatically. A lock file
+(`~/.local/state/info-kierowca-notifier/auto-refresh.lock`) stops it firing again on every
+subsequent 60s tick while a relogin is already in flight; it's cleaned up when that run finishes
+(delete it by hand if a run ever crashes without cleaning up).
+
+**Only works if a real desktop/GUI session is available** — Chrome needs somewhere to render the
+QR code. If `info-kierowca-notifier.service` runs under systemd on a headless box or before you've
+logged into a desktop session, disable it (`auto_refresh_chrome: false` in `config.json`) and use
+`auto_refresh_session.py` or `pull_session_cookies.py` by hand instead.
+
+**systemd note:** the launch is handed off via `systemd-run --user` specifically so the Chrome +
+watcher process survives after the triggering oneshot `info-kierowca-notifier.service` run exits
+(a plain child process would otherwise be killed along with it — see `KillMode=control-group`, the
+systemd default). `systemd-run --user` needs the same graphical-session environment
+(`DISPLAY`/`WAYLAND_DISPLAY`) imported into your systemd user manager that any GUI app launched
+from a `systemd --user` unit would need; most desktop environments do this automatically at login.
+If Chrome never appears, check `journalctl --user -u info-kierowca-auto-refresh -n 20 --no-pager`.
 
 ## Pausing / resuming
 
