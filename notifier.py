@@ -211,7 +211,7 @@ def run_check(logger, dash_status):
     if status == 204:
         save_json(SESSION_FILE, session)
         logger.info("outcome=refresh_ok status=%s", status)
-    elif status in (401, 403, 404):
+    elif status in (401, 403, 404, 500):
         logger.info("outcome=auth_expired status=%s stage=refresh", status)
         notify(
             "info-kierowca: session expired",
@@ -241,7 +241,7 @@ def run_check(logger, dash_status):
     }
     status, body, headers = do_request(SEARCH_URL, session, method="POST", json_body=payload)
 
-    if status in (401, 403):
+    if status in (401, 403, 500):
         logger.info("outcome=auth_expired status=%s stage=search", status)
         notify(
             "info-kierowca: session expired",
