@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-"""Shared Chrome DevTools Protocol (CDP) helpers for reading info-kierowca.pl
-session cookies out of a Chrome instance over its local remote-debugging
-port. Used by both pull_session_cookies.py (manual, Chrome already running)
-and auto_refresh_session.py (launches Chrome itself and waits for login).
+"""Shared Chrome DevTools Protocol (CDP) helpers for reading (and, for
+open_logged_in_browser.py, writing) info-kierowca.pl session cookies via a
+Chrome instance's local remote-debugging port. Used by pull_session_cookies.py
+(manual, Chrome already running), auto_refresh_session.py (launches Chrome
+itself and waits for login), and open_logged_in_browser.py (launches Chrome
+and injects an already-saved session instead of waiting for a fresh login).
 
 Everything here talks to 127.0.0.1 only and writes straight to session.json.
 Nothing is sent to info-kierowca.pl, ntfy.sh, or anywhere else by this module.
@@ -133,6 +135,64 @@ def fetch_cookies(host, port):
     finally:
         sock.close()
     return result.get("cookies", [])
+
+
+def set_cookies(host, port, cookies):
+    """Inject `cookies` (name -> value) into Chrome's cookie jar for
+    info-kierowca.pl via Storage.setCookies (browser-level, same target as
+    fetch_cookies) — call before the profile's first navigation there so the
+    site sees an already-authenticated session instead of a login page.
+
+    httpOnly is deliberately False: confirmed live that the site's own
+    frontend reads these cookies via `document.cookie` to decide its logged-
+    in UI state (no `/jwt/refresh` call happens on page load), so an
+    httpOnly copy is invisible to it and it renders as logged out even
+    though the cookie is still sent correctly on every request.
+    """
+    version_url = f"http://{host}:{port}/json/version"
+    with urllib.request.urlopen(version_url, timeout=5) as resp:
+        info = json.loads(resp.read())
+    ws_url = info["webSocketDebuggerUrl"]
+    parsed = urlparse(ws_url.replace("ws://", "http://"))
+    sock = socket.create_connection((parsed.hostname, parsed.port), timeout=5)
+    try:
+        ws_handshake(sock, f"{parsed.hostname}:{parsed.port}", parsed.path)
+        cookie_params = [
+            {
+                "name": name,
+                "value": value,
+                "domain": DOMAIN_SUFFIX,
+                "path": "/",
+                "secure": True,
+                "httpOnly": False,
+                "sameSite": "Lax",
+            }
+            for name, value in cookies.items()
+        ]
+        cdp_call(sock, 1, "Storage.setCookies", {"cookies": cookie_params})
+    finally:
+        sock.close()
+
+
+def navigate(host, port, url):
+    """Navigate the first open page/tab to `url`. No script injection —
+    see inject_and_navigate for the login-auto-click variant that needs one.
+    """
+    list_url = f"http://{host}:{port}/json"
+    with urllib.request.urlopen(list_url, timeout=5) as resp:
+        targets = json.loads(resp.read())
+    pages = [t for t in targets if t.get("type") == "page"]
+    if not pages:
+        raise RuntimeError("No page target found to navigate")
+    ws_url = pages[0]["webSocketDebuggerUrl"]
+    parsed = urlparse(ws_url.replace("ws://", "http://"))
+    sock = socket.create_connection((parsed.hostname, parsed.port), timeout=5)
+    try:
+        ws_handshake(sock, f"{parsed.hostname}:{parsed.port}", parsed.path)
+        cdp_call(sock, 1, "Page.enable")
+        cdp_call(sock, 2, "Page.navigate", {"url": url})
+    finally:
+        sock.close()
 
 
 def evaluate_in_page(host, port, expression):
