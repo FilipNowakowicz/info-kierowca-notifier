@@ -16,7 +16,6 @@ import socket
 import socketserver
 import sys
 import threading
-import time
 import urllib.request
 import webbrowser
 from pathlib import Path
