@@ -5,7 +5,7 @@
   "profile_number": "YOUR_PKK_NUMBER_HERE",
   "exam_types": ["Theoretical"],
   "ntfy_topic": "YOUR_RANDOM_NTFY_TOPIC_HERE",
-  "push_below_days": 10,
+  "current_slot_date": "2026-08-14",
   "auto_refresh_chrome": true,
   "auto_open_browser": true
 }

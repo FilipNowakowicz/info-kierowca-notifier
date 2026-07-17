@@ -100,17 +100,16 @@ def short_word(name):
 
 
 def is_urgent(fastest_dt, config):
-    """Whether fastest_dt clears the configured alert threshold.
+    """Whether fastest_dt is on or before the date of the user's current slot.
 
-    push_before_date (a fixed, exclusive calendar cutoff) takes priority over
-    push_below_days (a rolling day count) when both are set.
+    Inclusive: a slot on the same day still counts, since that's a same-day
+    time change rather than an earlier date.
     """
-    push_before_date = config.get("push_before_date")
-    if push_before_date:
-        return fastest_dt < datetime.fromisoformat(push_before_date)
-    push_threshold = config.get("push_below_days", 10)
-    days_until = (fastest_dt - datetime.now()).total_seconds() / 86400
-    return days_until <= push_threshold
+    current_slot_date = config["current_slot_date"]
+    cutoff = datetime.fromisoformat(current_slot_date).replace(
+        hour=23, minute=59, second=59
+    )
+    return fastest_dt <= cutoff
 
 
 def update_status(status, outcome, message="", current_hits=None, urgent=False):
