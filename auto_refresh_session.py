@@ -47,8 +47,18 @@ DEFAULT_URL = "https://info-kierowca.pl/login"
 # to bound it (e.g. for testing).
 DEFAULT_TIMEOUT = None
 
-CHROME_CANDIDATES = ["google-chrome", "google-chrome-stable", "chromium", "chromium-browser"]
+# Edge is Chromium-based and supports the same --remote-debugging-port CDP
+# flag, so it's included as a fallback — it's preinstalled on all Windows
+# machines, unlike Chrome, which matters for a "no setup needed" install.
+CHROME_CANDIDATES = [
+    "google-chrome", "google-chrome-stable", "chromium", "chromium-browser",
+    "msedge", "microsoft-edge", "microsoft-edge-stable",
+]
 CHROME_MAC_PATH = Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
+EDGE_WIN_PATHS = [
+    Path(r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"),
+    Path(r"C:\Program Files\Microsoft\Edge\Application\msedge.exe"),
+]
 
 # The login click-path: info-kierowca.pl -> (maybe) "Zaloguj się" -> a PWPW
 # identity-provider chooser with a "gov.pl" tile -> a login.gov.pl chooser
@@ -144,7 +154,10 @@ def find_chrome():
             return path
     if CHROME_MAC_PATH.exists():
         return str(CHROME_MAC_PATH)
-    raise SystemExit("Couldn't find a Chrome/Chromium binary on PATH.")
+    for path in EDGE_WIN_PATHS:
+        if path.exists():
+            return str(path)
+    raise SystemExit("Couldn't find a Chrome/Chromium/Edge binary on PATH.")
 
 
 def notify_desktop(summary, body, urgency="normal"):

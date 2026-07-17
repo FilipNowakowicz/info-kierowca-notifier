@@ -18,7 +18,9 @@ the final booking yourself, in your own browser.
 - Phone push via [ntfy.sh](https://ntfy.sh) when a slot appears within your chosen window
 - Local read-only dashboard at `http://127.0.0.1:8787`
 - Strictly read-only — never books, reserves, or submits anything
-- Zero dependencies (Python standard library only) — works on Linux, macOS, and Windows
+- Zero *runtime* dependencies (Python standard library only) — works on Linux, macOS, and
+  Windows. The packaged release binaries below are built with PyInstaller, a build-time-only
+  tool — nothing new gets installed on your machine either way.
 
 ## How it works
 
@@ -44,7 +46,37 @@ This does the minimum necessary to notify you, on purpose:
 
 Requires Python 3.9+ and nothing else (standard library only).
 
-## Setup
+## Download and run
+
+The easiest way to use this: download a single file, double-click it, and follow the browser
+tab that opens.
+
+1. Grab the build for your OS from the [Releases page](../../releases) — no installer, no admin
+   rights needed, nothing else gets installed on your machine.
+2. Double-click it (or run it from a terminal). No console window appears — it just opens a
+   browser tab.
+3. First run shows a short setup form: your PKK number, exam center(s), exam type, and how you
+   want to be notified. Submit it and a Chrome (or Edge) window opens for you to scan the
+   mObywatel QR code and log in — same flow described in [Auto-relogin on session
+   expiry](#auto-relogin-on-session-expiry) below.
+4. From then on, that browser tab is your dashboard, with a **Stop** button at the top if you
+   want to shut it down — closing the tab does *not* stop it, since there's no window to close;
+   use Stop.
+
+**First-run warnings:** the release binaries aren't code-signed (that needs a paid
+developer account on both Windows and macOS), so your OS will warn you the first time:
+- **Windows:** SmartScreen says "Windows protected your PC" → click "More info" → "Run anyway".
+- **macOS:** Gatekeeper says it "cannot be opened because the developer cannot be verified" →
+  right-click (or Control-click) the file → "Open" → confirm.
+
+This only needs doing once per download. If you'd rather not run an unsigned binary at all, use
+the from-source setup below instead — it's the exact same code, just run with `python app.py`.
+
+Config and session files live in the same place either way (`~/.config/info-kierowca-notifier/`,
+`~/.local/state/info-kierowca-notifier/`), so you can freely switch between the downloaded
+binary and running from source without losing anything.
+
+## Manual / from-source setup (for developers, or if you'd rather not run a downloaded binary)
 
 1. Copy the example config files into `~/.config/info-kierowca-notifier/` (this works the same
    way on Windows, macOS and Linux — Python resolves `~` to your user profile folder either way).
@@ -117,7 +149,16 @@ Requires Python 3.9+ and nothing else (standard library only).
 
 4. Run it — pick whichever fits your OS:
 
-   **Option A — built-in loop (works on Windows, macOS, Linux):**
+   **Option A — `app.py` (the same all-in-one wizard + dashboard + Stop button the downloaded
+   binaries run, just from source):**
+   ```
+   python app.py
+   ```
+   Opens a browser tab automatically; skips steps 1-3 above entirely if `config.json` doesn't
+   exist yet (it'll walk you through setup instead). No console window management needed here
+   either — use the page's Stop button, not Ctrl+C.
+
+   **Option B — built-in loop (works on Windows, macOS, Linux):**
    ```
    python notifier.py --loop
    ```
@@ -125,7 +166,7 @@ Requires Python 3.9+ and nothing else (standard library only).
    Windows Task Scheduler task running at log-on, or a macOS `launchd` agent). It checks every 60
    seconds by default; use `--interval` to change that.
 
-   **Option B — systemd user units (Linux only, recommended if available: survives reboots and
+   **Option C — systemd user units (Linux only, recommended if available: survives reboots and
    auto-restarts on failure):**
    ```
    cp systemd/*.service systemd/*.timer ~/.config/systemd/user/
@@ -133,7 +174,8 @@ Requires Python 3.9+ and nothing else (standard library only).
    systemctl --user enable --now info-kierowca-notifier.timer
    ```
 
-5. Separately, start the dashboard (same command on every OS — plain Python, no extra setup):
+5. If you used Option A, the dashboard is already running — skip this step. Otherwise, start it
+   separately (same command on every OS — plain Python, no extra setup):
    ```
    python dashboard_server.py
    ```
