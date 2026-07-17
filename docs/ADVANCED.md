@@ -175,6 +175,11 @@ Skipped automatically if something's already listening on its debug port (`9555`
 keeps reappearing under a new signature won't pile up duplicate Chrome windows. Disable with
 `auto_open_browser: false` in `config.json`.
 
+**Requires an existing confirmed booking.** The "Zmień termin" button only appears on a booking
+that's already `Potwierdzony` (confirmed) — if you don't have one, there's nothing on `/cases` for
+this to click, and it'll just report that it couldn't find the button. This flow moves the date on
+a booking you already hold; it doesn't create one.
+
 ## Pausing / resuming
 
 **Loop mode / `app.py`:** just stop the process (Ctrl+C, or the dashboard's Stop button for
