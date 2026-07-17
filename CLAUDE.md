@@ -127,7 +127,7 @@ auto-refresh trigger itself in real isolation, set `auto_refresh_chrome: false` 
 
 ## Constraints to respect when changing this code
 
-- Read-only by design — no booking/reservation code, ever (see README "Responsible use").
+- Read-only by design — no booking/reservation code, ever (see README "How it works").
 - Don't tighten the poll interval below the current default without being asked; this is
   explicitly a design choice to stay a good citizen of an undocumented API.
 - Session cookies / PKK number must never be sent anywhere except info-kierowca.pl itself.
