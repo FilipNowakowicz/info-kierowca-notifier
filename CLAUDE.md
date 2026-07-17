@@ -104,6 +104,19 @@ few times, then systemd gives up (`start-limit-hit`). Find/kill whatever holds t
 `systemctl --user reset-failed info-kierowca-dashboard.service` before starting again — a plain
 `start` after `start-limit-hit` is a no-op.
 
+### Known gotcha: testing app.py/auto-refresh in a sandbox on a machine with real units installed
+
+`trigger_auto_refresh()` prefers `systemd-run --user` (see its docstring) specifically so the
+Chrome+QR process survives the triggering process exiting. That hand-off runs under the systemd
+user manager's own environment, **not** the environment of the process that called
+`systemd-run` — so a sandboxed `HOME` override (e.g. `HOME=/tmp/fake-home python app.py`) does
+*not* propagate into the launched `auto_refresh_session.py`, which falls back to the real
+`~/.config`/`~/.local/state` paths regardless. Confirmed live: a sandboxed `app.py` test run's
+QR scan ended up refreshing the real production `session.json`, not the sandboxed one — harmless
+(same account, just a fresh session), but surprising if you're not expecting it. To test the
+auto-refresh trigger itself in real isolation, set `auto_refresh_chrome: false` in the sandboxed
+`config.json` first.
+
 ## Constraints to respect when changing this code
 
 - Read-only by design — no booking/reservation code, ever (see README "Responsible use").
