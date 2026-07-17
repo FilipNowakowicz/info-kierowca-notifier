@@ -17,3 +17,7 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - run: python -m py_compile *.py
+      # pyflakes is a dev/CI-only tool — it doesn't change the zero-runtime-dependency claim.
+      # Catches undefined names and unused imports that py_compile (syntax only) misses.
+      - run: pip install pyflakes
+      - run: python -m pyflakes *.py

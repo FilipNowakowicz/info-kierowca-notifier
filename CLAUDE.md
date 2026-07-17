@@ -164,10 +164,16 @@ auto-refresh trigger itself in real isolation, set `auto_refresh_chrome: false` 
 ## Constraints to respect when changing this code
 
 - Polling/checking stays strictly read-only. The one deliberate exception is
-  `open_logged_in_browser.py`'s reschedule assist, and even that has a hard line: it may click
-  through to the date-picker for an *existing, already-paid* booking, but nothing past that —
-  no code may ever pick a date, submit a summary, or hit a final confirm/reservation endpoint on
-  its own. That last step stays a real click from the user, always.
+  `open_logged_in_browser.py`'s reschedule assist. As of 2026-07-17, by explicit user request, the
+  policy ceiling was raised to allow fuller automation in future (picking the new date, and
+  eventually the summary/confirm steps) — but the **current build deliberately stops at the
+  date-range picker**: it clicks only "Zmień termin" and "Zmień termin rezerwacji" and lands on the
+  empty "Wybierz datę początkową dla nowego terminu" screen with nothing selected. Picking the new
+  date, the summary step, and every confirm past that are still real clicks from the user, and no
+  code here selects a date or submits a reservation change. This matches what the README and
+  `docs/ADVANCED.md` tell users. When you do extend automation past the date picker, move all three
+  docs (here, README, ADVANCED) together, and get the same kind of explicit sign-off for anything
+  past the summary screen, since past that point mistakes act on a real, already-paid exam booking.
 - Don't tighten the poll interval below the current default without being asked; this is
   explicitly a design choice to stay a good citizen of an undocumented API.
 - Session cookies / PKK number must never be sent anywhere except info-kierowca.pl itself.

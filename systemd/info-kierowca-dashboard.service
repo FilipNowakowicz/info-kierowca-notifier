@@ -3,8 +3,12 @@ Description=Local read-only dashboard for info-kierowca notifier (127.0.0.1 only
 
 [Service]
 Type=simple
-Environment=PATH=/etc/profiles/per-user/%u/bin:/run/current-system/sw/bin
-ExecStart=/etc/profiles/per-user/%u/bin/python3 %h/infokierowca/dashboard_server.py
+# python3 is located via /usr/bin/env, so this unit works on any distro without hardcoding an
+# interpreter path. PATH lists the usual system dirs first, then common Nix/NixOS profile dirs, so
+# `env` resolves python3 on standard distros (/usr/bin) and on Nix setups alike. If your clone
+# lives somewhere other than ~/infokierowca, edit the path at the end of ExecStart.
+Environment=PATH=/usr/local/bin:/usr/bin:/bin:%h/.nix-profile/bin:/etc/profiles/per-user/%u/bin:/run/current-system/sw/bin
+ExecStart=/usr/bin/env python3 %h/infokierowca/dashboard_server.py
 Restart=on-failure
 
 [Install]

@@ -16,7 +16,6 @@ import socket
 import socketserver
 import sys
 import threading
-import time
 import urllib.request
 import webbrowser
 from pathlib import Path
@@ -111,6 +110,7 @@ def build_config(payload):
         "ntfy_topic": ntfy_topic,
         "current_slot_date": current_slot_date,
         "auto_refresh_chrome": bool(payload.get("auto_refresh_chrome", True)),
+        "auto_open_browser": bool(payload.get("auto_open_browser", True)),
     }
     return config
 
@@ -221,6 +221,8 @@ WIZARD_PAGE = """<!doctype html>
       <input type="date" id="current_slot_date" required>
 
       <div class="row"><input type="checkbox" id="auto_refresh_chrome" checked><label for="auto_refresh_chrome" style="margin:0;">Automatically reopen Chrome to log back in when my session expires</label></div>
+
+      <div class="row"><input type="checkbox" id="auto_open_browser" checked><label for="auto_open_browser" style="margin:0;">On a matching slot, open a logged-in browser at my booking's "change date" screen (you still pick the date and confirm yourself)</label></div>
     </fieldset>
 
     <fieldset>
@@ -313,6 +315,7 @@ if (EXISTING_CONFIG) {
 
   document.getElementById('current_slot_date').value = EXISTING_CONFIG.current_slot_date || '';
   document.getElementById('auto_refresh_chrome').checked = EXISTING_CONFIG.auto_refresh_chrome !== false;
+  document.getElementById('auto_open_browser').checked = EXISTING_CONFIG.auto_open_browser !== false;
 }
 
 document.getElementById('category').addEventListener('change', (e) => {
@@ -363,6 +366,7 @@ document.getElementById('form').addEventListener('submit', async (e) => {
       exam_types: examTypes,
       current_slot_date: currentSlotDate,
       auto_refresh_chrome: document.getElementById('auto_refresh_chrome').checked,
+      auto_open_browser: document.getElementById('auto_open_browser').checked,
       ntfy_topic: document.getElementById('ntfy_topic').value,
     };
 
