@@ -37,6 +37,14 @@ a timer, never books/reserves anything. Zero third-party dependencies (stdlib on
   `auto_refresh_session.main()`. This frozen-only path can only be verified against an actual
   build, not `python app.py` — re-test it (delete `session.json`, confirm Chrome/Edge still opens)
   after any change here before tagging a release.
+- `word_centers.json` — static snapshot (id, name, location) of every active DORD/WORD/MORD/
+  PORD/ZORD exam center, used by `app.py`'s setup wizard to show real, searchable center names
+  instead of bare numeric IDs. Baked in rather than fetched live because the wizard has to work
+  before the user has ever logged in, and the source endpoint (`/bknd/config/api/v1/dict/words`)
+  needs a session (confirmed: 401 without cookies). Regenerate with `fetch_word_centers.py`.
+- `fetch_word_centers.py` — maintenance script, run by hand (using your own `session.json`) to
+  refresh `word_centers.json` if info-kierowca.pl adds/renames/closes a center. Reuses
+  `notifier.BASE`/`SESSION_FILE`/`do_request()` rather than duplicating cookie/request logic.
 - `pyinstaller.spec` — builds `app.py` into the single-file, no-console release binary; used by
   `.github/workflows/release.yml` (matrix over Windows/macOS/Linux, triggered on `v*` tags) and
   identical for manual local builds (`pyinstaller pyinstaller.spec`). PyInstaller is a build-time

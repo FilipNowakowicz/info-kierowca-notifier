@@ -19,6 +19,7 @@ import threading
 import time
 import urllib.request
 import webbrowser
+from pathlib import Path
 
 import auto_refresh_session
 import dashboard_server
@@ -28,11 +29,23 @@ HOST = dashboard_server.HOST
 PORT = dashboard_server.PORT
 INTERVAL = 60
 
-# Warsaw-area centers already used as config.example.json's defaults — the
-# only IDs we actually know are valid without querying the live API (which
-# itself needs a logged-in session, so it can't bootstrap this list before
-# the user has even logged in). The manual-entry field covers everyone else.
-KNOWN_ORGANIZATION_IDS = [26, 25, 32004, 30001, 31001]
+# Static snapshot of every active DORD/WORD/MORD/PORD/ZORD center, fetched
+# from the site's own (session-gated) dictionary endpoint — see
+# fetch_word_centers.py, which regenerates this file. Baked in rather than
+# fetched live because the wizard has to work before the user has ever
+# logged in, and that endpoint needs a session.
+WORD_CENTERS_FILE = Path(__file__).parent / "word_centers.json"
+
+
+def load_word_centers():
+    try:
+        with open(WORD_CENTERS_FILE, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return []
+
+
+WORD_CENTERS = load_word_centers()
 
 EXAM_TYPE_CHOICES = ("Theoretical", "Practice")
 
@@ -143,8 +156,9 @@ WIZARD_PAGE = """<!doctype html>
   .hint { opacity: 0.6; font-size: 0.85rem; margin-top: -0.4rem; margin-bottom: 0.8rem; }
   .centers-head { display: flex; gap: 1rem; opacity: 0.6; font-size: 0.8rem; margin-bottom: 0.3rem; }
   .centers-head span:first-child { width: 5.4rem; }
+  #centers-list { max-height: 260px; overflow-y: auto; margin-bottom: 0.6rem; }
   .center-row { display: flex; align-items: center; gap: 1rem; margin-bottom: 0.3rem; }
-  .center-row .checks { display: flex; gap: 2.1rem; width: 5.4rem; }
+  .center-row .checks { display: flex; gap: 2.1rem; width: 5.4rem; flex-shrink: 0; }
   button[type=submit] {
     width: 100%; padding: 0.8rem; background: #3a6ea5; color: #fff; border: none;
     border-radius: 6px; font-size: 1rem; cursor: pointer;
@@ -182,12 +196,13 @@ WIZARD_PAGE = """<!doctype html>
     </fieldset>
 
     <fieldset>
-      <legend>WORD centers</legend>
+      <legend>WORD centers (__CENTER_COUNT__ nationwide)</legend>
+      <input type="text" id="center-search" placeholder="Search by name or city...">
       <div class="centers-head"><span></span><span>Query</span><span>Alert me</span></div>
-      __CENTER_ROWS__
+      <div id="centers-list"></div>
       <label for="manual-ids" style="margin-top:0.6rem;">Other center IDs (comma-separated, optional)</label>
       <input type="text" id="manual-ids" placeholder="e.g. 12345, 67890">
-      <div class="hint">Don't see your center? Open the real site's center picker with DevTools' Network tab open and look for the ID in the request — added IDs here are both queried and alerted on.</div>
+      <div class="hint">Don't see your center? This list is a snapshot and may be missing a newly opened one — add its numeric ID here instead (added IDs are both queried and alerted on).</div>
     </fieldset>
 
     <fieldset>
@@ -221,6 +236,35 @@ WIZARD_PAGE = """<!doctype html>
 </div>
 
 <script>
+const CENTERS = __CENTERS_JSON__;
+
+const centersList = document.getElementById('centers-list');
+function renderCenters(filter) {
+  const f = filter.trim().toLowerCase();
+  centersList.innerHTML = '';
+  CENTERS.forEach(c => {
+    const label = `${c.name} (${c.location})`;
+    if (f && !label.toLowerCase().includes(f)) return;
+    const row = document.createElement('div');
+    row.className = 'center-row';
+    const checks = document.createElement('div');
+    checks.className = 'checks';
+    const orgCb = document.createElement('input');
+    orgCb.type = 'checkbox'; orgCb.className = 'org'; orgCb.value = c.id;
+    const watchCb = document.createElement('input');
+    watchCb.type = 'checkbox'; watchCb.className = 'watch'; watchCb.value = c.id;
+    checks.appendChild(orgCb);
+    checks.appendChild(watchCb);
+    const span = document.createElement('span');
+    span.textContent = label;
+    row.appendChild(checks);
+    row.appendChild(span);
+    centersList.appendChild(row);
+  });
+}
+renderCenters('');
+document.getElementById('center-search').addEventListener('input', (e) => renderCenters(e.target.value));
+
 document.getElementById('category').addEventListener('change', (e) => {
   document.getElementById('category-other').style.display = e.target.value === 'other' ? 'block' : 'none';
 });
@@ -294,15 +338,9 @@ document.getElementById('form').addEventListener('submit', async (e) => {
 
 
 def render_wizard():
-    rows = []
-    for org_id in KNOWN_ORGANIZATION_IDS:
-        rows.append(
-            '<div class="center-row"><div class="checks">'
-            f'<input type="checkbox" class="org" value="{org_id}" checked>'
-            f'<input type="checkbox" class="watch" value="{org_id}">'
-            f'</div><span>WORD center #{org_id}</span></div>'
-        )
-    page = WIZARD_PAGE.replace("__CENTER_ROWS__", "\n      ".join(rows))
+    centers_json = json.dumps(WORD_CENTERS, ensure_ascii=False).replace("</", "<\\/")
+    page = WIZARD_PAGE.replace("__CENTERS_JSON__", centers_json)
+    page = page.replace("__CENTER_COUNT__", str(len(WORD_CENTERS)))
     page = page.replace("__NTFY_TOPIC__", secrets.token_urlsafe(24))
     return page.encode("utf-8")
 
