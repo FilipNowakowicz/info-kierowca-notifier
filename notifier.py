@@ -434,7 +434,6 @@ def run_check(logger, dash_status):
                     "Slot within range!",
                     push_body,
                     priority="urgent",
-                    tags=["rotating_light"],
                 )
                 logger.info("outcome=push_sent detail=%r", fastest)
                 dash_status["last_push_signature"] = fastest
