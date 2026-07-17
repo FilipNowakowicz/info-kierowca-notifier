@@ -16,4 +16,4 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-      - run: python -m py_compile notifier.py dashboard_server.py
+      - run: python -m py_compile *.py
