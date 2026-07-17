@@ -6,5 +6,6 @@
   "exam_types": ["Theoretical"],
   "ntfy_topic": "YOUR_RANDOM_NTFY_TOPIC_HERE",
   "push_below_days": 10,
-  "auto_refresh_chrome": true
+  "auto_refresh_chrome": true,
+  "auto_open_browser": true
 }

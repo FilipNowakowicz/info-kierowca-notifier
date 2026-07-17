@@ -275,7 +275,6 @@ def main():
             "info-kierowca: relogin needed",
             "Chrome opened on your desktop — scan the QR in the app to log back in",
             priority="default",
-            tags=["lock"],
         )
 
         cdp_client.wait_for_debug_port("127.0.0.1", args.port, timeout=20)
@@ -299,10 +298,6 @@ def main():
         notify_desktop(
             "info-kierowca: session refreshed",
             "Logged back in — the notifier will pick it up on the next check",
-        )
-        push_ntfy(
-            "info-kierowca: session refreshed",
-            "Logged back in automatically — notifier resumes on the next check",
         )
     finally:
         if chrome_proc and not args.keep_open:
