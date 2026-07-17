@@ -135,6 +135,61 @@ def fetch_cookies(host, port):
     return result.get("cookies", [])
 
 
+def evaluate_in_page(host, port, expression):
+    """Run a JS expression in the first open page/tab and return its value.
+
+    Unlike fetch_cookies (which talks to the browser-level debugger target,
+    fine for the browser-scoped Storage.getCookies), Runtime.evaluate needs
+    a specific page target's own websocket — so this queries /json for the
+    open tabs first.
+    """
+    list_url = f"http://{host}:{port}/json"
+    with urllib.request.urlopen(list_url, timeout=5) as resp:
+        targets = json.loads(resp.read())
+    pages = [t for t in targets if t.get("type") == "page"]
+    if not pages:
+        return None
+    ws_url = pages[0]["webSocketDebuggerUrl"]
+    parsed = urlparse(ws_url.replace("ws://", "http://"))
+    sock = socket.create_connection((parsed.hostname, parsed.port), timeout=5)
+    try:
+        ws_handshake(sock, f"{parsed.hostname}:{parsed.port}", parsed.path)
+        result = cdp_call(
+            sock, 1, "Runtime.evaluate", {"expression": expression, "returnByValue": True}
+        )
+    finally:
+        sock.close()
+    return result.get("result", {}).get("value")
+
+
+def inject_and_navigate(host, port, url, script):
+    """Register `script` to run on every future document in the first open
+    page/tab, then navigate it to `url`.
+
+    Page.addScriptToEvaluateOnNewDocument runs before any of a document's
+    own scripts — including across cross-origin navigations within the same
+    target — so a script registered here is already watching the DOM from
+    the very first paint of `url` (and every redirect after it), instead of
+    only reacting after our own next poll tick.
+    """
+    list_url = f"http://{host}:{port}/json"
+    with urllib.request.urlopen(list_url, timeout=5) as resp:
+        targets = json.loads(resp.read())
+    pages = [t for t in targets if t.get("type") == "page"]
+    if not pages:
+        raise RuntimeError("No page target found to navigate")
+    ws_url = pages[0]["webSocketDebuggerUrl"]
+    parsed = urlparse(ws_url.replace("ws://", "http://"))
+    sock = socket.create_connection((parsed.hostname, parsed.port), timeout=5)
+    try:
+        ws_handshake(sock, f"{parsed.hostname}:{parsed.port}", parsed.path)
+        cdp_call(sock, 1, "Page.enable")
+        cdp_call(sock, 2, "Page.addScriptToEvaluateOnNewDocument", {"source": script})
+        cdp_call(sock, 3, "Page.navigate", {"url": url})
+    finally:
+        sock.close()
+
+
 def extract_info_kierowca_cookies(raw_cookies, all_cookies=False):
     cookies = {}
     for c in raw_cookies:

@@ -40,11 +40,101 @@ CONFIG_FILE = Path.home() / ".config" / "info-kierowca-notifier" / "config.json"
 # Deliberately distinct from pull_session_cookies.py's manual default (9222)
 # so this never fights over the port with a Chrome you started by hand.
 DEFAULT_PORT = 9333
-DEFAULT_URL = "https://info-kierowca.pl"
-DEFAULT_TIMEOUT = 600  # seconds to wait for you to scan the QR
+DEFAULT_URL = "https://info-kierowca.pl/login"
+# No default timeout: you'll log back in eventually regardless, and the lock
+# file already stops this from being relaunched while one is in flight — so
+# just wait for the QR to be scanned, however long that takes. Pass --timeout
+# to bound it (e.g. for testing).
+DEFAULT_TIMEOUT = None
 
 CHROME_CANDIDATES = ["google-chrome", "google-chrome-stable", "chromium", "chromium-browser"]
 CHROME_MAC_PATH = Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
+
+# The login click-path: info-kierowca.pl -> (maybe) "Zaloguj się" -> a PWPW
+# identity-provider chooser with a "gov.pl" tile -> a login.gov.pl chooser
+# with an "Aplikacja mObywatel" tile -> QR code. Checked in this order (most
+# specific/downstream first) so whichever screen is showing gets exactly one
+# click; harmless no-op once the QR page itself is showing, since nothing
+# there matches. Site markup could change and break this — if it stops
+# matching, you can still click through by hand while the script waits.
+AUTO_CLICK_TARGETS = ["Aplikacja mObywatel", "gov.pl", "Zaloguj się"]
+
+# Shared by both scripts below: find the smallest element anywhere on the
+# page whose text contains one of `targets` (checked in that order) and
+# click the nearest real clickable ancestor — login-page rows are often a
+# plain <div> wrapping an icon + label, not a bare <button>/<a>.
+CLICK_LOGIC_JS = """
+function __ikw_isClickable(el) {
+  if (!el) return false;
+  var style = window.getComputedStyle(el);
+  return el.tagName === 'BUTTON' || el.tagName === 'A' ||
+    el.getAttribute('role') === 'button' || style.cursor === 'pointer';
+}
+function __ikw_clickableAncestor(el) {
+  var cur = el;
+  for (var i = 0; i < 6 && cur; i++) {
+    if (__ikw_isClickable(cur)) return cur;
+    cur = cur.parentElement;
+  }
+  return el;
+}
+function __ikw_findAndClick(targets) {
+  var all = document.querySelectorAll('button, a, [role="button"], li, div, span');
+  for (var ti = 0; ti < targets.length; ti++) {
+    var text = targets[ti];
+    var best = null;
+    for (var i = 0; i < all.length; i++) {
+      var el = all[i];
+      var t = (el.innerText || el.textContent || '').trim();
+      if (t && t.length < 200 && t.toLowerCase().indexOf(text.toLowerCase()) !== -1) {
+        if (!best || t.length < best[1].length) best = [el, t];
+      }
+    }
+    if (best) {
+      __ikw_clickableAncestor(best[0]).click();
+      return text;
+    }
+  }
+  return null;
+}
+"""
+
+# One-shot version: used as a slow Python-polled fallback (see try_auto_click).
+AUTO_CLICK_JS = CLICK_LOGIC_JS + (
+    "(function(targets) { return __ikw_findAndClick(targets); })(%s)"
+    % json.dumps(AUTO_CLICK_TARGETS)
+)
+
+# Persistent version: registered via Page.addScriptToEvaluateOnNewDocument
+# (see cdp_client.inject_and_navigate) so it's already watching the DOM
+# before the first paint of *every* document in this tab — including
+# cross-origin OAuth redirects — and clicks the instant a target appears,
+# instead of waiting on our next poll tick. This is what makes the
+# click-through effectively instant rather than bounded by a sleep interval.
+AUTO_CLICK_OBSERVER_JS = CLICK_LOGIC_JS + (
+    """
+(function(targets) {
+  var scheduled = false;
+  function schedule() {
+    if (scheduled) return;
+    scheduled = true;
+    requestAnimationFrame(function() { scheduled = false; __ikw_findAndClick(targets); });
+  }
+  __ikw_findAndClick(targets);
+  new MutationObserver(schedule).observe(
+    document, {childList: true, subtree: true, characterData: true}
+  );
+})(%s)
+"""
+    % json.dumps(AUTO_CLICK_TARGETS)
+)
+
+
+def try_auto_click(host, port):
+    try:
+        return cdp_client.evaluate_in_page(host, port, AUTO_CLICK_JS)
+    except Exception:
+        return None
 
 
 def find_chrome():
@@ -113,8 +203,9 @@ def release_lock():
 
 
 def wait_for_cookies(host, port, timeout):
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
+    """timeout=None waits indefinitely."""
+    deadline = None if timeout is None else time.monotonic() + timeout
+    while deadline is None or time.monotonic() < deadline:
         try:
             raw = cdp_client.fetch_cookies(host, port)
             cookies = cdp_client.extract_info_kierowca_cookies(raw)
@@ -122,6 +213,7 @@ def wait_for_cookies(host, port, timeout):
                 return cookies
         except Exception:
             pass  # Chrome may be mid-navigation; just retry
+        try_auto_click(host, port)
         time.sleep(3)
     return None
 
@@ -132,7 +224,7 @@ def main():
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     parser.add_argument(
         "--timeout", type=int, default=DEFAULT_TIMEOUT,
-        help="Seconds to wait for the QR to be scanned before giving up (default: %(default)s)",
+        help="Seconds to wait for the QR to be scanned before giving up (default: wait indefinitely)",
     )
     parser.add_argument(
         "--keep-open", action="store_true", help="Leave Chrome open after capturing cookies"
@@ -155,7 +247,7 @@ def main():
                 "--no-first-run",
                 "--no-default-browser-check",
                 "--window-size=460,760",
-                f"--app={args.url}",
+                "--app=about:blank",
             ],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
@@ -169,11 +261,15 @@ def main():
         push_ntfy(
             "info-kierowca: relogin needed",
             "Chrome opened on your desktop — scan the QR in the app to log back in",
-            priority="urgent",
-            tags=["warning"],
+            priority="default",
+            tags=["lock"],
         )
 
         cdp_client.wait_for_debug_port("127.0.0.1", args.port, timeout=20)
+        # Register the click-observer before the real page ever loads, then
+        # navigate — so it's already watching from the first paint instead
+        # of racing our own next poll tick.
+        cdp_client.inject_and_navigate("127.0.0.1", args.port, args.url, AUTO_CLICK_OBSERVER_JS)
         cookies = wait_for_cookies("127.0.0.1", args.port, args.timeout)
 
         if cookies is None:
@@ -182,10 +278,6 @@ def main():
                 "info-kierowca: relogin timed out",
                 f"No login detected within {args.timeout}s — run auto_refresh_session.py again when ready",
                 "critical",
-            )
-            push_ntfy(
-                "info-kierowca: relogin timed out",
-                "QR wasn't scanned in time — it'll retry on the next auth error",
             )
             sys.exit(1)
 
