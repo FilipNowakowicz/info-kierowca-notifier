@@ -73,11 +73,11 @@ claim still holds either way).
    | `profile_number` | Your PKK profile number |
    | `exam_types` | Which exam(s) to watch: `["Theoretical"]`, `["Practice"]`, or both `["Theoretical", "Practice"]` |
    | `ntfy_topic` | Your [ntfy.sh](https://ntfy.sh) topic for phone push (pick a long random string — anyone who knows it can read your notifications) |
-   | `current_slot_date` | Date (`"YYYY-MM-DD"`) of your current booked slot. A found slot on or before this date counts as *urgent* (turns the dashboard red, and — when `phone_alerts` is on — sends a phone push), inclusive — an earlier date, or the same date at a different time. |
-   | `phone_alerts` *(optional, default `true`)* | Whether an urgent slot sends a phone push at all. Set to `false` to just watch the dashboard silently; the dashboard, urgency colouring, and `auto_open_browser` still work. |
-   | `phone_alerts_relogin` *(optional, default `true`)* | Whether an `auth_expired` outcome (session expired, Chrome reopening for a fresh QR scan) also sends a phone push. Independent of `phone_alerts` above — that one only covers urgent-slot hits. Set to `false` to only get the desktop notification when relogin is needed. |
+   | `current_slot_date` | Date (`"YYYY-MM-DD"`) of your current booked slot. A found slot beats this (turns the dashboard red, and — when `phone_alerts` is on — sends a phone push) if it's on an earlier date, or the same date at a different time. |
+   | `phone_alerts` *(optional, default `true`)* | Whether a slot that beats your booked date sends a phone push at all. Set to `false` to just watch the dashboard silently; the dashboard's red/gray colouring and `auto_open_browser` still work. |
+   | `phone_alerts_relogin` *(optional, default `true`)* | Whether an `auth_expired` outcome (session expired, Chrome reopening for a fresh QR scan) also sends a phone push. Independent of `phone_alerts` above — that one only covers slots that beat your booked date. Set to `false` to only get the desktop notification when relogin is needed. |
    | `auto_refresh_chrome` *(optional, default `true`)* | Whether an `auth_expired` outcome should automatically launch `auto_refresh_session.py` (see below). Set to `false` to fall back to a manual relogin. |
-   | `auto_open_browser` *(optional, default `true`)* | Whether a matching urgent slot should also launch `open_logged_in_browser.py` (see [Reschedule assist](#reschedule-assist) below). Set to `false` to disable. |
+   | `auto_open_browser` *(optional, default `true`)* | Whether a found slot that beats your booked date should also launch `open_logged_in_browser.py` (see [Reschedule assist](#reschedule-assist) below). Set to `false` to disable. |
 
    Slots are only ever considered within 31 days out — that's a hard line on info-kierowca.pl
    itself, not something this project can (or needs to) make configurable.
@@ -138,7 +138,7 @@ By default (`auto_refresh_chrome: true`), whenever a check comes back `auth_expi
 turned out to be the same underlying cookie-expiry problem — `notifier.py` launches
 `auto_refresh_session.py` in the background. It opens Chrome to the login page in its own profile,
 clicks through the gov.pl → "Aplikacja mObywatel" chooser on its own, and sends you a single
-(non-urgent) push + desktop notification to scan the QR in the app. It waits indefinitely — there's
+push + desktop notification asking you to scan the QR in the app. It waits indefinitely — there's
 no timeout to race, since a relogin has to happen eventually anyway — and the moment you scan it,
 captures the new cookies and writes `session.json` automatically. A lock file
 (`~/.local/state/info-kierowca-notifier/auto-refresh.lock`) stops it firing again on every
@@ -161,7 +161,7 @@ If Chrome never appears, check `journalctl --user -u info-kierowca-auto-refresh 
 ## Reschedule assist
 
 If you already have a paid booking and just want to move it to a fresher date, `notifier.py` can
-open a browser for you the moment a matching urgent slot appears (same gating as the phone push —
+open a browser for you the moment a matching slot beats your booked date (same gating as the phone push —
 see `current_slot_date`), pre-authenticated with your saved session, and click
 through the first two steps of changing that booking's date:
 

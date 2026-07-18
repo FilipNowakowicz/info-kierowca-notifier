@@ -317,8 +317,8 @@ WIZARD_PAGE = """<!doctype html>
 <style>
   * { box-sizing: border-box; }
   :root {
-    --accent: #e0a13c; --accent-soft: #f0c47e;
-    --accent-dim: rgba(224,161,60,0.15); --accent-line: rgba(224,161,60,0.55);
+    --accent: #52c88a; --accent-soft: #8fe0b3;
+    --accent-dim: rgba(82,200,138,0.15); --accent-line: rgba(82,200,138,0.55);
   }
   body {
     margin: 0; min-height: 100vh; font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
@@ -493,7 +493,7 @@ WIZARD_PAGE = """<!doctype html>
 
     <fieldset>
       <legend>Alerts</legend>
-      <label for="current_slot_date_display">Date of your current booked slot — a found slot on or before this counts as urgent (an earlier date, or a different time the same day)</label>
+      <label for="current_slot_date_display">Date of your current booked slot — a found slot beats this (an earlier date, or a different time the same day) and triggers the alerts below</label>
       <div class="datepick" id="datepick">
         <input type="text" class="datepick-input" id="current_slot_date_display" placeholder="Select a date" readonly required>
         <input type="hidden" id="current_slot_date">
@@ -504,7 +504,7 @@ WIZARD_PAGE = """<!doctype html>
 
       <div class="toggle-row">
         <div class="toggle-text">
-          <div class="tt-title">Send a phone alert on an urgent slot</div>
+          <div class="tt-title">Send a phone alert when a slot beats your booked date</div>
           <div class="tt-sub">Buzzes your phone when a watched center opens a slot on or before your booked date. Turn off to just watch the dashboard.</div>
         </div>
         <div class="switch on" id="phone-alerts" role="switch" aria-checked="true" tabindex="0"></div>
@@ -543,7 +543,7 @@ WIZARD_PAGE = """<!doctype html>
       </div>
       <div class="toggle-row">
         <div class="toggle-text">
-          <div class="tt-title">Open my booking on an urgent slot</div>
+          <div class="tt-title">Open my booking when a slot beats your booked date</div>
           <div class="tt-sub">Opens a logged-in browser at your booking's "change date" screen. You still pick the date and confirm yourself.</div>
         </div>
         <div class="switch on" id="auto_open_browser" role="switch" aria-checked="true" tabindex="0"></div>
