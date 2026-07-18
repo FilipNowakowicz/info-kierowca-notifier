@@ -11,10 +11,11 @@ a = Analysis(
     ["app.py"],
     pathex=[],
     binaries=[],
-    # word_centers.json is loaded at runtime via Path(__file__).parent — PyInstaller
-    # only auto-bundles Python imports, so the data file needs listing explicitly or
-    # the wizard silently ends up with an empty center list in the packaged binary.
-    datas=[("word_centers.json", ".")],
+    # word_centers.json / categories.json are loaded at runtime via
+    # Path(__file__).parent — PyInstaller only auto-bundles Python imports, so these
+    # data files need listing explicitly or the wizard silently ends up with an empty
+    # center list / a categories dropdown missing everything but the B fallback.
+    datas=[("word_centers.json", "."), ("categories.json", ".")],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

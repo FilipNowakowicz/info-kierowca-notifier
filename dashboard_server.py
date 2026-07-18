@@ -162,7 +162,7 @@ async function poll() {
   (data.history || []).slice().reverse().forEach(entry => {
     const div = document.createElement("div");
     const f = fastestOf(entry.hits);
-    const text = f ? `${fmtShort(f.datetime)} · ${f.word} (${f.places})` : "no slots in range";
+    const text = f ? `${fmtShort(f.datetime)} · ${f.word} (${f.places})` : "no slots in the next 31 days";
     div.innerHTML = `<span class="ts">${fmtDateTime(entry.seen_at)}</span>${text}`;
     history.appendChild(div);
   });

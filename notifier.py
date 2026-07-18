@@ -422,19 +422,20 @@ def run_check(logger, dash_status):
         urgent = is_urgent(datetime.fromisoformat(fastest["datetime"]), config)
         if urgent:
             if fastest != dash_status.get("last_push_signature"):
-                push_body = "{} · {} · {} spots".format(
-                    datetime.fromisoformat(fastest["datetime"]).strftime("%a %d %b, %H:%M"),
-                    short_word(fastest["word"]),
-                    fastest["places"],
-                )
-                push_ntfy(
-                    logger,
-                    config.get("ntfy_topic"),
-                    "Slot within range!",
-                    push_body,
-                    priority="urgent",
-                )
-                logger.info("outcome=push_sent detail=%r", fastest)
+                if config.get("phone_alerts", True):
+                    push_body = "{} · {} · {} spots".format(
+                        datetime.fromisoformat(fastest["datetime"]).strftime("%a %d %b, %H:%M"),
+                        short_word(fastest["word"]),
+                        fastest["places"],
+                    )
+                    push_ntfy(
+                        logger,
+                        config.get("ntfy_topic"),
+                        "Slot within range!",
+                        push_body,
+                        priority="urgent",
+                    )
+                    logger.info("outcome=push_sent detail=%r", fastest)
                 dash_status["last_push_signature"] = fastest
                 trigger_open_browser(logger, config)
         else:

@@ -1,0 +1,87 @@
+[
+  {
+    "id": 1,
+    "code": "A",
+    "label": "A — motorcycle"
+  },
+  {
+    "id": 2,
+    "code": "A1",
+    "label": "A1 — light motorcycle"
+  },
+  {
+    "id": 3,
+    "code": "A2",
+    "label": "A2 — mid motorcycle"
+  },
+  {
+    "id": 4,
+    "code": "AM",
+    "label": "AM — moped"
+  },
+  {
+    "id": 5,
+    "code": "B",
+    "label": "B — car"
+  },
+  {
+    "id": 6,
+    "code": "B1",
+    "label": "B1 — light quadricycle"
+  },
+  {
+    "id": 7,
+    "code": "B+E",
+    "label": "B+E — car + trailer"
+  },
+  {
+    "id": 8,
+    "code": "C",
+    "label": "C — truck"
+  },
+  {
+    "id": 9,
+    "code": "C1",
+    "label": "C1 — light truck"
+  },
+  {
+    "id": 10,
+    "code": "C+E",
+    "label": "C+E — truck + trailer"
+  },
+  {
+    "id": 11,
+    "code": "C1+E",
+    "label": "C1+E — light truck + trailer"
+  },
+  {
+    "id": 12,
+    "code": "D",
+    "label": "D — bus"
+  },
+  {
+    "id": 13,
+    "code": "D1",
+    "label": "D1 — minibus"
+  },
+  {
+    "id": 14,
+    "code": "D+E",
+    "label": "D+E — bus + trailer"
+  },
+  {
+    "id": 15,
+    "code": "D1+E",
+    "label": "D1+E — minibus + trailer"
+  },
+  {
+    "id": 16,
+    "code": "T",
+    "label": "T — tractor"
+  },
+  {
+    "id": 17,
+    "code": "PT",
+    "label": "PT — tram"
+  }
+]
