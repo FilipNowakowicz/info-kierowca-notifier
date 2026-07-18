@@ -202,6 +202,15 @@ WIZARD_PAGE = """<!doctype html>
   .pill:hover { border-color: #555; }
   .pill.on { background: var(--accent-dim); border-color: var(--accent); color: var(--accent-soft); }
 
+  /* license-category pills */
+  .cat-group { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.9rem; }
+  .cat-pill { flex: 0 0 auto; min-width: 3.2rem; padding: 0.5rem 0.7rem; }
+  .cat-rest { display: none; }
+  .cat-rest.open { display: flex; }
+  .cat-more { background: none; border: none; color: var(--accent-soft); cursor: pointer;
+    font-size: 0.85rem; padding: 0; margin: -0.4rem 0 0.9rem; }
+  .cat-more:hover { text-decoration: underline; }
+
   /* reveal-able inputs (PKK / ntfy link) */
   .reveal { position: relative; margin-bottom: 0.9rem; }
   .reveal input { margin-bottom: 0; padding-right: 2.5rem; }
@@ -284,7 +293,11 @@ WIZARD_PAGE = """<!doctype html>
     border-radius: 8px; font-size: 1rem; font-weight: 600; cursor: pointer; margin-top: 0.3rem;
   }
   button[type=submit]:hover { background: var(--accent-soft); }
-  #error { color: #ff8080; margin-bottom: 1rem; white-space: pre-line; }
+  #error { display: none; position: fixed; top: 1rem; left: 50%; transform: translateX(-50%); z-index: 100;
+    max-width: 90%; background: #3a1f1f; color: #ff9d9d; border: 1px solid rgba(255,128,128,0.45);
+    padding: 0.7rem 1rem; border-radius: 8px; box-shadow: 0 10px 30px rgba(0,0,0,0.55);
+    font-size: 0.9rem; white-space: pre-line; }
+  #error.show { display: block; }
   #done { display: none; text-align: center; padding: 2rem 0; }
   #done a { color: var(--accent-soft); }
 </style>
@@ -305,14 +318,15 @@ WIZARD_PAGE = """<!doctype html>
         <button type="button" class="reveal-btn" id="reveal-pkk" aria-label="Show or hide PKK number"></button>
       </div>
 
-      <label for="category">License category</label>
-      <select id="category"></select>
-      <input type="number" id="category-other" placeholder="Category number" style="display:none;">
+      <label>License category</label>
+      <div class="cat-group" id="cat-primary"></div>
+      <button type="button" class="cat-more" id="cat-more-btn">More categories</button>
+      <div class="cat-group cat-rest" id="cat-rest"></div>
 
       <label>Exam type</label>
       <div class="pill-group" id="exam-types">
         <div class="pill on" data-val="Theoretical" role="button" tabindex="0">Theoretical</div>
-        <div class="pill" data-val="Practice" role="button" tabindex="0">Practice</div>
+        <div class="pill" data-val="Practice" role="button" tabindex="0">Practical</div>
       </div>
     </fieldset>
 
@@ -549,23 +563,33 @@ wireSwitch(phoneAlertsSwitch, applyNtfyDim);
 wireSwitch(document.getElementById('auto_refresh_chrome'));
 wireSwitch(document.getElementById('auto_open_browser'));
 
-// ---- license-category dropdown (data-driven from categories.json) ----
-const categorySel = document.getElementById('category');
-const categoryOther = document.getElementById('category-other');
+// ---- license-category pills (data-driven from categories.json) ----
+// A and B are shown up top; the rest live behind a "More categories" reveal.
+const TOP_CATEGORY_CODES = ['A', 'B'];
+const catPrimary = document.getElementById('cat-primary');
+const catRest = document.getElementById('cat-rest');
+const catMoreBtn = document.getElementById('cat-more-btn');
+let selectedCategory = null;
+function setCategory(id) {
+  selectedCategory = id;
+  document.querySelectorAll('.cat-pill').forEach((p) => p.classList.toggle('on', p.dataset.id === String(id)));
+}
+function expandCatRest() { catRest.classList.add('open'); catMoreBtn.style.display = 'none'; }
 CATEGORIES.forEach((c) => {
-  const o = document.createElement('option');
-  o.value = String(c.id);
-  o.textContent = c.label || c.code || ('Category ' + c.id);
-  categorySel.appendChild(o);
+  const el = document.createElement('div');
+  el.className = 'pill cat-pill';
+  el.dataset.id = String(c.id);
+  el.textContent = c.code || ('Cat ' + c.id);
+  el.setAttribute('role', 'button');
+  el.tabIndex = 0;
+  const select = () => setCategory(c.id);
+  el.addEventListener('click', select);
+  el.addEventListener('keydown', (e) => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); select(); } });
+  (TOP_CATEGORY_CODES.includes(c.code) ? catPrimary : catRest).appendChild(el);
 });
-const otherOpt = document.createElement('option');
-otherOpt.value = 'other';
-otherOpt.textContent = 'Other — enter number';
-categorySel.appendChild(otherOpt);
-if (CATEGORIES.some((c) => String(c.id) === '5')) categorySel.value = '5';
-categorySel.addEventListener('change', () => {
-  categoryOther.style.display = categorySel.value === 'other' ? 'block' : 'none';
-});
+if (!catRest.children.length) catMoreBtn.style.display = 'none';
+catMoreBtn.addEventListener('click', expandCatRest);
+if (CATEGORIES.some((c) => c.id === 5)) setCategory(5);
 
 // ---- exam-type pills ----
 const examGroup = document.getElementById('exam-types');
@@ -650,13 +674,10 @@ if (EXISTING_CONFIG) {
   pkkInput.value = EXISTING_CONFIG.profile_number || '';
   if (pkkInput.value) { pkkInput.type = 'password'; pkkSync(); }
 
-  const catStr = String(EXISTING_CONFIG.category);
-  if (Array.from(categorySel.options).some((o) => o.value === catStr)) {
-    categorySel.value = catStr;
-  } else {
-    categorySel.value = 'other';
-    categoryOther.style.display = 'block';
-    categoryOther.value = EXISTING_CONFIG.category;
+  if (EXISTING_CONFIG.category != null) {
+    setCategory(EXISTING_CONFIG.category);
+    const isTop = CATEGORIES.some((c) => c.id === EXISTING_CONFIG.category && TOP_CATEGORY_CODES.includes(c.code));
+    if (!isTop) expandCatRest();
   }
 
   const examTypes = EXISTING_CONFIG.exam_types || [];
@@ -695,6 +716,7 @@ document.getElementById('form').addEventListener('submit', async (e) => {
   e.preventDefault();
   const errorEl = document.getElementById('error');
   errorEl.textContent = '';
+  errorEl.classList.remove('show');
   try {
     const examTypes = selectedExamTypes();
     if (!examTypes.length) throw new Error('Pick at least one exam type.');
@@ -707,10 +729,8 @@ document.getElementById('form').addEventListener('submit', async (e) => {
     const profileNumber = pkkInput.value.trim();
     if (!profileNumber) throw new Error('PKK number is required.');
 
-    const category = categorySel.value === 'other'
-      ? parseInt(categoryOther.value, 10)
-      : parseInt(categorySel.value, 10);
-    if (!category) throw new Error('Enter a valid category number.');
+    const category = selectedCategory;
+    if (!category) throw new Error('Pick a license category.');
 
     const currentSlotDate = dpValue.value;
     if (!currentSlotDate) throw new Error('Pick the date of your current booked slot.');
@@ -742,6 +762,7 @@ document.getElementById('form').addEventListener('submit', async (e) => {
     }
   } catch (err) {
     errorEl.textContent = err.message;
+    errorEl.classList.add('show');
   }
 });
 </script>
