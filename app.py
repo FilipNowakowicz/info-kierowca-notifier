@@ -156,14 +156,43 @@ def build_config(payload):
 
 TOOLBAR_HTML = """
 <style>
-  .ikw-toolbar { position: fixed; top: 1rem; right: 1rem; display: flex; gap: 0.5rem; z-index: 10; }
-  .ikw-btn { padding: 0.4rem 0.85rem; border-radius: 999px; cursor: pointer; white-space: nowrap;
-    font-family: -apple-system, 'Segoe UI', system-ui, sans-serif; font-size: 0.85rem; line-height: 1;
+  /* Mouse proximity to the top edge (or focus landing inside the
+     toolbar) reveals it; it hides again after a short idle. Keeps the
+     resting view down to just the background color and headline. */
+  #ikw-toolbar-zone { position: fixed; top: 0; left: 0; right: 0; height: 88px; z-index: 10; }
+  .ikw-toolbar { position: fixed; top: 1rem; right: 1rem; display: flex; gap: 0.4rem; z-index: 11;
+    opacity: 0; transform: translateY(-4px); pointer-events: none;
+    transition: opacity 0.25s ease, transform 0.25s ease; }
+  .ikw-toolbar.show { opacity: 1; transform: translateY(0); pointer-events: auto; }
+  .ikw-icon-btn { width: 2.25rem; height: 2.25rem; display: flex; align-items: center; justify-content: center;
+    border-radius: 999px; cursor: pointer;
     background: rgba(255,255,255,0.07); color: #eee; border: 1px solid rgba(255,255,255,0.18);
-    backdrop-filter: blur(6px); transition: background 0.12s, border-color 0.12s; }
-  .ikw-btn:hover { background: rgba(255,255,255,0.14); border-color: rgba(255,255,255,0.32); }
-  .ikw-btn:disabled { opacity: 0.5; cursor: default; }
+    backdrop-filter: blur(6px); transition: background 0.12s, border-color 0.12s, color 0.12s; }
+  .ikw-icon-btn:hover { background: rgba(255,255,255,0.16); border-color: rgba(255,255,255,0.32); }
+  .ikw-icon-btn:disabled { opacity: 0.5; cursor: default; }
+  .ikw-icon-btn svg { width: 1.05rem; height: 1.05rem; }
   #ikw-quit-btn:hover { border-color: rgba(224,104,95,0.7); color: #ffb3ad; }
+  /* Faint permanent dot so the toolbar is discoverable even before its
+     hover/focus reveal has ever fired. */
+  #ikw-toolbar-hint { position: fixed; top: 1.1rem; right: 1.25rem; width: 0.35rem; height: 0.35rem;
+    border-radius: 999px; background: rgba(255,255,255,0.3); transition: opacity 0.2s ease; z-index: 9; }
+  .ikw-toolbar.show ~ #ikw-toolbar-hint { opacity: 0; }
+
+  /* Makes dashboard_server.py's headline markup clickable: dims the
+     headline text and overlays one large centered pause/play icon on
+     hover/focus, like a video player's hover control, rather than a
+     small icon living beside the text. */
+  #headline-wrap.ikw-pausable { cursor: pointer; }
+  #headline-wrap.ikw-pausable:hover,
+  #headline-wrap.ikw-pausable:focus-visible { background: rgba(255,255,255,0.06); outline: none; }
+  #headline-wrap.ikw-pausable:active { background: rgba(255,255,255,0.1); }
+  #headline-wrap.ikw-pausable:hover #headline,
+  #headline-wrap.ikw-pausable:focus-visible #headline { opacity: 0.25; }
+  #headline-wrap.ikw-pausable:hover #headline-icon,
+  #headline-wrap.ikw-pausable:focus-visible #headline-icon { opacity: 0.95; transform: translate(-50%, -50%) scale(1); }
+  #headline-wrap.ikw-pausable:hover ~ #headline-hint,
+  #headline-wrap.ikw-pausable:focus-visible ~ #headline-hint { opacity: 0.45; }
+
   .ikw-toast { position: fixed; bottom: 1.2rem; left: 50%; transform: translateX(-50%) translateY(0.4rem);
     max-width: 90vw; background: rgba(20,20,20,0.92); color: #eee; padding: 0.6rem 1rem; border-radius: 8px;
     font-family: -apple-system, 'Segoe UI', system-ui, sans-serif; font-size: 0.85rem; text-align: center;
@@ -171,12 +200,26 @@ TOOLBAR_HTML = """
     transition: opacity 0.2s, transform 0.2s; }
   .ikw-toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 </style>
-<div class="ikw-toolbar">
-  <button id="ikw-browser-btn" class="ikw-btn">Open browser</button>
-  <button id="ikw-pause-btn" class="ikw-btn">Pause</button>
-  <button id="ikw-settings-btn" class="ikw-btn">Settings</button>
-  <button id="ikw-quit-btn" class="ikw-btn">Quit</button>
+<div id="ikw-toolbar-zone"></div>
+<div class="ikw-toolbar" id="ikw-toolbar">
+  <button id="ikw-browser-btn" class="ikw-icon-btn" title="Open browser" aria-label="Open browser">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M14 4h6v6"/><path d="M20 4 10.5 13.5"/><path d="M18 13v5a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h5"/>
+    </svg>
+  </button>
+  <button id="ikw-settings-btn" class="ikw-icon-btn" title="Settings" aria-label="Settings">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="12" r="3"/>
+      <path d="M19.4 13a7.97 7.97 0 0 0 0-2l2.1-1.6-2-3.5-2.5 1a8 8 0 0 0-1.7-1L14.9 3h-4l-.4 2.9a8 8 0 0 0-1.7 1l-2.5-1-2 3.5L6.4 11a7.97 7.97 0 0 0 0 2l-2.1 1.6 2 3.5 2.5-1a8 8 0 0 0 1.7 1l.4 2.9h4l.4-2.9a8 8 0 0 0 1.7-1l2.5 1 2-3.5z"/>
+    </svg>
+  </button>
+  <button id="ikw-quit-btn" class="ikw-icon-btn" title="Quit" aria-label="Quit">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12 3v8"/><path d="M6.3 6.3a8 8 0 1 0 11.4 0"/>
+    </svg>
+  </button>
 </div>
+<div id="ikw-toolbar-hint"></div>
 <div class="ikw-toast" id="ikw-toast"></div>
 <script>
 function ikwToast(msg) {
@@ -212,40 +255,56 @@ document.getElementById('ikw-browser-btn').addEventListener('click', async () =>
   }
 });
 
-const ikwPauseBtn = document.getElementById('ikw-pause-btn');
-function ikwSetPauseLabel(paused) {
-  ikwPauseBtn.textContent = paused ? 'Resume' : 'Pause';
-}
-async function ikwSyncPauseButton() {
-  try {
-    const res = await fetch('/status.json', {cache: 'no-store'});
-    const data = await res.json();
-    ikwSetPauseLabel(!!data.paused);
-  } catch (e) {}
-}
-ikwPauseBtn.addEventListener('click', async () => {
-  ikwPauseBtn.disabled = true;
-  const resuming = ikwPauseBtn.textContent === 'Resume';
+// Headline becomes the pause/resume control here rather than in
+// dashboard_server.py, so the plain read-only dashboard (no /pause or
+// /resume endpoints exist there) never shows a cursor or hover affordance
+// it can't back up.
+const ikwHeadlineWrap = document.getElementById('headline-wrap');
+ikwHeadlineWrap.classList.add('ikw-pausable');
+ikwHeadlineWrap.setAttribute('role', 'button');
+ikwHeadlineWrap.setAttribute('tabindex', '0');
+ikwHeadlineWrap.setAttribute('aria-label', 'Toggle pause');
+let ikwPauseInFlight = false;
+async function ikwTogglePause() {
+  if (ikwPauseInFlight) return;
+  ikwPauseInFlight = true;
+  // isPaused is dashboard_server.py's own script-scoped variable, kept
+  // current by its poll() loop (same cross-script visibility already
+  // relied on below for `poll` itself).
+  const resuming = isPaused;
   try {
     const res = await fetch(resuming ? '/resume' : '/pause', {method: 'POST'});
     const data = await res.json();
-    // Use the response's own paused state rather than re-polling
-    // /status.json — that file is written synchronously by the same
-    // request, but a round trip back through polling would just add a
-    // needless delay to what should be an instant toggle.
-    ikwSetPauseLabel(!!data.paused);
     // poll() (defined in dashboard_server.py's own script, sharing this
-    // page) re-reads the now-updated status.json and redraws the big
-    // headline immediately, instead of waiting up to 5s for its own
-    // interval to fire.
+    // page) re-reads the now-updated status.json and redraws the
+    // headline/icon immediately, instead of waiting up to 5s for its
+    // own interval to fire.
     if (typeof poll === 'function') await poll();
     ikwToast(data.paused ? 'Paused — checking will stop until you resume.' : 'Resumed checking.');
+  } catch (e) {
+    ikwToast('Could not reach the app.');
   } finally {
-    ikwPauseBtn.disabled = false;
+    ikwPauseInFlight = false;
   }
+}
+ikwHeadlineWrap.addEventListener('click', ikwTogglePause);
+ikwHeadlineWrap.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); ikwTogglePause(); }
 });
-ikwSyncPauseButton();
-setInterval(ikwSyncPauseButton, 5000);
+
+const ikwToolbar = document.getElementById('ikw-toolbar');
+const ikwToolbarZone = document.getElementById('ikw-toolbar-zone');
+let ikwHideTimer = null;
+function ikwRevealToolbar() {
+  ikwToolbar.classList.add('show');
+  clearTimeout(ikwHideTimer);
+  ikwHideTimer = setTimeout(() => ikwToolbar.classList.remove('show'), 2200);
+}
+ikwToolbarZone.addEventListener('mousemove', ikwRevealToolbar);
+ikwToolbar.addEventListener('mousemove', ikwRevealToolbar);
+ikwToolbar.addEventListener('focusin', () => { ikwToolbar.classList.add('show'); clearTimeout(ikwHideTimer); });
+ikwToolbar.addEventListener('focusout', ikwRevealToolbar);
+document.addEventListener('mousemove', (e) => { if (e.clientY < 88) ikwRevealToolbar(); });
 </script>
 """
 
@@ -932,9 +991,9 @@ class AppHandler(http.server.BaseHTTPRequestHandler):
 
     def _set_paused(self, paused):
         """Writes both the flag file and status.json synchronously, so the
-        dashboard and the toolbar button reflect the change the instant
-        it's clicked instead of waiting for the poll loop's next tick
-        (which could be up to INTERVAL seconds away).
+        dashboard and the headline's pause/resume icon reflect the change
+        the instant it's clicked instead of waiting for the poll loop's
+        next tick (which could be up to INTERVAL seconds away).
         """
         notifier.set_paused(paused)
         AppHandler.dash_status["paused"] = paused

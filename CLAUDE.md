@@ -86,20 +86,39 @@ dependencies (stdlib only).
   be verified against an actual build, not `python app.py` — re-test both (delete `session.json`,
   confirm Chrome/Edge still opens for relogin; then, separately, confirm a slot hit still opens a
   logged-in tab) after any change here before tagging a release.
-  The dashboard's toolbar (`TOOLBAR_HTML`, appended before `</body>`) has four buttons, in this
-  order — Open browser, Pause, Settings, Quit (Quit last/rightmost since it's the most destructive):
-  - **Pause/Resume** toggles `notifier.PAUSE_FILE` (`POST /pause` / `POST /resume`) — a plain flag
-    file rather than a config field, checked at the top of `run_check()`, so it works identically
-    whether checks are driven by `app.py`'s in-process loop or a systemd timer tick, and survives a
-    settings resave. `run_check()` no longer overwrites `status.json`'s `outcome`/`message` with an
-    artificial "paused" value when paused — it just skips the real work, leaving the last real
-    result underneath. Instead, `/pause` and `/resume` (`AppHandler._set_paused()`) write
-    `status.json`'s `paused` field directly and synchronously, and return it in the response body —
-    so the toolbar button's label flips instantly on click instead of lagging behind up to
-    `INTERVAL` seconds for the next tick to pick it up. `dashboard_server.py`'s frontend checks
-    `data.paused` *before* `data.outcome` when choosing the headline, so Resume falls straight back
-    to whatever the last real outcome was (e.g. "No slots in the next 31 days") rather than being
-    stuck showing "Paused" until a fresh check runs.
+  The dashboard's chrome is split across two files by design: `dashboard_server.py`'s `PAGE` owns
+  the structural markup (the `#headline-wrap`/`#headline-icon`/`#headline-hint` elements, and the
+  `poll()` loop that fills them in) but leaves it inert — no cursor, no hover styling — since that
+  file alone is also served read-only, with no `/pause`/`/settings`/`/manual-login`/`/shutdown`
+  endpoints behind it (see `dashboard_server.py`'s own entry below). `app.py`'s `TOOLBAR_HTML`
+  (appended before `</body>`) is what layers the actual interactivity on top, so the plain
+  systemd-dashboard path never shows an affordance it can't back up:
+  - **Pause/Resume** is a click (or Enter/Space when focused) on the headline itself, not a
+    separate button — hovering/focusing dims the headline text and overlays one large centered
+    pause/play icon on top of it (`.ikw-pausable` rules in `TOOLBAR_HTML`, added to `#headline-wrap`
+    by its own script), like a video player's hover control. It still hits the same
+    `notifier.PAUSE_FILE` (`POST /pause` / `POST /resume`) — a plain flag file rather than a config
+    field, checked at the top of `run_check()`, so it works identically whether checks are driven
+    by `app.py`'s in-process loop or a systemd timer tick, and survives a settings resave.
+    `run_check()` no longer overwrites `status.json`'s `outcome`/`message` with an artificial
+    "paused" value when paused — it just skips the real work, leaving the last real result
+    underneath. Instead, `/pause` and `/resume` (`AppHandler._set_paused()`) write `status.json`'s
+    `paused` field directly and synchronously, and return it in the response body — read via
+    `isPaused`, a variable `dashboard_server.py`'s script declares at top level and `TOOLBAR_HTML`'s
+    script reads directly (classic, non-module `<script>` tags on one page share a global lexical
+    scope, which is also how `TOOLBAR_HTML` already calls `dashboard_server.py`'s `poll()`) — so the
+    icon flips instantly on click instead of lagging behind up to `INTERVAL` seconds for the next
+    tick to pick it up. `dashboard_server.py`'s frontend checks `data.paused` *before* `data.outcome`
+    when choosing the headline, so Resume falls straight back to whatever the last real outcome was
+    (e.g. "No slots in the next 31 days") rather than being stuck showing "Paused" until a fresh
+    check runs.
+  - **Open browser / Settings / Quit** are icon-only buttons (`.ikw-icon-btn`) in a toolbar that's
+    invisible at rest and reveals itself only when the pointer nears the top ~88px of the screen (or
+    the toolbar gets keyboard focus), hiding again after a short idle — a fixed `#ikw-toolbar-zone`
+    tracks `mousemove` for the reveal, mirrored by a `mousemove` listener on `document` for pointer
+    positions already inside that band on load. A single low-opacity dot (`#ikw-toolbar-hint`) stays
+    permanently in the corner so the toolbar is still discoverable before its first reveal. Quit
+    stays rightmost since it's the most destructive of the three.
   - **Open browser** (`POST /manual-login`, `_handle_manual_login()`, named for what it does rather
     than "Log in" since it covers two different outcomes) probes the session live via
     `check_session_valid()` (the same `REFRESH_URL` call `run_check()` makes) and routes to whichever

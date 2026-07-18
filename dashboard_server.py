@@ -48,9 +48,24 @@ PAGE = """<!doctype html>
   body.error    { background: #2e3a5c; }
 
   #main { text-align: center; max-width: 800px; }
-  #headline { font-size: 3rem; font-weight: 700; margin-bottom: 0.5rem; letter-spacing: -0.02em; }
-  #subline { font-size: 1.2rem; opacity: 0.85; margin-bottom: 0.5rem; }
-  #detail { font-size: 1.1rem; line-height: 1.6; white-space: pre-line; opacity: 0.9; }
+
+  /* The headline doubles as the pause/resume control when app.py's
+     toolbar script is present (see TOOLBAR_HTML, which adds the
+     .ikw-pausable class plus the click/hover/focus behavior). This
+     structure is inert on its own - no cursor, no hover styling - so
+     the plain read-only dashboard (dashboard_server.py run standalone)
+     still renders correctly without implying a click it can't act on. */
+  #headline-wrap { position: relative; display: inline-block; border-radius: 12px; padding: 0.3rem 0.7rem; margin: 0 -0.7rem 0.5rem; -webkit-tap-highlight-color: transparent; }
+  #headline { font-size: 3rem; font-weight: 700; letter-spacing: -0.02em; transition: opacity 0.15s ease; }
+  #headline-icon { position: absolute; top: 50%; left: 50%; width: 3.2rem; height: 3.2rem; transform: translate(-50%, -50%) scale(0.8); opacity: 0; filter: drop-shadow(0 2px 10px rgba(0,0,0,0.45)); transition: opacity 0.15s ease, transform 0.15s ease; pointer-events: none; }
+  #headline-hint { font-size: 0.8rem; opacity: 0; height: 1.1rem; margin-top: -0.2rem; transition: opacity 0.15s ease; }
+
+  /* min-height reserves each line's space whether or not it has text,
+     so switching between outcomes (e.g. a slot's subline, an error's
+     detail line) doesn't change the block's total height and shift the
+     vertically-centered headline up/down. */
+  #subline { font-size: 1.2rem; line-height: 1.4; min-height: 1.4rem; opacity: 0.85; margin-bottom: 0.5rem; }
+  #detail { font-size: 1.1rem; line-height: 1.6; min-height: 1.6rem; white-space: pre-line; opacity: 0.9; }
   #countdown { margin-top: 2rem; font-size: 1rem; opacity: 0.6; font-variant-numeric: tabular-nums; }
   #meta { margin-top: 0.4rem; font-size: 0.85rem; opacity: 0.45; }
 
@@ -71,7 +86,14 @@ PAGE = """<!doctype html>
 </head>
 <body class="none">
   <div id="main">
-    <div id="headline">Checking&hellip;</div>
+    <div id="headline-wrap">
+      <span id="headline">Checking&hellip;</span>
+      <svg id="headline-icon" viewBox="0 0 24 24" fill="#fff">
+        <g id="icon-pause"><rect x="4.5" y="3" width="5.5" height="18" rx="1.6"/><rect x="14" y="3" width="5.5" height="18" rx="1.6"/></g>
+        <path id="icon-play" d="M6 3.5v17a1 1 0 0 0 1.53.85l13.5-8.5a1 1 0 0 0 0-1.7L7.53 2.65A1 1 0 0 0 6 3.5z" style="display:none"/>
+      </svg>
+    </div>
+    <div id="headline-hint"></div>
     <div id="subline"></div>
     <div id="detail"></div>
     <div id="countdown"></div>
@@ -119,6 +141,9 @@ async function poll() {
 
   const body = document.body;
   const headline = document.getElementById("headline");
+  const headlineIconPause = document.getElementById("icon-pause");
+  const headlineIconPlay = document.getElementById("icon-play");
+  const headlineHint = document.getElementById("headline-hint");
   const subline = document.getElementById("subline");
   const detail = document.getElementById("detail");
   const meta = document.getElementById("meta");
@@ -126,6 +151,9 @@ async function poll() {
 
   const fastest = fastestOf(data.current_hits);
   isPaused = !!data.paused;
+  headlineIconPause.style.display = isPaused ? "none" : "";
+  headlineIconPlay.style.display = isPaused ? "" : "none";
+  headlineHint.textContent = isPaused ? "Click to resume" : "Click to pause";
 
   if (isPaused) {
     // Checked first, ahead of outcome: pausing no longer overwrites the
@@ -136,7 +164,7 @@ async function poll() {
     body.className = "none";
     headline.textContent = "Paused";
     subline.textContent = "";
-    detail.textContent = "Click Resume to keep checking.";
+    detail.textContent = "Click to resume checking.";
   } else if (data.outcome === "slot_found" && fastest) {
     body.className = data.urgent ? "hit-soon" : "hit-far";
     headline.textContent = fmtDateTime(fastest.datetime);
