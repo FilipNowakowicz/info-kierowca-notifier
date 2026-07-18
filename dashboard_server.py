@@ -33,7 +33,7 @@ PAGE = """<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>info-kierowca watcher</title>
+<title>info-kierowca notifier</title>
 <style>
   * { box-sizing: border-box; }
   body {
