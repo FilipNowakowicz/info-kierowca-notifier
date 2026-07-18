@@ -526,10 +526,18 @@ WIZARD_PAGE = """<!doctype html>
      background above untouched. */
   html.ikw-embedded, html.ikw-embedded body { background: transparent; }
   #card { max-width: 560px; width: 100%; }
+  /* Fixed to the (iframe's own) viewport, so scrolled fieldset content
+     passes underneath it - a solid-enough backdrop plus its own shadow is
+     what keeps that reading as "floating above the content" instead of the
+     button visibly colliding with whatever border/text happens to scroll
+     past behind it (its background used to be too faint - close to the
+     page's own transparent-when-embedded background - for that separation
+     to read at all). */
   #wiz-close-btn { display: none; position: fixed; top: 1rem; right: 1rem; width: 2.2rem; height: 2.2rem;
-    border-radius: 999px; background: rgba(255,255,255,0.07); color: #eee; border: 1px solid rgba(255,255,255,0.18);
-    font-size: 1.2rem; line-height: 1; cursor: pointer; align-items: center; justify-content: center; }
-  #wiz-close-btn:hover { background: rgba(255,255,255,0.14); border-color: rgba(255,255,255,0.32); }
+    border-radius: 999px; background: rgba(24,24,24,0.9); color: #eee; border: 1px solid rgba(255,255,255,0.18);
+    box-shadow: 0 3px 12px rgba(0,0,0,0.45); font-size: 1.2rem; line-height: 1; cursor: pointer;
+    align-items: center; justify-content: center; }
+  #wiz-close-btn:hover { background: rgba(36,36,36,0.95); border-color: rgba(255,255,255,0.32); }
   h1 { font-size: 1.6rem; margin-bottom: 0.2rem; }
   p.lead { opacity: 0.75; margin-top: 0; margin-bottom: 2rem; }
   fieldset { border: 1px solid #383838; border-radius: 10px; margin-bottom: 1.1rem; padding: 1.1rem 1.2rem 1.25rem; }
