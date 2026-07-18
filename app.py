@@ -413,7 +413,7 @@ LOGIN_PAGE = """<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>info-kierowca watcher — connect your account</title>
+<title>info-kierowca notifier — connect your account</title>
 <style>
   * { box-sizing: border-box; }
   :root { --accent: #6a9c7c; --accent-soft: #9dc2ac; }
@@ -438,7 +438,7 @@ LOGIN_PAGE = """<!doctype html>
 <body>
 <div id="card">
   <h1>Connect your account</h1>
-  <p class="lead">Log in once via the mObywatel QR code — this is what lets the watcher check for
+  <p class="lead">Log in once via the mObywatel QR code — this is what lets the notifier check for
   slots on your behalf. While we're at it, we'll also find your PKK number and license category
   automatically, so you don't have to type them in.</p>
   <button id="login-btn">Log in with mObywatel</button>
@@ -499,7 +499,7 @@ WIZARD_PAGE = """<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>info-kierowca watcher — setup</title>
+<title>info-kierowca notifier — setup</title>
 <script>
   // Runs before <body> paints (no defer/async, and this sits ahead of the
   // rest of <head>) so the transparent-background rule below is already
@@ -686,7 +686,7 @@ WIZARD_PAGE = """<!doctype html>
 <body>
 <button id="wiz-close-btn" type="button" title="Back to dashboard" aria-label="Back to dashboard">&times;</button>
 <div id="card">
-  <h1 id="page-title">Set up info-kierowca watcher</h1>
+  <h1 id="page-title">Set up info-kierowca notifier</h1>
   <p class="lead" id="page-lead">This runs entirely on your machine — nothing but info-kierowca.pl ever sees your PKK number or session.</p>
 
   <div id="error"></div>
