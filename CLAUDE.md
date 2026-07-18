@@ -81,15 +81,19 @@ dependencies (stdlib only).
 - `fetch_word_centers.py` — maintenance script, run by hand (using your own `session.json`) to
   refresh `word_centers.json` if info-kierowca.pl adds/renames/closes a center. Reuses
   `notifier.BASE`/`SESSION_FILE`/`do_request()` rather than duplicating cookie/request logic.
-- `categories.json` — static snapshot (id, code, label) of license categories, used by the setup
-  wizard's "License category" dropdown so the user picks "B — car" instead of the bare numeric id
-  the API wants (B is 5). Seeded with only the confirmed B=5; the wizard also keeps an "Other —
-  enter number" escape hatch. Extend with `fetch_categories.py`.
-- `fetch_categories.py` — maintenance script like `fetch_word_centers.py`, but the exact dict path
-  for categories is unknown (all `/bknd/config/api/v1/dict/*` candidates 404'd when probed from a
-  no-network sandbox), so it **probes a list of candidate endpoint names** and uses the first that
-  returns category-shaped rows. If none match, it tells you to find the real dict path via the
-  site's Network tab and add it to `CANDIDATES`. Not yet verified against the live API.
+- `categories.json` — static snapshot (id, code, label) of all 17 license categories (A=1 …
+  B=5 … PT=17), used by the setup wizard's "License category" dropdown so the user picks "B — car"
+  instead of the bare numeric id the API wants. The wizard also keeps an "Other — enter number"
+  escape hatch. Regenerate with `fetch_categories.py`.
+- `fetch_categories.py` — maintenance script like `fetch_word_centers.py`, run by hand with your
+  own `session.json`. Categories are a two-source join: the **codes** (Am, A1, B, C1E, …) come from
+  the Applications service's `GET /bknd/Applications/api/v1/dictionary/licence-category-groups`
+  (note: a *different* base from `fetch_word_centers.py`'s `/bknd/config/api/v1` — the category
+  catalog lives under Applications, and there is **no `/dict/categories` endpoint**), but the
+  **numeric ids** the exam-search `category` field wants are not served by any endpoint — the
+  frontend hardcodes a code→id enum in its JS bundle, mirrored here as `CODE_TO_ID` (search `B:5`
+  in `main-*.js` to re-derive it if the site ever adds a category). Verified against the live API
+  on 2026-07-18: writes all 17 categories.
 - `pyinstaller.spec` — builds `app.py` into the single-file, no-console release binary; used by
   `.github/workflows/release.yml` (matrix over Windows/macOS/Linux, triggered on `v*` tags) and
   identical for manual local builds (`pyinstaller pyinstaller.spec`). PyInstaller is a build-time
