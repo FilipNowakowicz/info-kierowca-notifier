@@ -9,14 +9,22 @@ dependencies (stdlib only).
 ## Files
 
 - `notifier.py` — the poller. Run standalone with `--loop`, or once per invocation (used by the
-  systemd oneshot service). The search endpoint (`MultipleCentersExams`) rejects any
+  systemd oneshot service). `run_check()`'s outcome vocabulary — what `status.json` carries and
+  `dashboard_server.py`'s frontend branches on — is: `slot_found`, `no_slot`, `auth_expired`,
+  `network_error`, `unexpected`, `unparseable`, `setup_incomplete`, `no_chromium_browser`, `crash`.
+  Two distinctions worth keeping straight when adding to it: `network_error` means the request
+  never reached the server (`do_request` returns `status is None` on `URLError`) and is
+  deliberately *silent* — no desktop notification, no red state — because an outage would otherwise
+  fire a critical popup every tick for its whole duration; and `setup_incomplete` (no `config.json`)
+  is likewise silent, since it's the normal state during first-run setup and right after Reset
+  account, while the poll thread keeps ticking under the login screen. The search endpoint (`MultipleCentersExams`) rejects any
   `organizationId` list whose length isn't exactly 5 (`400 Validation error: "Exactly 5 exam
   centers must be provided..."`) — confirmed live 2026-07-18. Since a user may only want to watch
   1-4 centers, `build_search_organization_ids()` pads `config["organization_ids"]` out to 5 with
-  other real center ids drawn at random from `word_centers.json`; their results are simply
-  discarded afterwards by the `watch_organization_ids` filter, so which fillers land doesn't
-  matter. This also means 5 is a hard ceiling, not just an API detail — `app.py`'s center picker
-  enforces `MAX_CENTERS = 5` (`build_config()` rejects more server-side too) because anything past
+  other real center ids drawn at random from `word_centers.json`; results from any center not in
+  `config["organization_ids"]` are discarded afterwards, so which fillers land doesn't matter. This also means 5 is a hard ceiling, not just an API detail — `app.py`'s center picker
+  enforces `MAX_CENTERS = 5` (a JS literal; `build_config()` rejects more server-side too, against
+  `notifier.SEARCH_ORG_ID_COUNT` — change both if the API's count ever moves) because anything past
   the 5th pick would never even be queried. `fetch_pkk_profiles()`/`PKK_PROFILES_URL` (`GET
   /bknd/status/api/v1/pkk/get_profiles`, traced from the site's own `main-*.js`
   `pkkProfilesResource()`, confirmed live 2026-07-18) — used by `app.py`'s setup wizard to prefill
@@ -24,7 +32,19 @@ dependencies (stdlib only).
   either blind. The endpoint also returns `pesel`/`firstName`/`lastName`/`birthDate`; only
   `pkkNumber`/`categoryName` are kept, matching this project's minimal-footprint PII stance. Returns
   `[]` on any failure so a fetch hiccup just falls back to manual entry.
+- `paths.py` — the single owner of every config/state file location (`CONFIG_FILE`, `SESSION_FILE`,
+  `STATUS_FILE`, `PAUSE_FILE`, `AUTO_REFRESH_LOCK`, …). Imports nothing from the project so it can
+  sit at the bottom of the import graph; `notifier.py` re-exports the names it used to define, so
+  `notifier.STATUS_FILE` and friends still resolve. These were previously re-spelled in six places
+  across five modules — the promise that a frozen build and a `python app.py` run share the same
+  config/session/history holds only while every copy agrees, and a typo would have split state
+  silently rather than failing loudly.
 - `dashboard_server.py` — stdlib HTTP server, binds `127.0.0.1:8787`, serves `status.json` state.
+  History entries carry only the fastest hit (`{"seen_at", "fastest"}`), not the whole hits list —
+  that's the only field either dashboard renders, and a busy check returning dozens of hits would
+  otherwise be rewritten every 60s and re-parsed by the page every 5s. Entries written before that
+  narrowing still carry `hits`; the page reads `entry.fastest || fastestOf(entry.hits)`, so don't
+  drop that fallback while anyone's `status.json` predates it.
 - `pull_session_cookies.py` — pulls session cookies from a running Chrome via remote-debugging
   port; writes them into `session.json`. Manual: you launch Chrome and log in first.
 - `auto_refresh_session.py` — launches Chrome (or, as a fallback via `CHROME_CANDIDATES`/
@@ -84,14 +104,19 @@ dependencies (stdlib only).
   urgent-slot-hit trigger keeps the default (`auto_click=True`) since that click-through is the
   entire point there.
 - `app.py` — the composed, zero-setup entry point: runs `notifier.loop()` in a background thread,
-  serves a first-run setup wizard + the dashboard + a `POST /shutdown` (the page's Stop button;
-  hard-exits via `os._exit(0)`) from one stdlib HTTP server, and auto-opens the browser. The
+  serves a first-run setup wizard + the dashboard + a `POST /shutdown` (the page's Quit button;
+  hard-exits via `os._exit(0)`) from one stdlib HTTP server, and auto-opens the browser.
+  Two more wizard/settings-only endpoints live here: `POST /test-push` (sends a one-off ntfy
+  message so the user can confirm their topic works before relying on it) and `POST /reset-account`
+  (deletes `config.json` + `session.json` and drops back to first-run — the poll thread keeps
+  running through it, which is why the missing-config path is the silent `setup_incomplete`
+  outcome rather than a critical notification every tick). The
   dashboard's Settings button hits `GET /settings`, which reuses `render_wizard()` — passed the
   existing `config.json` so the same form comes back prefilled — rather than a separate edit page;
   submitting posts to the same `/setup` endpoint that first-run setup uses, so `build_config()`
   stays the single place config validation lives. This is
   what the packaged release binaries (`pyinstaller.spec`, built `--windowed` — no console window)
-  actually run. Shares `notifier.CONFIG_DIR`/`STATE_DIR` with the source/systemd path, so switching
+  actually run. Shares `paths.py`'s `CONFIG_DIR`/`STATE_DIR` with the source/systemd path, so switching
   between "ran the binary" and "ran from source" never loses config/session/history. Detects an
   already-running instance on the dashboard port and just opens a browser tab at it instead of
   binding twice.
@@ -101,7 +126,9 @@ dependencies (stdlib only).
   /login-start` (`_handle_login_start()` → `trigger_auto_refresh(force=True)` — same `force=True`
   rationale as the toolbar's "Open browser" button below, since a stale lock from a forgotten QR
   window must not silently no-op a user's own deliberate click on their very first run), then polls
-  `GET /login-status` (`{"ready": SESSION_FILE.exists()}`) every 2s and redirects to `/` once ready.
+  `GET /login-status` (`{"ready": SESSION_FILE.exists(), "in_progress":
+  auto_refresh_in_progress()}` — `in_progress` is what drives the "still waiting for your scan"
+  state) every 2s and redirects to `/` once ready.
   Once `session.json` exists but `config.json` still doesn't, `/` renders the wizard with
   `build_pkk_prefill()`'s result — calls `notifier.fetch_pkk_profiles()` and maps each profile's
   `categoryName` to a `categories.json` id via `pkk_category_id()`, dropping any that don't map
@@ -133,32 +160,18 @@ dependencies (stdlib only).
   endpoints behind it (see `dashboard_server.py`'s own entry below). `app.py`'s `TOOLBAR_HTML`
   (appended before `</body>`) is what layers the actual interactivity on top, so the plain
   systemd-dashboard path never shows an affordance it can't back up:
-  - **Pause/Resume** is a click (or Enter/Space when focused) on the headline itself, not a
-    separate button — hovering/focusing dims the headline text and overlays one large centered
-    pause/play icon on top of it (`.ikw-pausable` rules in `TOOLBAR_HTML`, added to `#headline-wrap`
-    by its own script), like a video player's hover control. It still hits the same
-    `notifier.PAUSE_FILE` (`POST /pause` / `POST /resume`) — a plain flag file rather than a config
-    field, checked at the top of `run_check()`, so it works identically whether checks are driven
-    by `app.py`'s in-process loop or a systemd timer tick, and survives a settings resave.
-    `run_check()` no longer overwrites `status.json`'s `outcome`/`message` with an artificial
-    "paused" value when paused — it just skips the real work, leaving the last real result
-    underneath. Instead, `/pause` and `/resume` (`AppHandler._set_paused()`) write `status.json`'s
-    `paused` field directly and synchronously, and return it in the response body — read via
-    `isPaused`, a variable `dashboard_server.py`'s script declares at top level and `TOOLBAR_HTML`'s
-    script reads directly (classic, non-module `<script>` tags on one page share a global lexical
-    scope, which is also how `TOOLBAR_HTML` already calls `dashboard_server.py`'s `poll()`) — so the
-    icon flips instantly on click instead of lagging behind up to `INTERVAL` seconds for the next
-    tick to pick it up. `dashboard_server.py`'s frontend checks `data.paused` *before* `data.outcome`
-    when choosing the headline, so Resume falls straight back to whatever the last real outcome was
-    (e.g. "No slots in the next 31 days") rather than being stuck showing "Paused" until a fresh
-    check runs.
-  - **Open browser / Settings / Quit** are icon-only buttons (`.ikw-icon-btn`) in a toolbar that's
-    invisible at rest and reveals itself only when the pointer nears the top ~88px of the screen (or
-    the toolbar gets keyboard focus), hiding again after a short idle — a fixed `#ikw-toolbar-zone`
-    tracks `mousemove` for the reveal, mirrored by a `mousemove` listener on `document` for pointer
-    positions already inside that band on load. A single low-opacity dot (`#ikw-toolbar-hint`) stays
-    permanently in the corner so the toolbar is still discoverable before its first reveal. Quit
-    stays rightmost since it's the most destructive of the three.
+  - **Pause/Resume** is a click (or Enter/Space) on the headline itself, not a separate button. It
+    writes `notifier.PAUSE_FILE` (`POST /pause` / `POST /resume`) — a flag file rather than a config
+    field, checked at the top of `run_check()`, so it behaves identically under `app.py`'s in-process
+    loop and a systemd timer tick, and survives a settings resave. Two non-obvious bits: pausing
+    deliberately leaves `status.json`'s `outcome`/`message` alone (so Resume falls straight back to
+    the last real result instead of being stuck on "Paused" until a fresh check), and the handlers
+    write `paused` synchronously and return it, which `TOOLBAR_HTML` reads via the top-level
+    `isPaused` that `dashboard_server.py` declares — the two classic `<script>` tags share one global
+    scope — so the icon flips on click rather than lagging a whole `INTERVAL` behind.
+  - **Open browser / Settings / Quit** are icon-only buttons in a toolbar that stays hidden until
+    the pointer nears the top of the screen or it takes keyboard focus; a low-opacity dot keeps it
+    discoverable before the first reveal. Geometry and styling live in `TOOLBAR_HTML`.
   - **Open browser** (`POST /manual-login`, `_handle_manual_login()`, named for what it does rather
     than "Log in" since it covers two different outcomes) probes the session live via
     `check_session_valid()` (the same `REFRESH_URL` call `run_check()` makes) and routes to whichever
@@ -167,21 +180,11 @@ dependencies (stdlib only).
     `auto_click=False` is the important bit: this button is for opening the site or troubleshooting,
     not for the reschedule flow, so `open_logged_in_browser.py` is invoked with `--no-auto-click`
     and just lands on `/cases` logged in, without clicking through to "Zmień termin" — unlike the
-    automatic urgent-slot-hit trigger (`notifier.py`'s call site keeps the default `auto_click=True`,
-    unchanged), which still wants that click-through so the date-picker is ready the moment the push
-    notification lands. This is also the fix/workaround for a reported bug: auto-login reliably
-    fires when cookies expire *while the app is already running*, but was reported as not firing on
-    a fresh launch with cookies that were *already* stale. Root cause (confirmed from
-    `notifier.log`): `AUTO_REFRESH_LOCK` has no timeout (`auto_refresh_session.py` waits indefinitely
-    for a QR scan) and is a detached process, so it outlives an `app.py` restart — a QR window left
-    open and forgotten in a previous session (one observed live held the lock for ~10 hours)
-    silently no-ops every later `trigger_auto_refresh()` call, including the very next launch, with
-    zero visible indication why. The automatic path stays conservative on purpose (a background
-    retry must never kill a window mid-scan) — `force` is what the manual button opts into instead:
-    it kills whatever pid holds the lock and clears it before relaunching. `trigger_open_browser()`
-    has no equivalent `force` — forcing there would mean a second Chrome fighting over the same fixed
-    debug port (`9555`) an already-open one is using, which is fragile rather than useful, so
-    "already_running" is treated as the desired outcome, not something to override.
+    automatic urgent-slot-hit trigger, which keeps `auto_click=True` so the date-picker is ready the
+    moment the push lands. Why `force=True` here: see the auto-relogin lock gotcha below.
+    `trigger_open_browser()` has no equivalent `force` — forcing there would mean a second Chrome
+    fighting over the same fixed debug port an already-open one is using, so "already_running" is
+    the desired outcome, not something to override.
 - `word_centers.json` — static snapshot (id, name, location) of every active DORD/WORD/MORD/
   PORD/ZORD exam center, used by `app.py`'s setup wizard to show real, searchable center names
   instead of bare numeric IDs. Baked in rather than fetched live because the wizard has to work
@@ -271,6 +274,34 @@ nothing for the user to notice or close. This only covers a **crashed** Chrome, 
 still-open QR window someone forgot about — that case is unchanged and correctly not force-cleared
 by the automatic path (see `trigger_auto_refresh()`'s docstring); the "Open browser" button's
 `force=True` is still what clears that one.
+
+That forgotten-window case is a real reported bug, not a hypothetical: `AUTO_REFRESH_LOCK` has no
+timeout (the script waits indefinitely for a QR scan) and the process is detached, so it outlives
+an `app.py` restart — one observed live held the lock for ~10 hours, silently no-opping every
+later `trigger_auto_refresh()` call including the next launch, with nothing to indicate why. That
+is why the *automatic* path stays conservative (a background retry must never kill a window
+someone is mid-scan on) and only the deliberate button click opts into `force`. `force` SIGTERMs
+the lock holder and waits (~5s) for it to actually exit before relaunching: `auto_refresh_session.py`
+installs a SIGTERM handler so its `finally` still runs — without one, Python dies immediately, its
+Chrome child survives as an orphan still holding `PROFILE_DIR`, and the replacement Chrome launched
+against that same `--user-data-dir` delegates to the orphan and exits instantly, tripping "Chrome
+closed before logging in" on every retry. The wait also matters on the systemd path, where
+`--unit=info-kierowca-auto-refresh` is a fixed name systemd-run refuses to reissue while the old
+unit is still deactivating.
+
+### Known gotcha: a sandboxed app.py silently hands your curls to the real instance
+
+`HOME=/tmp/fake-home python app.py` looks isolated but is not, for a second reason beyond the
+`systemd-run` one below: `already_running()` probes `127.0.0.1:8787` *before* binding, and if
+anything answers there — your own normal app.py, left running from earlier — the sandboxed process
+just opens a browser tab and exits. Its `HOME` override then applies to nothing at all, and every
+subsequent `curl http://127.0.0.1:8787/...` in the test is talking to the **real** instance against
+the **real** config/session/status. Confirmed live 2026-07-18: a test run's `POST /pause` +
+`POST /shutdown` paused and then killed the developer's actual running app, while the sandbox's own
+state directory was never even created. Tells that this happened: the sandbox `HOME`'s
+`.local/state/info-kierowca-notifier/` doesn't exist, the redirected app log is empty, and
+`status.json` comes back with history predating the test. Check the port is free first
+(`ss -ltn | grep 8787`), or run the sandboxed instance on another port.
 
 ### Known gotcha: dashboard port-in-use crash loop
 

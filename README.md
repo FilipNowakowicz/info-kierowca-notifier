@@ -20,7 +20,7 @@ always a click you make yourself; nothing gets rebooked automatically. See
 4. Confirm the PKK number/license category it found for you (or fill them in manually if you
    skipped), pick your exam center(s), and choose how you want to be notified.
 
-That's it — from then on, that browser tab is your dashboard, with a **Stop** button whenever you
+That's it — from then on, that browser tab is your dashboard, with a **Quit** button whenever you
 want to shut it down.
 
 **First run only:** since these builds aren't code-signed, Windows/macOS will show a one-time

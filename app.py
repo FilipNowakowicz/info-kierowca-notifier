@@ -18,6 +18,7 @@ import sys
 import threading
 import urllib.request
 import webbrowser
+from datetime import datetime
 from pathlib import Path
 
 import auto_refresh_session
@@ -125,9 +126,6 @@ def build_config(payload):
             "— the site's search only accepts that many at a time"
         )
 
-    watch_organization_ids = payload.get("watch_organization_ids") or organization_ids
-    watch_organization_ids = to_int_list(watch_organization_ids, "Watched WORD center IDs")
-
     exam_types = payload.get("exam_types")
     if not isinstance(exam_types, list) or not exam_types or not set(exam_types) <= set(EXAM_TYPE_CHOICES):
         raise ValueError("Pick at least one exam type")
@@ -138,10 +136,18 @@ def build_config(payload):
         raise ValueError("Category must be a number")
 
     current_slot_date = require_str("current_slot_date", "Current slot date")
+    # Must be ISO: notifier.is_urgent() feeds this straight to
+    # datetime.fromisoformat() on every check that finds a slot. An
+    # unvalidated value (e.g. "05/12/2026") saved fine here, then raised
+    # inside the poll loop where loop()'s except-Exception swallowed it —
+    # freezing the dashboard on its last status with nothing to explain why.
+    try:
+        datetime.fromisoformat(current_slot_date)
+    except ValueError:
+        raise ValueError("Current slot date must be a date like 2026-09-14")
 
     config = {
         "organization_ids": organization_ids,
-        "watch_organization_ids": watch_organization_ids,
         "category": category,
         "profile_number": profile_number,
         "exam_types": exam_types,
@@ -673,10 +679,9 @@ const CENTERS_BY_ID = new Map(CENTERS.map(c => [c.id, c]));
 // unrelated fillers whose results get discarded, but that only works up to
 // this many real picks.
 const MAX_CENTERS = 5;
-const selectedIds = new Set([
-  ...(EXISTING_CONFIG ? EXISTING_CONFIG.organization_ids : []),
-  ...(EXISTING_CONFIG ? EXISTING_CONFIG.watch_organization_ids : []),
-].filter(id => KNOWN_IDS.has(id)));
+const selectedIds = new Set(
+  (EXISTING_CONFIG ? EXISTING_CONFIG.organization_ids : []).filter(id => KNOWN_IDS.has(id))
+);
 
 const searchInput = document.getElementById('center-search');
 const dropdown = document.getElementById('center-dropdown');
@@ -1071,7 +1076,6 @@ document.getElementById('form').addEventListener('submit', async (e) => {
     const orgIds = Array.from(selectedIds);
     if (!orgIds.length) throw new Error('Pick at least one WORD center.');
     if (orgIds.length > MAX_CENTERS) throw new Error(`Pick at most ${MAX_CENTERS} WORD centers — the site's search only accepts ${MAX_CENTERS} at a time.`);
-    const watchIds = orgIds;
 
     const profileNumber = pkkInput.value.trim();
     if (!profileNumber) throw new Error('PKK number is required.');
@@ -1085,7 +1089,6 @@ document.getElementById('form').addEventListener('submit', async (e) => {
     const body = {
       profile_number: profileNumber,
       organization_ids: orgIds,
-      watch_organization_ids: watchIds,
       category: category,
       exam_types: examTypes,
       current_slot_date: currentSlotDate,
@@ -1401,7 +1404,22 @@ def main():
     )
     poll_thread.start()
 
-    httpd = ThreadingServer((HOST, PORT), AppHandler)
+    try:
+        httpd = ThreadingServer((HOST, PORT), AppHandler)
+    except OSError as e:
+        # already_running() only returns True for a listener that answers our
+        # own /status.json. Anything else on the port (a crashed instance
+        # mid-shutdown, an unrelated dev server) lands here — and the release
+        # binary is built --windowed, so an unhandled traceback would mean
+        # double-clicking the app appears to do nothing at all.
+        stop_event.set()
+        notifier.notify(
+            "info-kierowca: can't start",
+            f"Port {PORT} is already in use by another program.",
+            "critical",
+        )
+        print(f"Can't start: port {PORT} is already in use ({e}).", file=sys.stderr)
+        sys.exit(1)
     webbrowser.open(f"http://{HOST}:{PORT}/")
 
     try:
