@@ -33,7 +33,7 @@ claim still holds either way).
 
    **Option A — `auto_refresh_session.py` (Chrome/Chromium, hands-off):** run it once to seed
    `session.json`, and from then on it also fires automatically whenever the notifier hits an
-   `auth_expired` outcome (session cookie expiry, or an HTTP 500 — see [Auto-relogin on session
+   `auth_expired` outcome (session cookie expiry — see [Auto-relogin on session
    expiry](#auto-relogin-on-session-expiry) below):
    ```
    python auto_refresh_session.py
@@ -67,8 +67,7 @@ claim still holds either way).
 
    | Field | Meaning |
    |---|---|
-   | `organization_ids` | WORD center IDs to watch (defaults are Warsaw-area centers) |
-   | `watch_organization_ids` | Which of the queried centers actually produce hits. The setup wizard keeps this identical to `organization_ids`; only hand-edit it apart if you want to query centers whose results you then ignore. |
+   | `organization_ids` | WORD center IDs to watch, up to 5 (defaults are Warsaw-area centers). The search endpoint insists on exactly 5, so fewer picks get padded with unrelated centers whose results are then discarded. |
    | `category` | License category (5 = category B) |
    | `profile_number` | Your PKK profile number |
    | `exam_types` | Which exam(s) to watch: `["Theoretical"]`, `["Practice"]`, or both `["Theoretical", "Practice"]` |
@@ -84,7 +83,7 @@ claim still holds either way).
 
 4. Run it — pick whichever fits your OS:
 
-   **Option A — `app.py` (the same all-in-one wizard + dashboard + Stop button the downloaded
+   **Option A — `app.py` (the same all-in-one wizard + dashboard + Quit button the downloaded
    binaries run, just from source):**
    ```
    python app.py
@@ -92,7 +91,7 @@ claim still holds either way).
    Opens a browser tab automatically; if `config.json` doesn't exist yet it replaces steps 1-3
    above with an in-browser setup wizard (using real WORD center names — see `word_centers.json` /
    `fetch_word_centers.py` — and license-category names from `categories.json` /
-   `fetch_categories.py`). No console window management needed here either — use the page's Stop
+   `fetch_categories.py`). No console window management needed here either — use the page's Quit
    button, not Ctrl+C.
 
    **Option B — built-in loop (works on Windows, macOS, Linux):**
@@ -130,6 +129,11 @@ claim still holds either way).
 **Note:** desktop error notifications use `notify-send` and only work on Linux. On Windows/macOS
 you won't get a popup on errors — check the dashboard or the log file instead, at
 `~/.local/state/info-kierowca-notifier/notifier.log` (not in the repo directory).
+
+**Being offline is not an error.** If a check can't reach info-kierowca.pl at all (no Wi-Fi, laptop
+asleep, DNS down), the dashboard shows a plain "Offline" and the next check just retries — no
+desktop notification, no red error state. Only responses that actually came back from the server
+are treated as problems worth interrupting you about.
 
 ## Auto-relogin on session expiry
 
@@ -189,8 +193,15 @@ a booking you already hold; it doesn't create one.
 
 ## Pausing / resuming
 
-**Loop mode / `app.py`:** just stop the process (Ctrl+C, or the dashboard's Stop button for
-`app.py`) and rerun it whenever you want to resume.
+**`app.py`:** click the headline on the dashboard — it toggles pause/resume (hover it and a
+pause/play icon appears over the text; Enter or Space works too when it's focused). Checks stop
+until you click again; the last real result stays on screen underneath. This writes a flag file
+(`~/.local/state/info-kierowca-notifier/paused`) rather than a config setting, so it survives
+saving settings and applies to the systemd path too. The **Quit** button in the top toolbar is a
+different thing — it exits the app entirely.
+
+**Loop mode (`notifier.py --loop`):** Ctrl+C and rerun, or `touch`/`rm` the same `paused` flag
+file, which `run_check()` honours on every tick.
 
 **systemd mode:**
 ```

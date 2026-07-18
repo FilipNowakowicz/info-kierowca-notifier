@@ -5,18 +5,28 @@ Serves one HTML page plus the notifier's status.json. Binds to
 127.0.0.1 only - never reachable off this machine.
 """
 import http.server
+import json
 import socketserver
-from pathlib import Path
 
-STATE_DIR = Path.home() / ".local" / "state" / "info-kierowca-notifier"
-STATUS_FILE = STATE_DIR / "status.json"
+from paths import STATUS_FILE
+
 HOST = "127.0.0.1"
 PORT = 8787
 
-EMPTY_STATUS = (
-    b'{"last_check": null, "outcome": null, "message": "", '
-    b'"urgent": false, "current_hits": [], "history": [], "paused": false}'
-)
+# Derived rather than hand-written: this used to be a literal byte string that
+# had already drifted from the real default shape (it grew "urgent"/"paused"
+# keys the notifier's own default dict never had).
+EMPTY_STATUS = json.dumps(
+    {
+        "last_check": None,
+        "outcome": None,
+        "message": "",
+        "urgent": False,
+        "current_hits": [],
+        "history": [],
+        "paused": False,
+    }
+).encode()
 
 # Must match the .timer unit's OnUnitActiveSec - used only to estimate the
 # next-check countdown client-side; it resyncs to reality every poll.
@@ -175,6 +185,13 @@ async function poll() {
     headline.textContent = "Session expired";
     subline.textContent = "";
     detail.textContent = "Log back in via browser and update session.json";
+  } else if (data.outcome === "network_error") {
+    // Offline is a normal, self-healing state, not an error worth alarming
+    // about — styled like "no result yet" rather than red.
+    body.className = "none";
+    headline.textContent = "Offline";
+    subline.textContent = "";
+    detail.textContent = data.message || "Can't reach info-kierowca.pl — will retry";
   } else if (data.outcome === "unexpected" || data.outcome === "unparseable") {
     body.className = "error";
     headline.textContent = "Something's wrong";
@@ -201,7 +218,9 @@ async function poll() {
   history.innerHTML = "";
   (data.history || []).slice().reverse().forEach(entry => {
     const div = document.createElement("div");
-    const f = fastestOf(entry.hits);
+    // History entries written before the schema narrowed carry the full
+    // "hits" list instead of a precomputed "fastest" — read either.
+    const f = entry.fastest || fastestOf(entry.hits);
     const text = f ? `${fmtShort(f.datetime)} · ${f.word} (${f.places})` : "no slots in the next 31 days";
     div.innerHTML = `<span class="ts">${fmtDateTime(entry.seen_at)}</span>${text}`;
     history.appendChild(div);

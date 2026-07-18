@@ -19,12 +19,13 @@ import json
 import subprocess
 import time
 import uuid
-from pathlib import Path
 
+import auto_refresh_session
 import cdp_client
 from auto_refresh_session import find_chrome
 
-STATE_DIR = Path.home() / ".local" / "state" / "info-kierowca-notifier"
+from paths import STATE_DIR  # noqa: E402
+
 PROFILE_DIR = STATE_DIR / "chrome-reschedule-profile"
 
 # Distinct from pull_session_cookies.py's manual default (9222) and
@@ -70,21 +71,10 @@ CONFIRM_CHANGE_DATE_TEXT = "Zmień termin rezerwacji"
 
 
 def click_text_js(text):
-    return """
-function __ikw_isClickable(el) {
-  if (!el) return false;
-  var style = window.getComputedStyle(el);
-  return el.tagName === 'BUTTON' || el.tagName === 'A' ||
-    el.getAttribute('role') === 'button' || style.cursor === 'pointer';
-}
-function __ikw_clickableAncestor(el) {
-  var cur = el;
-  for (var i = 0; i < 6 && cur; i++) {
-    if (__ikw_isClickable(cur)) return cur;
-    cur = cur.parentElement;
-  }
-  return el;
-}
+    # Deliberately stricter than auto_refresh_session.py's chooser matching
+    # (buttons/links only, shorter text cap) — see the module docstring — but
+    # the clickability heuristic itself is the shared one.
+    return auto_refresh_session.CLICKABLE_HELPERS_JS + """
 (function(text) {
   var all = document.querySelectorAll('button, a, [role="button"]');
   var best = null;

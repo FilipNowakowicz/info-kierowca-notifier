@@ -24,6 +24,7 @@ import argparse
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -32,10 +33,10 @@ from pathlib import Path
 
 import cdp_client
 
-STATE_DIR = Path.home() / ".local" / "state" / "info-kierowca-notifier"
+from paths import AUTO_REFRESH_LOCK as LOCK_FILE  # noqa: E402
+from paths import CONFIG_FILE, STATE_DIR  # noqa: E402,F401
+
 PROFILE_DIR = STATE_DIR / "chrome-relogin-profile"
-LOCK_FILE = STATE_DIR / "auto-refresh.lock"
-CONFIG_FILE = Path.home() / ".config" / "info-kierowca-notifier" / "config.json"
 
 # Deliberately distinct from pull_session_cookies.py's manual default (9222)
 # so this never fights over the port with a Chrome you started by hand.
@@ -81,11 +82,12 @@ AUTO_CLICK_TARGETS = ["Aplikacja mObywatel", "gov.pl", "Zaloguj się"]
 # won't force you straight back to it. Origin-scoped only — it resets on a
 # genuine cross-origin hop, which matches the one place that's actually
 # wanted: a fresh run of this script (new profile) should auto-click again.
-CLICK_LOGIC_JS = """
-var __IKW_STOP_KEY = '__ikw_auto_click_stopped';
-function __ikw_stopped() {
-  try { return !!sessionStorage.getItem(__IKW_STOP_KEY); } catch (e) { return false; }
-}
+# The "is this thing clickable" heuristic, shared verbatim with
+# open_logged_in_browser.py's own click-by-text helper. This is the most
+# site-fragile code in the project — when info-kierowca.pl reshuffles its
+# markup it gets edited under pressure, so it lives in exactly one place
+# rather than in two copies that can silently drift apart.
+CLICKABLE_HELPERS_JS = """
 function __ikw_isVisible(el) {
   var style = window.getComputedStyle(el);
   if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
@@ -105,6 +107,14 @@ function __ikw_clickableAncestor(el) {
   }
   return el;
 }
+"""
+
+CLICK_LOGIC_JS = """
+var __IKW_STOP_KEY = '__ikw_auto_click_stopped';
+function __ikw_stopped() {
+  try { return !!sessionStorage.getItem(__IKW_STOP_KEY); } catch (e) { return false; }
+}
+""" + CLICKABLE_HELPERS_JS + """
 function __ikw_findAndClick(targets) {
   if (__ikw_stopped()) return null;
   var all = document.querySelectorAll('button, a, [role="button"], li, div, span');
@@ -321,6 +331,19 @@ def main():
         "--keep-open", action="store_true", help="Leave Chrome open after capturing cookies"
     )
     args = parser.parse_args()
+
+    # notifier.trigger_auto_refresh(force=True) — the "Open browser" button's
+    # path for clearing a forgotten QR window — SIGTERMs whoever holds the
+    # lock. Without a handler Python dies immediately, skipping the finally
+    # below: the lock got cleared but our Chrome child survived as an orphan
+    # still holding PROFILE_DIR, so the *replacement* Chrome launched against
+    # the same --user-data-dir would delegate to it and exit instantly,
+    # tripping the "Chrome closed before logging in" bail-out on every retry.
+    # Translating the signal into SystemExit lets the finally run normally.
+    def _terminate(signum, _frame):
+        raise SystemExit(f"terminated by signal {signum}")
+
+    signal.signal(signal.SIGTERM, _terminate)
 
     if not acquire_lock():
         print("A refresh is already in progress (lock file present) — exiting.")

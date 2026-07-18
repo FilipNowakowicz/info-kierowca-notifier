@@ -10,17 +10,17 @@ Everything here talks to 127.0.0.1 only and writes straight to session.json.
 Nothing is sent to info-kierowca.pl, ntfy.sh, or anywhere else by this module.
 """
 import base64
+import contextlib
 import json
 import os
 import socket
 import struct
 import time
 import urllib.request
-from pathlib import Path
 from urllib.parse import urlparse
 
-CONFIG_DIR = Path.home() / ".config" / "info-kierowca-notifier"
-SESSION_FILE = CONFIG_DIR / "session.json"
+from paths import CONFIG_DIR, SESSION_FILE
+
 COOKIE_NAMES = {"__Secure-PUDOJT", "__Secure-PUDOJTMD"}
 DOMAIN_SUFFIX = "info-kierowca.pl"
 
@@ -48,11 +48,14 @@ def ws_handshake(sock, host, path):
 
 
 def ws_send_text(sock, text):
-    payload = text.encode()
+    ws_send_frame(sock, 0x1, text.encode())
+
+
+def ws_send_frame(sock, opcode, payload=b""):
     mask = os.urandom(4)
     masked = bytes(b ^ mask[i % 4] for i, b in enumerate(payload))
     length = len(payload)
-    header = bytearray([0x81])  # FIN + text frame opcode
+    header = bytearray([0x80 | opcode])  # FIN + opcode
     if length < 126:
         header.append(0x80 | length)
     elif length < 65536:
@@ -88,7 +91,12 @@ def ws_recv_message(sock):
             length = struct.unpack(">Q", _recv_exact(sock, 8))[0]
         payload = _recv_exact(sock, length) if length else b""
         if opcode == 0x9:  # ping -> pong, then keep waiting
+            ws_send_frame(sock, 0xA, payload)
             continue
+        if opcode == 0xA:  # pong -- not message data, keep waiting
+            continue
+        if opcode == 0x8:  # close -- payload is a status code, not JSON
+            raise ConnectionError("Chrome closed the websocket")
         parts.append(payload)
         if fin:
             break
@@ -121,19 +129,40 @@ def wait_for_debug_port(host, port, timeout=15):
     raise TimeoutError(f"Chrome debug port never came up at {url}: {last_err}")
 
 
-def fetch_cookies(host, port):
-    """Return the raw list of cookie dicts Chrome reports via Storage.getCookies."""
-    version_url = f"http://{host}:{port}/json/version"
-    with urllib.request.urlopen(version_url, timeout=5) as resp:
-        info = json.loads(resp.read())
-    ws_url = info["webSocketDebuggerUrl"]
+def browser_ws_url(host, port):
+    """Websocket URL of the browser-level debugger target."""
+    with urllib.request.urlopen(f"http://{host}:{port}/json/version", timeout=5) as resp:
+        return json.loads(resp.read())["webSocketDebuggerUrl"]
+
+
+def page_ws_url(host, port):
+    """Websocket URL of the first open page/tab, or None if there isn't one.
+
+    Browser-scoped calls (Storage.*) can use browser_ws_url, but Page.* and
+    Runtime.* need a specific page target's own socket.
+    """
+    with urllib.request.urlopen(f"http://{host}:{port}/json", timeout=5) as resp:
+        targets = json.loads(resp.read())
+    pages = [t for t in targets if t.get("type") == "page"]
+    return pages[0]["webSocketDebuggerUrl"] if pages else None
+
+
+@contextlib.contextmanager
+def cdp_socket(ws_url):
+    """Connected, handshaken websocket to `ws_url`, closed on exit."""
     parsed = urlparse(ws_url.replace("ws://", "http://"))
     sock = socket.create_connection((parsed.hostname, parsed.port), timeout=5)
     try:
         ws_handshake(sock, f"{parsed.hostname}:{parsed.port}", parsed.path)
-        result = cdp_call(sock, 1, "Storage.getCookies")
+        yield sock
     finally:
         sock.close()
+
+
+def fetch_cookies(host, port):
+    """Return the raw list of cookie dicts Chrome reports via Storage.getCookies."""
+    with cdp_socket(browser_ws_url(host, port)) as sock:
+        result = cdp_call(sock, 1, "Storage.getCookies")
     return result.get("cookies", [])
 
 
@@ -149,50 +178,27 @@ def set_cookies(host, port, cookies):
     httpOnly copy is invisible to it and it renders as logged out even
     though the cookie is still sent correctly on every request.
     """
-    version_url = f"http://{host}:{port}/json/version"
-    with urllib.request.urlopen(version_url, timeout=5) as resp:
-        info = json.loads(resp.read())
-    ws_url = info["webSocketDebuggerUrl"]
-    parsed = urlparse(ws_url.replace("ws://", "http://"))
-    sock = socket.create_connection((parsed.hostname, parsed.port), timeout=5)
-    try:
-        ws_handshake(sock, f"{parsed.hostname}:{parsed.port}", parsed.path)
-        cookie_params = [
-            {
-                "name": name,
-                "value": value,
-                "domain": DOMAIN_SUFFIX,
-                "path": "/",
-                "secure": True,
-                "httpOnly": False,
-                "sameSite": "Lax",
-            }
-            for name, value in cookies.items()
-        ]
+    cookie_params = [
+        {
+            "name": name,
+            "value": value,
+            "domain": DOMAIN_SUFFIX,
+            "path": "/",
+            "secure": True,
+            "httpOnly": False,
+            "sameSite": "Lax",
+        }
+        for name, value in cookies.items()
+    ]
+    with cdp_socket(browser_ws_url(host, port)) as sock:
         cdp_call(sock, 1, "Storage.setCookies", {"cookies": cookie_params})
-    finally:
-        sock.close()
 
 
 def navigate(host, port, url):
     """Navigate the first open page/tab to `url`. No script injection —
     see inject_and_navigate for the login-auto-click variant that needs one.
     """
-    list_url = f"http://{host}:{port}/json"
-    with urllib.request.urlopen(list_url, timeout=5) as resp:
-        targets = json.loads(resp.read())
-    pages = [t for t in targets if t.get("type") == "page"]
-    if not pages:
-        raise RuntimeError("No page target found to navigate")
-    ws_url = pages[0]["webSocketDebuggerUrl"]
-    parsed = urlparse(ws_url.replace("ws://", "http://"))
-    sock = socket.create_connection((parsed.hostname, parsed.port), timeout=5)
-    try:
-        ws_handshake(sock, f"{parsed.hostname}:{parsed.port}", parsed.path)
-        cdp_call(sock, 1, "Page.enable")
-        cdp_call(sock, 2, "Page.navigate", {"url": url})
-    finally:
-        sock.close()
+    inject_and_navigate(host, port, url, script=None)
 
 
 def evaluate_in_page(host, port, expression):
@@ -203,28 +209,20 @@ def evaluate_in_page(host, port, expression):
     a specific page target's own websocket — so this queries /json for the
     open tabs first.
     """
-    list_url = f"http://{host}:{port}/json"
-    with urllib.request.urlopen(list_url, timeout=5) as resp:
-        targets = json.loads(resp.read())
-    pages = [t for t in targets if t.get("type") == "page"]
-    if not pages:
+    ws_url = page_ws_url(host, port)
+    if ws_url is None:
         return None
-    ws_url = pages[0]["webSocketDebuggerUrl"]
-    parsed = urlparse(ws_url.replace("ws://", "http://"))
-    sock = socket.create_connection((parsed.hostname, parsed.port), timeout=5)
-    try:
-        ws_handshake(sock, f"{parsed.hostname}:{parsed.port}", parsed.path)
+    with cdp_socket(ws_url) as sock:
         result = cdp_call(
             sock, 1, "Runtime.evaluate", {"expression": expression, "returnByValue": True}
         )
-    finally:
-        sock.close()
     return result.get("result", {}).get("value")
 
 
 def inject_and_navigate(host, port, url, script):
     """Register `script` to run on every future document in the first open
-    page/tab, then navigate it to `url`.
+    page/tab, then navigate it to `url`. `script=None` skips the injection
+    and just navigates (see navigate()).
 
     Page.addScriptToEvaluateOnNewDocument runs before any of a document's
     own scripts — including across cross-origin navigations within the same
@@ -232,22 +230,14 @@ def inject_and_navigate(host, port, url, script):
     the very first paint of `url` (and every redirect after it), instead of
     only reacting after our own next poll tick.
     """
-    list_url = f"http://{host}:{port}/json"
-    with urllib.request.urlopen(list_url, timeout=5) as resp:
-        targets = json.loads(resp.read())
-    pages = [t for t in targets if t.get("type") == "page"]
-    if not pages:
+    ws_url = page_ws_url(host, port)
+    if ws_url is None:
         raise RuntimeError("No page target found to navigate")
-    ws_url = pages[0]["webSocketDebuggerUrl"]
-    parsed = urlparse(ws_url.replace("ws://", "http://"))
-    sock = socket.create_connection((parsed.hostname, parsed.port), timeout=5)
-    try:
-        ws_handshake(sock, f"{parsed.hostname}:{parsed.port}", parsed.path)
+    with cdp_socket(ws_url) as sock:
         cdp_call(sock, 1, "Page.enable")
-        cdp_call(sock, 2, "Page.addScriptToEvaluateOnNewDocument", {"source": script})
+        if script:
+            cdp_call(sock, 2, "Page.addScriptToEvaluateOnNewDocument", {"source": script})
         cdp_call(sock, 3, "Page.navigate", {"url": url})
-    finally:
-        sock.close()
 
 
 def extract_info_kierowca_cookies(raw_cookies, all_cookies=False):

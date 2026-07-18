@@ -16,33 +16,32 @@ import signal
 import subprocess
 import sys
 import threading
+import time
 import urllib.error
 import urllib.request
 from datetime import datetime, timedelta
 from pathlib import Path
 
 import auto_refresh_session
+import open_logged_in_browser
+from paths import (  # noqa: F401  (re-exported: other modules read these off notifier)
+    CONFIG_FILE,
+    LOG_FILE,
+    PAUSE_FILE,
+    SESSION_FILE,
+    STATE_DIR,
+    STATUS_FILE,
+    WORD_CENTERS_FILE,
+)
 
-CONFIG_DIR = Path.home() / ".config" / "info-kierowca-notifier"
-CONFIG_FILE = CONFIG_DIR / "config.json"
-SESSION_FILE = CONFIG_DIR / "session.json"
-STATE_DIR = Path.home() / ".local" / "state" / "info-kierowca-notifier"
-LOG_FILE = STATE_DIR / "notifier.log"
-STATUS_FILE = STATE_DIR / "status.json"
-# A plain flag file rather than a config.json field, so pausing is a quick
-# runtime toggle independent of saved settings, and works the same whether
-# checks are driven by app.py's in-process loop or a systemd timer tick.
-PAUSE_FILE = STATE_DIR / "paused"
 MAX_HISTORY = 200
-
-WORD_CENTERS_FILE = Path(__file__).parent / "word_centers.json"
 
 # The search endpoint rejects anything but exactly 5 organizationIds
 # ("Exactly 5 exam centers must be provided when searching for the fastest
 # terms"), even though the user may only want to watch 1-2. The extra slots
-# are padded with other real center ids the user doesn't care about — their
-# results are discarded below by the watch_organization_ids filter, so which
-# ones they are doesn't matter.
+# are padded with other real center ids the user doesn't care about — results
+# from any center not in organization_ids are discarded below, so which ones
+# the padding picks doesn't matter.
 SEARCH_ORG_ID_COUNT = 5
 
 
@@ -104,12 +103,25 @@ def load_json(path):
 
 
 def save_json(path, data):
+    """Atomically write `data` to `path`.
+
+    The temp file name carries the writing thread's id: status.json and
+    session.json are both written from the poll thread *and* from app.py's
+    HTTP threads (pause/resume, "Open browser", saving settings), and a single
+    fixed "<name>.tmp" let two concurrent writers scribble over each other's
+    half-written temp file — one would then rename the other's partial JSON
+    into place and the loser's own rename would raise FileNotFoundError.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".tmp")
-    with open(tmp, "w") as f:
-        json.dump(data, f, indent=2)
-    tmp.replace(path)
-    path.chmod(0o600)
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+    try:
+        with open(tmp, "w") as f:
+            json.dump(data, f, indent=2)
+        tmp.replace(path)
+        path.chmod(0o600)
+    except Exception:
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 def load_status():
@@ -118,12 +130,16 @@ def load_status():
             return load_json(STATUS_FILE)
         except Exception:
             pass
+    # Keep in step with dashboard_server.EMPTY_STATUS — the two are the same
+    # "nothing has happened yet" shape, served by the two different dashboards.
     return {
         "last_check": None,
         "outcome": None,
         "message": "",
+        "urgent": False,
         "current_hits": [],
         "history": [],
+        "paused": False,
     }
 
 
@@ -174,8 +190,14 @@ def update_status(status, outcome, message="", current_hits=None, urgent=False):
         status["current_hits"] = current_hits
         signature = fastest_of(current_hits)
         if signature != status.get("last_signature"):
+            # Only the fastest hit is stored, not the whole list: that is the
+            # only field either dashboard ever reads back out of history, and
+            # a busy check can return dozens of hits that would otherwise be
+            # rewritten every 60s and re-parsed by the page every 5s. Older
+            # entries carrying the full "hits" list still render — see
+            # dashboard_server.py's PAGE, which falls back to them.
             status.setdefault("history", []).append(
-                {"seen_at": status["last_check"], "hits": current_hits}
+                {"seen_at": status["last_check"], "fastest": signature}
             )
             status["history"] = status["history"][-MAX_HISTORY:]
             status["last_signature"] = signature
@@ -210,7 +232,7 @@ def push_ntfy(logger, topic, title, message, priority="default", tags=None):
 
 
 AUTO_REFRESH_SCRIPT = Path(__file__).parent / "auto_refresh_session.py"
-AUTO_REFRESH_LOCK = STATE_DIR / "auto-refresh.lock"
+AUTO_REFRESH_LOCK = auto_refresh_session.LOCK_FILE
 
 
 def trigger_auto_refresh(logger, config, force=False):
@@ -259,6 +281,20 @@ def trigger_auto_refresh(logger, config, force=False):
                 os.kill(pid, signal.SIGTERM)
             except OSError:
                 pass
+            else:
+                # Wait for it to actually go before relaunching. It has a
+                # SIGTERM handler to run (closing its Chrome, which still
+                # holds the shared --user-data-dir), and the systemd path
+                # reuses a fixed --unit name that systemd-run refuses to
+                # reissue while the old unit is still deactivating.
+                for _ in range(50):  # ~5s
+                    try:
+                        os.kill(pid, 0)
+                    except OSError:
+                        break
+                    time.sleep(0.1)
+                else:
+                    logger.info("outcome=auto_refresh_force_restart detail=still_alive pid=%s", pid)
         except ValueError:
             pass  # stale lock — let auto_refresh_session.py sort it out
         except OSError:
@@ -310,8 +346,7 @@ def auto_refresh_in_progress():
 
 
 OPEN_BROWSER_SCRIPT = Path(__file__).parent / "open_logged_in_browser.py"
-# Must match open_logged_in_browser.py's DEFAULT_PORT.
-OPEN_BROWSER_PORT = 9555
+OPEN_BROWSER_PORT = open_logged_in_browser.DEFAULT_PORT
 
 
 def trigger_open_browser(logger, config, auto_click=True):
@@ -376,13 +411,38 @@ def cookie_header(session):
     return "; ".join(f"{k}={v}" for k, v in session.get("cookies", {}).items())
 
 
+def cookie_is_deletion(value, attrs):
+    """Whether a Set-Cookie is the server clearing the cookie rather than
+    setting one. Servers expire a cookie by sending it back empty and/or with
+    Max-Age=0 / an Expires in the past."""
+    if not value:
+        return True
+    lowered = attrs.lower()
+    if "max-age=0" in lowered.replace(" ", ""):
+        return True
+    return "expires=thu, 01 jan 1970" in lowered
+
+
 def parse_set_cookies(headers, session):
+    """Merge Set-Cookie headers into session["cookies"].
+
+    Deletions must actually delete: a logout/invalidate response carrying
+    `__Secure-PUDOJT=; Expires=Thu, 01 Jan 1970 ...` was previously stored as
+    an empty-string cookie, which left session.json looking complete to
+    open_logged_in_browser.py's COOKIE_NAMES check — so it injected blank
+    cookies and opened a logged-*out* tab instead of reporting the problem.
+    """
     if headers is None:
         return
     for raw in headers.get_all("Set-Cookie") or []:
         name, _, rest = raw.partition("=")
-        value = rest.split(";", 1)[0]
-        session.setdefault("cookies", {})[name.strip()] = value
+        value, _, attrs = rest.partition(";")
+        name = name.strip()
+        cookies = session.setdefault("cookies", {})
+        if cookie_is_deletion(value, attrs):
+            cookies.pop(name, None)
+        else:
+            cookies[name] = value
 
 
 def do_request(url, session, method="GET", json_body=None):
@@ -449,12 +509,18 @@ def run_check(logger, dash_status):
     if paused:
         return
 
-    if not CONFIG_FILE.exists():
-        logger.info("outcome=fatal detail=missing_config")
-        notify("info-kierowca: setup incomplete", f"Missing {CONFIG_FILE}", "critical")
-        update_status(dash_status, "unexpected", f"Missing {CONFIG_FILE}")
+    # No desktop notification here: "no config yet" is the normal state during
+    # first-run setup and right after app.py's Reset account, where the poll
+    # thread keeps ticking while the user sits on the login screen — notifying
+    # meant a critical popup every INTERVAL seconds. The dashboard already
+    # shows it. Caught rather than exists()-checked because Reset account can
+    # unlink the file from an HTTP thread between the check and the read.
+    try:
+        config = load_json(CONFIG_FILE)
+    except FileNotFoundError:
+        logger.info("outcome=setup_incomplete detail=missing_config")
+        update_status(dash_status, "setup_incomplete", "Waiting for setup to be completed")
         return
-    config = load_json(CONFIG_FILE)
 
     if not SESSION_FILE.exists():
         logger.info("outcome=auth_missing")
@@ -473,7 +539,16 @@ def run_check(logger, dash_status):
     if status == 204:
         save_json(SESSION_FILE, session)
         logger.info("outcome=refresh_ok status=%s", status)
-    elif status in (401, 403, 404, 500):
+    elif status is None:
+        # do_request returns None for URLError — i.e. we never reached the
+        # server (offline, DNS, laptop lid closed). That is not an
+        # "unexpected response" and must not fire a critical notification
+        # every tick for the duration of an outage; the next check retries.
+        detail = body[:200].decode(errors="replace") if body else ""
+        logger.info("outcome=network_error stage=refresh detail=%r", detail)
+        update_status(dash_status, "network_error", "Can't reach info-kierowca.pl — will retry")
+        return
+    elif status in (401, 403, 404):
         logger.info("outcome=auth_expired status=%s stage=refresh", status)
         notify(
             "info-kierowca: session expired",
@@ -484,13 +559,10 @@ def run_check(logger, dash_status):
         trigger_auto_refresh(logger, config)
         return
     else:
+        # 5xx included: a transient upstream error is not an expired session,
+        # and must not pop a QR window onto the user's desktop.
         detail = body[:200].decode(errors="replace") if body else ""
         logger.info("outcome=unexpected status=%s stage=refresh detail=%r", status, detail)
-        notify(
-            "info-kierowca: unexpected response",
-            f"Refresh call returned {status} — check manually",
-            "critical",
-        )
         update_status(dash_status, "unexpected", f"Refresh call returned {status}")
         return
 
@@ -504,6 +576,16 @@ def run_check(logger, dash_status):
     }
     status, body, headers = do_request(SEARCH_URL, session, method="POST", json_body=payload)
 
+    if status is None:
+        # Never reached the server — see the matching branch in the refresh
+        # stage above. Log and retry next tick rather than alerting.
+        detail = body[:200].decode(errors="replace") if body else ""
+        logger.info("outcome=network_error stage=search detail=%r", detail)
+        update_status(dash_status, "network_error", "Can't reach info-kierowca.pl — will retry")
+        return
+    # 500 stays in the auth set *here* (unlike the refresh stage above): a 500
+    # from the search endpoint has in practice always turned out to be the
+    # same underlying cookie expiry. See docs/ADVANCED.md's auto-relogin note.
     if status in (401, 403, 500):
         logger.info("outcome=auth_expired status=%s stage=search", status)
         notify(
@@ -515,13 +597,9 @@ def run_check(logger, dash_status):
         trigger_auto_refresh(logger, config)
         return
     if status != 200:
+        # 5xx included: transient upstream errors are not an expired session.
         detail = body[:200].decode(errors="replace") if body else ""
         logger.info("outcome=unexpected status=%s stage=search detail=%r", status, detail)
-        notify(
-            "info-kierowca: unexpected response",
-            f"Search call returned {status} — check manually",
-            "critical",
-        )
         update_status(dash_status, "unexpected", f"Search call returned {status}")
         return
 
@@ -543,7 +621,7 @@ def run_check(logger, dash_status):
 
     max_date = datetime.now() + timedelta(days=MAX_DAYS_AHEAD)
     wanted_types = set(config["exam_types"])
-    watch_ids = set(config.get("watch_organization_ids", config["organization_ids"]))
+    watch_ids = set(config["organization_ids"])
     hits = []
     for word in results:
         if word.get("wordId") not in watch_ids:
