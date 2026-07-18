@@ -64,6 +64,11 @@ def build_search_organization_ids(config):
 BASE = "https://info-kierowca.pl"
 REFRESH_URL = f"{BASE}/bknd/auth/api/v1/jwt/refresh"
 SEARCH_URL = f"{BASE}/bknd/exam/api/v1/Schedules/user/MultipleCentersExams"
+# Traced from the site's own main-*.js (pkkProfilesResource(), used by its
+# "check documents"/reservation forms to resolve a PKK number to a license
+# category) — used by app.py's setup wizard to prefill the PKK number and
+# category from the account instead of asking the user to type them in.
+PKK_PROFILES_URL = f"{BASE}/bknd/status/api/v1/pkk/get_profiles"
 
 NTFY_URL = "https://ntfy.sh"
 
@@ -280,6 +285,25 @@ def trigger_auto_refresh(logger, config, force=False):
         return "launch_failed"
 
 
+def auto_refresh_in_progress():
+    """Whether a launched auto_refresh_session.py is still alive and holding
+    AUTO_REFRESH_LOCK — used by app.py's login screen to tell "still waiting
+    on you to scan" apart from "Chrome was closed/crashed before you scanned,
+    give up waiting and let the user retry" (see wait_for_cookies's docstring
+    in auto_refresh_session.py: that process releases the lock and exits the
+    moment its own Chrome disappears, whether from a scan, a close, or a
+    crash — so the lock's liveness is exactly the signal we need here).
+    """
+    if not AUTO_REFRESH_LOCK.exists():
+        return False
+    try:
+        pid = int(AUTO_REFRESH_LOCK.read_text().strip())
+        os.kill(pid, 0)
+        return True
+    except (ValueError, OSError):
+        return False
+
+
 OPEN_BROWSER_SCRIPT = Path(__file__).parent / "open_logged_in_browser.py"
 # Must match open_logged_in_browser.py's DEFAULT_PORT.
 OPEN_BROWSER_PORT = 9555
@@ -376,6 +400,29 @@ def do_request(url, session, method="GET", json_body=None):
         return e.code, body, e.headers
     except urllib.error.URLError as e:
         return None, str(e).encode(), None
+
+
+def fetch_pkk_profiles(session):
+    """Best-effort lookup of the account's PKK profile(s) — used by app.py's
+    setup wizard to prefill the PKK number/category right after QR login
+    instead of asking the user to type a PKK number in blind. The endpoint
+    also returns pesel/name/birthDate; only pkkNumber/categoryName are kept,
+    matching this project's minimal-footprint stance on PII. Returns []
+    on any failure (session not ready yet, unexpected shape, etc.) so a
+    fetch hiccup just falls back to manual entry rather than blocking setup.
+    """
+    try:
+        status, body, _headers = do_request(PKK_PROFILES_URL, session, method="GET")
+        if status != 200:
+            return []
+        profiles = json.loads(body)
+        return [
+            {"pkkNumber": p["pkkNumber"], "categoryName": p["categoryName"]}
+            for p in profiles
+            if isinstance(p, dict) and p.get("pkkNumber") and p.get("categoryName")
+        ]
+    except Exception:
+        return []
 
 
 def run_check(logger, dash_status):

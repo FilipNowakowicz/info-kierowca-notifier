@@ -15,8 +15,10 @@ always a click you make yourself; nothing gets rebooked automatically. See
 1. Download the build for your OS from the [Releases page](../../releases) — no installer, no
    Python install, nothing else gets set up on your machine.
 2. Run it. A browser tab opens automatically.
-3. Fill in your PKK number, pick your exam center(s), and choose how you want to be notified.
-4. Scan the QR code that pops up (with the mObywatel app) to log in.
+3. Scan the QR code (with the mObywatel app) to log in — or skip this and enter your PKK number
+   by hand instead.
+4. Confirm the PKK number/license category it found for you (or fill them in manually if you
+   skipped), pick your exam center(s), and choose how you want to be notified.
 
 That's it — from then on, that browser tab is your dashboard, with a **Stop** button whenever you
 want to shut it down.
