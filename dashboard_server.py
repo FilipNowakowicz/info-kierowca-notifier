@@ -64,19 +64,36 @@ PAGE = """<!doctype html>
      .ikw-pausable class plus the click/hover/focus behavior). This
      structure is inert on its own - no cursor, no hover styling - so
      the plain read-only dashboard (dashboard_server.py run standalone)
-     still renders correctly without implying a click it can't act on. */
-  #headline-wrap { position: relative; display: inline-block; border-radius: 12px; padding: 0.3rem 0.7rem; margin: 0 -0.7rem 0.5rem; -webkit-tap-highlight-color: transparent; }
+     still renders correctly without implying a click it can't act on.
+     The wrap's own top/bottom padding is cancelled out by an equal and
+     opposite -0.3rem margin on both sides, so the padding only widens
+     the hover/click box - it contributes zero net flow height. That
+     matters because inline-block boxes (needed here so the hover
+     background hugs the text instead of spanning #main's full width)
+     never take part in margin collapsing, unlike the plain block <div>
+     this used to be - so any non-cancelled margin would sit here as
+     its own separate gap instead of collapsing into #subline/#detail's
+     margins the way it used to. Zeroing it out leaves that original
+     collapsing chain (#subline's/#detail's own margins into #countdown's)
+     as the only thing spacing the headline from what follows, so
+     #headline-wrap reproduces the exact old layout. Combined with
+     #headline-hint below being position:absolute (out of flow, like
+     #headline-icon already is), the headline text lands at the exact
+     same spot it sat at before this element existed, whether or not
+     the hint or icon are visible. */
+  #headline-wrap { position: relative; display: inline-block; border-radius: 12px; padding: 0.3rem 0.7rem; margin: -0.3rem -0.7rem; -webkit-tap-highlight-color: transparent; }
   #headline { font-size: 3rem; font-weight: 700; letter-spacing: -0.02em; transition: opacity 0.15s ease; }
   #headline-icon { position: absolute; top: 50%; left: 50%; width: 3.2rem; height: 3.2rem; transform: translate(-50%, -50%) scale(0.8); opacity: 0; filter: drop-shadow(0 2px 10px rgba(0,0,0,0.45)); transition: opacity 0.15s ease, transform 0.15s ease; pointer-events: none; }
-  #headline-hint { font-size: 0.8rem; opacity: 0; height: 1.1rem; margin-top: -0.2rem; transition: opacity 0.15s ease; }
+  #headline-hint { position: absolute; top: 100%; left: 50%; transform: translateX(-50%); margin-top: 0.15rem; font-size: 0.8rem; opacity: 0; white-space: nowrap; transition: opacity 0.15s ease; }
 
-  /* min-height reserves each line's space whether or not it has text,
-     so switching between outcomes (e.g. a slot's subline, an error's
-     detail line) doesn't change the block's total height and shift the
-     vertically-centered headline up/down. */
-  #subline { font-size: 1.2rem; line-height: 1.4; min-height: 1.4rem; opacity: 0.85; margin-bottom: 0.5rem; }
-  #detail { font-size: 1.1rem; line-height: 1.6; min-height: 1.6rem; white-space: pre-line; opacity: 0.9; }
-  #countdown { margin-top: 2rem; font-size: 1rem; opacity: 0.6; font-variant-numeric: tabular-nums; }
+  #subline { font-size: 1.2rem; line-height: 1.4; opacity: 0.85; margin-bottom: 0.5rem; }
+  #detail { font-size: 1.1rem; line-height: 1.6; white-space: pre-line; opacity: 0.9; }
+  /* min-height matches this line's actual rendered height (measured at
+     font-size 1rem in this font stack) so tickCountdown() clearing its
+     text while paused doesn't collapse the box to zero height and shift
+     everything above it - the same reason #headline-hint/#headline-icon
+     are handled the way they are above. */
+  #countdown { margin-top: 2rem; font-size: 1rem; min-height: 1.25rem; opacity: 0.6; font-variant-numeric: tabular-nums; }
   #meta { margin-top: 0.4rem; font-size: 0.85rem; opacity: 0.45; }
 
   #history {
@@ -90,6 +107,12 @@ PAGE = """<!doctype html>
     border-top: 1px solid rgba(255,255,255,0.15);
     padding-top: 1rem;
   }
+  /* Without this, a row that's cut off by max-height gets sliced mid-line
+     (looks broken - a sliver of barely-legible text) instead of reading
+     as "there's more, scroll for it". Only applied once poll() (below)
+     confirms the list actually overflows, so a short history with no
+     scrollbar never fades its own last, fully-visible row. */
+  #history.ikw-overflowing { mask-image: linear-gradient(to bottom, black calc(100% - 1.6rem), transparent 100%); -webkit-mask-image: linear-gradient(to bottom, black calc(100% - 1.6rem), transparent 100%); }
   #history div { padding: 0.3rem 0; border-bottom: 1px solid rgba(255,255,255,0.06); }
   #history .ts { opacity: 0.5; margin-right: 0.6rem; }
 </style>
@@ -171,10 +194,16 @@ async function poll() {
     // so this only affects what's displayed, not what's stored — Resume
     // falls straight back to the last known state below instead of
     // waiting on a fresh check to stop saying "Paused".
+    // subline/detail stay empty here (rather than a "Click to resume
+    // checking." message) so pausing matches the shape of the far more
+    // common empty-subline/detail states (no_slot, waiting for first
+    // check) exactly - nothing to reserve layout space for, so toggling
+    // pause never shifts the headline. The hover hint plus the big
+    // play-icon overlay already say the same thing.
     body.className = "none";
     headline.textContent = "Paused";
     subline.textContent = "";
-    detail.textContent = "Click to resume checking.";
+    detail.textContent = "";
   } else if (data.outcome === "slot_found" && fastest) {
     body.className = data.urgent ? "hit-soon" : "hit-far";
     headline.textContent = fmtDateTime(fastest.datetime);
@@ -225,6 +254,7 @@ async function poll() {
     div.innerHTML = `<span class="ts">${fmtDateTime(entry.seen_at)}</span>${text}`;
     history.appendChild(div);
   });
+  history.classList.toggle("ikw-overflowing", history.scrollHeight > history.clientHeight + 1);
 }
 
 function tickCountdown() {

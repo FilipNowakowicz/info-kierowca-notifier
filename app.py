@@ -593,7 +593,7 @@ WIZARD_PAGE = """<!doctype html>
       </div>
       <div id="selected-centers"></div>
       <div class="center-count" id="center-count"></div>
-      <div class="hint">The site's search only accepts 5 centers at a time, so at most 5 can be watched.</div>
+      <div class="hint" style="margin-top:0.5rem;">The site's search only accepts 5 centers at a time, so at most 5 can be watched.</div>
     </fieldset>
 
     <fieldset>
@@ -1268,7 +1268,9 @@ class AppHandler(http.server.BaseHTTPRequestHandler):
                     "Chromium-based browser was found on this machine — install one to continue.",
             }
         else:
-            outcome = notifier.trigger_auto_refresh(AppHandler.logger, config, force=True)
+            outcome = notifier.trigger_auto_refresh(
+                AppHandler.logger, config, force=True, notify_phone=False
+            )
             messages = {
                 "launched": "Session looks expired — opening Chrome for a fresh QR login.",
                 "disabled": "Session looks expired, but auto_refresh_chrome is turned off in Settings.",
@@ -1285,7 +1287,9 @@ class AppHandler(http.server.BaseHTTPRequestHandler):
         — a stale lock left by a forgotten QR window must not silently
         no-op a user's own deliberate click on their very first run.
         """
-        outcome = notifier.trigger_auto_refresh(AppHandler.logger, {}, force=True)
+        outcome = notifier.trigger_auto_refresh(
+            AppHandler.logger, {}, force=True, notify_phone=False
+        )
         messages = {
             "no_chromium_browser": "No Chrome, Edge, or other Chromium-based browser was found "
                 "on this machine. Install one and try again.",

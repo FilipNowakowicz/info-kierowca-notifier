@@ -138,8 +138,8 @@ are treated as problems worth interrupting you about.
 ## Auto-relogin on session expiry
 
 By default (`auto_refresh_chrome: true`), whenever a check comes back `auth_expired` — a 401,
-403, 404 on the refresh call, or a 401/403/500 on the search call, all of which have in practice
-turned out to be the same underlying cookie-expiry problem — `notifier.py` launches
+403, 404, or 500 on the refresh call, or a 401/403/500 on the search call, all of which have in
+practice turned out to be the same underlying cookie-expiry problem — `notifier.py` launches
 `auto_refresh_session.py` in the background. It opens Chrome to the login page in its own profile,
 clicks through the gov.pl → "Aplikacja mObywatel" chooser on its own, and sends you a single
 push + desktop notification asking you to scan the QR in the app. It waits indefinitely — there's
