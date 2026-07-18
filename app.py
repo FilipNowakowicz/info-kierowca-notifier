@@ -1075,8 +1075,10 @@ document.addEventListener('click', (e) => { if (!document.getElementById('datepi
 renderSelected();
 
 if (EXISTING_CONFIG) {
-  document.getElementById('page-title').textContent = 'info-kierowca watcher — settings';
-  document.getElementById('page-lead').textContent = 'Change anything below and save — takes effect on the next check.';
+  const pageTitle = document.getElementById('page-title');
+  pageTitle.textContent = 'Settings';
+  pageTitle.style.marginBottom = '1.6rem'; // replaces the gap the (now-hidden) lead paragraph used to provide
+  document.getElementById('page-lead').style.display = 'none';
   document.getElementById('submit-btn').textContent = 'Save changes';
 
   // Only shown once a config already exists (i.e. this is /settings, not
