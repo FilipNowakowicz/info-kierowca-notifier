@@ -72,8 +72,25 @@ AUTO_CLICK_TARGETS = ["Aplikacja mObywatel", "gov.pl", "Zaloguj się"]
 # Shared by both scripts below: find the smallest element anywhere on the
 # page whose text contains one of `targets` (checked in that order) and
 # click the nearest real clickable ancestor — login-page rows are often a
-# plain <div> wrapping an icon + label, not a bare <button>/<a>.
+# plain <div> wrapping an icon + label, not a bare <button>/<a>. Once
+# targets[0] (the most specific/downstream one, "Aplikacja mObywatel" — the
+# tile that lands on the QR page itself) gets clicked, a sessionStorage flag
+# is set so neither this function nor its callers try again: sessionStorage
+# survives same-origin navigations (including the browser back button), so
+# if you back out of the QR page to pick a different login method, this
+# won't force you straight back to it. Origin-scoped only — it resets on a
+# genuine cross-origin hop, which matches the one place that's actually
+# wanted: a fresh run of this script (new profile) should auto-click again.
 CLICK_LOGIC_JS = """
+var __IKW_STOP_KEY = '__ikw_auto_click_stopped';
+function __ikw_stopped() {
+  try { return !!sessionStorage.getItem(__IKW_STOP_KEY); } catch (e) { return false; }
+}
+function __ikw_isVisible(el) {
+  var style = window.getComputedStyle(el);
+  if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
+  return el.offsetWidth > 0 || el.offsetHeight > 0 || el.getClientRects().length > 0;
+}
 function __ikw_isClickable(el) {
   if (!el) return false;
   var style = window.getComputedStyle(el);
@@ -89,19 +106,36 @@ function __ikw_clickableAncestor(el) {
   return el;
 }
 function __ikw_findAndClick(targets) {
+  if (__ikw_stopped()) return null;
   var all = document.querySelectorAll('button, a, [role="button"], li, div, span');
   for (var ti = 0; ti < targets.length; ti++) {
     var text = targets[ti];
     var best = null;
     for (var i = 0; i < all.length; i++) {
       var el = all[i];
+      // textContent (unlike innerText) includes text from display:none
+      // elements, so a not-yet-revealed tile that's already in the DOM
+      // (common in SPA choosers that toggle visibility via a class rather
+      // than mounting/unmounting) must not be matched via that fallback.
+      if (!__ikw_isVisible(el)) continue;
       var t = (el.innerText || el.textContent || '').trim();
       if (t && t.length < 200 && t.toLowerCase().indexOf(text.toLowerCase()) !== -1) {
-        if (!best || t.length < best[1].length) best = [el, t];
+        // <=, not <: querySelectorAll returns document order, so an outer
+        // wrapper div is always seen before the inner button/span it wraps.
+        // When their trimmed text is the same length (the wrapper contains
+        // nothing but that one label), a strict < would keep the first
+        // (outer, usually non-clickable) match instead of the more
+        // specific inner one -- and __ikw_clickableAncestor only walks
+        // *up* from whatever's picked, so it would never reach the real
+        // clickable element in that case.
+        if (!best || t.length <= best[1].length) best = [el, t];
       }
     }
     if (best) {
       __ikw_clickableAncestor(best[0]).click();
+      if (text === targets[0]) {
+        try { sessionStorage.setItem(__IKW_STOP_KEY, '1'); } catch (e) {}
+      }
       return text;
     }
   }
@@ -121,18 +155,35 @@ AUTO_CLICK_JS = CLICK_LOGIC_JS + (
 # cross-origin OAuth redirects — and clicks the instant a target appears,
 # instead of waiting on our next poll tick. This is what makes the
 # click-through effectively instant rather than bounded by a sleep interval.
+#
+# Watches `attributes` as well as `childList`/`characterData`: some chooser
+# screens reveal the next tile by toggling a class/hidden attribute on an
+# already-present element rather than inserting a new node, which this
+# observer used to miss entirely — the click then only happened on the next
+# Python-side fallback poll (try_auto_click, every 3s), which is exactly the
+# ~1s-ish hang reported right before the QR page. Disconnects itself once
+# targets[0] is clicked (see __ikw_findAndClick's sessionStorage flag above)
+# so a same-document re-render that brings the chooser back (e.g. picking a
+# different login method) doesn't get auto-clicked forward again.
 AUTO_CLICK_OBSERVER_JS = CLICK_LOGIC_JS + (
     """
 (function(targets) {
+  if (__ikw_stopped()) return;
   var scheduled = false;
+  var observer = new MutationObserver(schedule);
   function schedule() {
     if (scheduled) return;
     scheduled = true;
-    requestAnimationFrame(function() { scheduled = false; __ikw_findAndClick(targets); });
+    requestAnimationFrame(function() {
+      scheduled = false;
+      var clicked = __ikw_findAndClick(targets);
+      if (clicked === targets[0]) observer.disconnect();
+    });
   }
-  __ikw_findAndClick(targets);
-  new MutationObserver(schedule).observe(
-    document, {childList: true, subtree: true, characterData: true}
+  var clicked = __ikw_findAndClick(targets);
+  if (clicked === targets[0]) return;
+  observer.observe(
+    document, {childList: true, subtree: true, characterData: true, attributes: true}
   );
 })(%s)
 """

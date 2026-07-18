@@ -32,7 +32,18 @@ dependencies (stdlib only).
   (dedicated throwaway profile) at `info-kierowca.pl/login`, auto-clicks through the gov.pl →
   "Aplikacja mObywatel" chooser via an injected DOM-mutation-observer (see
   `AUTO_CLICK_TARGETS`/`AUTO_CLICK_OBSERVER_JS` — text-based, will break if the site's login UI
-  text/labels change), then waits **indefinitely** for you to scan the QR and captures cookies the
+  text/labels change). The observer watches DOM insertions/removals *and* attribute changes
+  (chooser screens that reveal a tile via a class/hidden toggle rather than mounting a new node
+  would otherwise only get clicked on the next slow Python-side fallback poll) and disconnects
+  itself the instant it clicks the final "Aplikacja mObywatel" tile (recorded in a sessionStorage
+  flag `__ikw_findAndClick` checks up front, so the one-shot fallback respects it too) — so once
+  you're on the QR page, backing out to pick a different login method doesn't get auto-clicked
+  straight back to it. `__ikw_findAndClick`'s text-matching also only considers elements that are
+  actually visible (`__ikw_isVisible`) and, among equal-length text matches, prefers the more
+  specific *later* (deeper) element over an outer wrapper — `querySelectorAll` returns document
+  order, so a wrapping `<div>` around a single label is always seen before the label itself, and a
+  strict "first match wins" tie-break would climb the wrong (non-clickable) ancestor. Then waits
+  **indefinitely** for you to scan the QR and captures cookies the
   moment they appear. Auto-triggered by `notifier.py` on `auth_expired` (see
   `trigger_auto_refresh()`); guarded by a lock file at
   `~/.local/state/info-kierowca-notifier/auto-refresh.lock` so it won't relaunch while one's
