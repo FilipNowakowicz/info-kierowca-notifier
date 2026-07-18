@@ -591,7 +591,7 @@ WIZARD_PAGE = """<!doctype html>
 
   <form id="form">
     <fieldset>
-      <legend>Your exam</legend>
+      <legend>Exam &amp; centers</legend>
       <div id="pkk-auto-block" style="display:none;">
         <label for="pkk-profile-select">Your PKK profile</label>
         <select id="pkk-profile-select"></select>
@@ -617,17 +617,16 @@ WIZARD_PAGE = """<!doctype html>
         <div class="pill on" data-val="Theoretical" role="button" tabindex="0">Theoretical</div>
         <div class="pill" data-val="Practice" role="button" tabindex="0">Practical</div>
       </div>
-    </fieldset>
 
-    <fieldset>
-      <legend>WORD centers (__CENTER_COUNT__ nationwide)</legend>
+      <div class="divider"></div>
+
+      <label>WORD centers to watch (__CENTER_COUNT__ nationwide)</label>
       <div class="combobox">
         <input type="text" id="center-search" placeholder="Click to browse all centers, or type to filter..." autocomplete="off">
         <div id="center-dropdown"></div>
       </div>
       <div id="selected-centers"></div>
       <div class="center-count" id="center-count"></div>
-      <div class="hint" style="margin-top:0.5rem;">The site's search only accepts 5 centers at a time, so at most 5 can be watched.</div>
     </fieldset>
 
     <fieldset>
