@@ -170,11 +170,24 @@ AUTO_CLICK_JS = CLICK_LOGIC_JS + (
 # screens reveal the next tile by toggling a class/hidden attribute on an
 # already-present element rather than inserting a new node, which this
 # observer used to miss entirely — the click then only happened on the next
-# Python-side fallback poll (try_auto_click, every 3s), which is exactly the
-# ~1s-ish hang reported right before the QR page. Disconnects itself once
-# targets[0] is clicked (see __ikw_findAndClick's sessionStorage flag above)
-# so a same-document re-render that brings the chooser back (e.g. picking a
-# different login method) doesn't get auto-clicked forward again.
+# Python-side fallback poll (try_auto_click, see wait_for_cookies), which is
+# exactly the ~1s-ish hang reported right before the QR page. Disconnects
+# itself once targets[0] is clicked (see __ikw_findAndClick's sessionStorage
+# flag above) so a same-document re-render that brings the chooser back
+# (e.g. picking a different login method) doesn't get auto-clicked forward
+# again.
+#
+# Confirmed live 2026-07-18: on the podmiotyzewnetrzne.login.gov.pl tile
+# chooser specifically, this observer's callback (and a setInterval placed
+# alongside it, tried and discarded) never fires at all even though the
+# tiles are fully rendered and clickable within ~1s — the MutationObserver
+# and any in-page timers registered via this
+# Page.addScriptToEvaluateOnNewDocument-injected script go silently inert on
+# that one page. A *fresh* Runtime.evaluate call from Python-side (i.e.
+# try_auto_click, called on its own separate CDP connection) always finds
+# and clicks the tile instantly regardless. So the reliable fix isn't a
+# better in-page watcher — it's not leaving that fallback 3s idle; see
+# wait_for_cookies's poll interval.
 AUTO_CLICK_OBSERVER_JS = CLICK_LOGIC_JS + (
     """
 (function(targets) {
@@ -302,6 +315,20 @@ def wait_for_cookies(host, port, timeout, chrome_proc):
     by the OS (visible as a `<defunct>` zombie in `ps`) — so a Chrome that
     crashed hours ago could still be silently blocking every future
     auto-relogin attempt, with no window on screen for anyone to notice.
+
+    The 0.5s poll interval (not the 3s it used to be) matters more than it
+    looks: try_auto_click() is a *fresh* Runtime.evaluate call on its own
+    CDP connection, which — confirmed live 2026-07-18 — is the only thing
+    that reliably clicks through the podmiotyzewnetrzne.login.gov.pl tile
+    chooser. AUTO_CLICK_OBSERVER_JS's in-page MutationObserver (and a
+    setInterval placed alongside it, tried and discarded) never fires at
+    all on that specific page, even though the tiles are clickable within
+    ~1s of landing — so this Python-side retry is the actual click-through
+    mechanism there, not just a backstop, and the old 3s cadence was a
+    real, visible stall directly on top of it. try_auto_click() is a cheap
+    no-op once __ikw_stopped() is true, so polling this often for however
+    long a human takes to scan the QR costs nothing but some idle loopback
+    chatter.
     """
     deadline = None if timeout is None else time.monotonic() + timeout
     while deadline is None or time.monotonic() < deadline:
@@ -315,7 +342,7 @@ def wait_for_cookies(host, port, timeout, chrome_proc):
         except Exception:
             pass  # Chrome may be mid-navigation; just retry
         try_auto_click(host, port)
-        time.sleep(3)
+        time.sleep(0.5)
     return None
 
 
