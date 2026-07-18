@@ -202,6 +202,17 @@ click-path, the script will just sit on whatever screen it landed on without err
 safe to click through by hand while it waits (it never times out — see `DEFAULT_TIMEOUT`), but the
 target list will need updating to restore full automation.
 
+`wait_for_cookies()` bails out (and `main()`'s `finally` releases `AUTO_REFRESH_LOCK`) the moment
+its own `chrome_proc.poll()` shows the launched Chrome has exited — confirmed live 2026-07-18: a
+Chrome that had crashed hours earlier (visible only as a `<defunct>` zombie in `ps`, no window on
+screen) left its wrapper spinning forever against a dead debug port, since a permanently-closed
+connection was caught by the same `except Exception: pass` meant to tolerate Chrome being
+mid-navigation — so the lock silently blocked every later `trigger_auto_refresh()` call with
+nothing for the user to notice or close. This only covers a **crashed** Chrome, not a genuinely
+still-open QR window someone forgot about — that case is unchanged and correctly not force-cleared
+by the automatic path (see `trigger_auto_refresh()`'s docstring); the "Open browser" button's
+`force=True` is still what clears that one.
+
 ### Known gotcha: dashboard port-in-use crash loop
 
 `dashboard_server.py` binds `127.0.0.1:8787`. If a stale process (e.g. one started manually

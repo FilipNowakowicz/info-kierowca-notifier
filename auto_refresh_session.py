@@ -215,10 +215,22 @@ def release_lock():
         pass
 
 
-def wait_for_cookies(host, port, timeout):
-    """timeout=None waits indefinitely."""
+def wait_for_cookies(host, port, timeout, chrome_proc):
+    """timeout=None waits indefinitely — but always bails out the moment
+    chrome_proc has exited. Without this, a crashed/killed Chrome left this
+    looping forever: fetch_cookies() against a dead debug port just raises,
+    and that's caught by the same `except Exception: pass` that's meant to
+    tolerate Chrome being mid-navigation, so a permanent failure looked
+    identical to a transient one. The process never returned, never hit
+    the `finally` in main() that releases the lock, and never got reaped
+    by the OS (visible as a `<defunct>` zombie in `ps`) — so a Chrome that
+    crashed hours ago could still be silently blocking every future
+    auto-relogin attempt, with no window on screen for anyone to notice.
+    """
     deadline = None if timeout is None else time.monotonic() + timeout
     while deadline is None or time.monotonic() < deadline:
+        if chrome_proc.poll() is not None:
+            return None
         try:
             raw = cdp_client.fetch_cookies(host, port)
             cookies = cdp_client.extract_info_kierowca_cookies(raw)
@@ -282,15 +294,23 @@ def main():
         # navigate — so it's already watching from the first paint instead
         # of racing our own next poll tick.
         cdp_client.inject_and_navigate("127.0.0.1", args.port, args.url, AUTO_CLICK_OBSERVER_JS)
-        cookies = wait_for_cookies("127.0.0.1", args.port, args.timeout)
+        cookies = wait_for_cookies("127.0.0.1", args.port, args.timeout, chrome_proc)
 
         if cookies is None:
-            print(f"No login detected within {args.timeout}s.")
-            notify_desktop(
-                "info-kierowca: relogin timed out",
-                f"No login detected within {args.timeout}s — run auto_refresh_session.py again when ready",
-                "critical",
-            )
+            if chrome_proc.poll() is not None:
+                print("Chrome exited before logging in (crashed or was closed).")
+                notify_desktop(
+                    "info-kierowca: relogin failed",
+                    "Chrome closed before logging in — run auto_refresh_session.py again",
+                    "critical",
+                )
+            else:
+                print(f"No login detected within {args.timeout}s.")
+                notify_desktop(
+                    "info-kierowca: relogin timed out",
+                    f"No login detected within {args.timeout}s — run auto_refresh_session.py again when ready",
+                    "critical",
+                )
             sys.exit(1)
 
         cdp_client.write_session_file(cookies)
