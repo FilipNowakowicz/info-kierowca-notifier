@@ -10,7 +10,9 @@ import json
 import logging
 import logging.handlers
 import os
+import random
 import shutil
+import signal
 import subprocess
 import sys
 import threading
@@ -25,7 +27,39 @@ SESSION_FILE = CONFIG_DIR / "session.json"
 STATE_DIR = Path.home() / ".local" / "state" / "info-kierowca-notifier"
 LOG_FILE = STATE_DIR / "notifier.log"
 STATUS_FILE = STATE_DIR / "status.json"
+# A plain flag file rather than a config.json field, so pausing is a quick
+# runtime toggle independent of saved settings, and works the same whether
+# checks are driven by app.py's in-process loop or a systemd timer tick.
+PAUSE_FILE = STATE_DIR / "paused"
 MAX_HISTORY = 200
+
+WORD_CENTERS_FILE = Path(__file__).parent / "word_centers.json"
+
+# The search endpoint rejects anything but exactly 5 organizationIds
+# ("Exactly 5 exam centers must be provided when searching for the fastest
+# terms"), even though the user may only want to watch 1-2. The extra slots
+# are padded with other real center ids the user doesn't care about — their
+# results are discarded below by the watch_organization_ids filter, so which
+# ones they are doesn't matter.
+SEARCH_ORG_ID_COUNT = 5
+
+
+def load_word_center_ids():
+    try:
+        with open(WORD_CENTERS_FILE, encoding="utf-8") as f:
+            return [c["id"] for c in json.load(f)]
+    except (OSError, json.JSONDecodeError, KeyError):
+        return []
+
+
+def build_search_organization_ids(config):
+    """Pad the configured centers to exactly SEARCH_ORG_ID_COUNT for the search call."""
+    wanted = list(dict.fromkeys(config["organization_ids"]))
+    if len(wanted) >= SEARCH_ORG_ID_COUNT:
+        return wanted[:SEARCH_ORG_ID_COUNT]
+    filler_pool = [c for c in load_word_center_ids() if c not in wanted]
+    random.shuffle(filler_pool)
+    return wanted + filler_pool[: SEARCH_ORG_ID_COUNT - len(wanted)]
 
 BASE = "https://info-kierowca.pl"
 REFRESH_URL = f"{BASE}/bknd/auth/api/v1/jwt/refresh"
@@ -88,6 +122,18 @@ def load_status():
 
 def save_status(status):
     save_json(STATUS_FILE, status)
+
+
+def is_paused():
+    return PAUSE_FILE.exists()
+
+
+def set_paused(paused):
+    if paused:
+        PAUSE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        PAUSE_FILE.touch()
+    else:
+        PAUSE_FILE.unlink(missing_ok=True)
 
 
 def fastest_of(hits):
@@ -160,7 +206,7 @@ AUTO_REFRESH_SCRIPT = Path(__file__).parent / "auto_refresh_session.py"
 AUTO_REFRESH_LOCK = STATE_DIR / "auto-refresh.lock"
 
 
-def trigger_auto_refresh(logger, config):
+def trigger_auto_refresh(logger, config, force=False):
     """Best-effort: launch auto_refresh_session.py to relogin via Chrome+QR.
 
     Detached so it survives this (oneshot) process exiting — on systemd it's
@@ -174,22 +220,45 @@ def trigger_auto_refresh(logger, config):
     AUTO_REFRESH_SCRIPT has no file on disk to point at — so instead we
     re-invoke the binary with a hidden flag that app.py dispatches straight
     to auto_refresh_session.main(), keeping it a separate detached process.
+
+    force=True (the manual "Open browser" button) kills whatever's holding the
+    lock and relaunches anyway. This exists because the lock has no timeout
+    (auto_refresh_session.py waits indefinitely for a QR scan) and survives
+    app.py restarts, since the Chrome+QR process it guards is detached —
+    the most common way this bites someone is a QR window left open and
+    forgotten from a previous session (confirmed live: a lock stayed held
+    for ~10 hours), which silently no-ops every later auto-trigger,
+    including the very next app launch, with no visible sign why. The
+    automatic path stays conservative (never force); force is opt-in so a
+    background retry never kills a window the user is mid-scan on.
+
+    Returns a short status string: "disabled", "already_running",
+    "launched", or "launch_failed".
     """
     if not config.get("auto_refresh_chrome", True):
-        return
+        return "disabled"
     if AUTO_REFRESH_LOCK.exists():
         try:
             pid = int(AUTO_REFRESH_LOCK.read_text().strip())
             os.kill(pid, 0)
-            logger.info("outcome=auto_refresh_skipped detail=already_running pid=%s", pid)
-            return
-        except (ValueError, OSError):
+            if not force:
+                logger.info("outcome=auto_refresh_skipped detail=already_running pid=%s", pid)
+                return "already_running"
+            logger.info("outcome=auto_refresh_force_restart detail=killing_stale pid=%s", pid)
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except OSError:
+                pass
+        except ValueError:
             pass  # stale lock — let auto_refresh_session.py sort it out
+        except OSError:
+            pass  # pid is gone — stale lock, safe to relaunch
+        AUTO_REFRESH_LOCK.unlink(missing_ok=True)
     if getattr(sys, "frozen", False):
         cmd = [sys.executable, "--internal-auto-refresh"]
     else:
         if not AUTO_REFRESH_SCRIPT.exists():
-            return
+            return "launch_failed"
         python = sys.executable
         if shutil.which("systemd-run"):
             cmd = [
@@ -205,8 +274,10 @@ def trigger_auto_refresh(logger, config):
             cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True
         )
         logger.info("outcome=auto_refresh_launched")
+        return "launched"
     except Exception as e:
         logger.info("outcome=auto_refresh_launch_failed detail=%r", str(e))
+        return "launch_failed"
 
 
 OPEN_BROWSER_SCRIPT = Path(__file__).parent / "open_logged_in_browser.py"
@@ -214,7 +285,7 @@ OPEN_BROWSER_SCRIPT = Path(__file__).parent / "open_logged_in_browser.py"
 OPEN_BROWSER_PORT = 9555
 
 
-def trigger_open_browser(logger, config):
+def trigger_open_browser(logger, config, auto_click=True):
     """Best-effort: launch open_logged_in_browser.py so a pre-authenticated
     tab is already open by the moment the push notification lands — skips
     the login step that otherwise costs you the fastest-moving slots.
@@ -228,28 +299,45 @@ def trigger_open_browser(logger, config):
     its docstring — since sys.executable is the bundled binary itself
     inside a PyInstaller build, not a Python interpreter that can run a
     loose .py file.
+
+    auto_click=False (the manual "Open browser" button when the session is
+    still valid) passes --no-auto-click through, so it just opens the
+    logged-in tab without clicking through to the reschedule date-picker —
+    that click-through is only wanted for the automatic urgent-slot-hit
+    path, which keeps the default auto_click=True.
+
+    Returns a short status string: "disabled", "already_running",
+    "launched", or "launch_failed". No force option here (unlike
+    trigger_auto_refresh) — forcing would mean launching a second Chrome
+    on the same fixed debug port an already-open one is using, which is
+    fragile rather than useful; if one's already open that's already the
+    outcome a caller wants.
     """
     if not config.get("auto_open_browser", True):
-        return
+        return "disabled"
     try:
         urllib.request.urlopen(f"http://127.0.0.1:{OPEN_BROWSER_PORT}/json/version", timeout=1)
         logger.info("outcome=open_browser_skipped detail=already_running")
-        return
+        return "already_running"
     except Exception:
         pass  # nothing listening on that port -> safe to launch
     if getattr(sys, "frozen", False):
         cmd = [sys.executable, "--internal-open-browser"]
     else:
         if not OPEN_BROWSER_SCRIPT.exists():
-            return
+            return "launch_failed"
         cmd = [sys.executable, str(OPEN_BROWSER_SCRIPT)]
+    if not auto_click:
+        cmd.append("--no-auto-click")
     try:
         subprocess.Popen(
             cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True
         )
         logger.info("outcome=open_browser_launched")
+        return "launched"
     except Exception as e:
         logger.info("outcome=open_browser_launch_failed detail=%r", str(e))
+        return "launch_failed"
 
 
 def cookie_header(session):
@@ -291,6 +379,21 @@ def do_request(url, session, method="GET", json_body=None):
 
 
 def run_check(logger, dash_status):
+    """Note: pausing/resuming itself is applied instantly by app.py's
+    /pause and /resume handlers (they write dash_status/status.json
+    directly) — this check just stops the real work from running while
+    paused. It deliberately leaves outcome/message untouched instead of
+    overwriting them with a "paused" outcome, so status.json still holds
+    the last real result underneath and Resume doesn't have to wait for a
+    fresh check to stop showing "Paused".
+    """
+    paused = is_paused()
+    if dash_status.get("paused") != paused:
+        dash_status["paused"] = paused
+        save_status(dash_status)
+    if paused:
+        return
+
     if not CONFIG_FILE.exists():
         logger.info("outcome=fatal detail=missing_config")
         notify("info-kierowca: setup incomplete", f"Missing {CONFIG_FILE}", "critical")
@@ -339,7 +442,7 @@ def run_check(logger, dash_status):
     # 2. Search for slots.
     payload = {
         "startDate": datetime.now().strftime("%Y-%m-%d"),
-        "organizationId": config["organization_ids"],
+        "organizationId": build_search_organization_ids(config),
         "category": config["category"],
         "profileNumber": config["profile_number"],
         "profileType": "Pkk",

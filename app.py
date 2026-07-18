@@ -82,6 +82,22 @@ def already_running():
         return False
 
 
+def check_session_valid():
+    """Live probe for the manual 'Open browser' button: does session.json still
+    refresh successfully? Same call notifier.run_check() makes at the top
+    of every poll, just outside that loop so the button gets an answer
+    immediately instead of waiting for the next tick.
+    """
+    if not notifier.SESSION_FILE.exists():
+        return False
+    session = notifier.load_json(notifier.SESSION_FILE)
+    status, _body, _headers = notifier.do_request(notifier.REFRESH_URL, session, method="GET")
+    if status == 204:
+        notifier.save_json(notifier.SESSION_FILE, session)
+        return True
+    return False
+
+
 def build_config(payload):
     """Validate a /setup POST body and assemble it into config.json's schema."""
     def require_str(key, label):
@@ -101,8 +117,13 @@ def build_config(payload):
 
     organization_ids = payload.get("organization_ids")
     if not isinstance(organization_ids, list) or not organization_ids:
-        raise ValueError("Pick or enter at least one WORD center")
+        raise ValueError("Pick at least one WORD center")
     organization_ids = to_int_list(organization_ids, "WORD center IDs")
+    if len(organization_ids) > notifier.SEARCH_ORG_ID_COUNT:
+        raise ValueError(
+            f"Pick at most {notifier.SEARCH_ORG_ID_COUNT} WORD centers "
+            "— the site's search only accepts that many at a time"
+        )
 
     watch_organization_ids = payload.get("watch_organization_ids") or organization_ids
     watch_organization_ids = to_int_list(watch_organization_ids, "Watched WORD center IDs")
@@ -133,34 +154,98 @@ def build_config(payload):
     return config
 
 
-STOP_BUTTON_HTML = """
+TOOLBAR_HTML = """
 <style>
-  .ikw-btn { position: fixed; top: 1rem; padding: 0.4rem 0.85rem; border-radius: 999px; cursor: pointer;
+  .ikw-toolbar { position: fixed; top: 1rem; right: 1rem; display: flex; gap: 0.5rem; z-index: 10; }
+  .ikw-btn { padding: 0.4rem 0.85rem; border-radius: 999px; cursor: pointer; white-space: nowrap;
     font-family: -apple-system, 'Segoe UI', system-ui, sans-serif; font-size: 0.85rem; line-height: 1;
     background: rgba(255,255,255,0.07); color: #eee; border: 1px solid rgba(255,255,255,0.18);
     backdrop-filter: blur(6px); transition: background 0.12s, border-color 0.12s; }
   .ikw-btn:hover { background: rgba(255,255,255,0.14); border-color: rgba(255,255,255,0.32); }
-  #ikw-settings-btn { right: 5.2rem; }
-  #ikw-stop-btn { right: 1rem; }
-  #ikw-stop-btn:hover { border-color: rgba(224,104,95,0.7); color: #ffb3ad; }
+  .ikw-btn:disabled { opacity: 0.5; cursor: default; }
+  #ikw-quit-btn:hover { border-color: rgba(224,104,95,0.7); color: #ffb3ad; }
+  .ikw-toast { position: fixed; bottom: 1.2rem; left: 50%; transform: translateX(-50%) translateY(0.4rem);
+    max-width: 90vw; background: rgba(20,20,20,0.92); color: #eee; padding: 0.6rem 1rem; border-radius: 8px;
+    font-family: -apple-system, 'Segoe UI', system-ui, sans-serif; font-size: 0.85rem; text-align: center;
+    border: 1px solid rgba(255,255,255,0.15); opacity: 0; pointer-events: none; z-index: 20;
+    transition: opacity 0.2s, transform 0.2s; }
+  .ikw-toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 </style>
-<button id="ikw-stop-btn" class="ikw-btn">Stop</button>
+<div class="ikw-toolbar">
+  <button id="ikw-browser-btn" class="ikw-btn">Open browser</button>
+  <button id="ikw-pause-btn" class="ikw-btn">Pause</button>
+  <button id="ikw-settings-btn" class="ikw-btn">Settings</button>
+  <button id="ikw-quit-btn" class="ikw-btn">Quit</button>
+</div>
+<div class="ikw-toast" id="ikw-toast"></div>
 <script>
-document.getElementById('ikw-stop-btn').addEventListener('click', async () => {
-  if (!confirm('Stop info-kierowca-notifier? You will stop getting checked/notified until you start it again.')) return;
+function ikwToast(msg) {
+  const el = document.getElementById('ikw-toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  clearTimeout(ikwToast._t);
+  ikwToast._t = setTimeout(() => el.classList.remove('show'), 4000);
+}
+
+document.getElementById('ikw-quit-btn').addEventListener('click', async () => {
+  if (!confirm('Quit info-kierowca-notifier? You will stop getting checked/notified until you start it again.')) return;
   try { await fetch('/shutdown', {method: 'POST'}); } catch (e) {}
   document.body.innerHTML =
     '<div style="padding:4rem;text-align:center;font-family:sans-serif;color:#eee;">Stopped. You can close this tab.</div>';
 });
-</script>
-"""
 
-SETTINGS_BUTTON_HTML = """
-<button id="ikw-settings-btn" class="ikw-btn">Settings</button>
-<script>
 document.getElementById('ikw-settings-btn').addEventListener('click', () => {
   window.location.href = '/settings';
 });
+
+document.getElementById('ikw-browser-btn').addEventListener('click', async () => {
+  const btn = document.getElementById('ikw-browser-btn');
+  btn.disabled = true;
+  try {
+    const res = await fetch('/manual-login', {method: 'POST'});
+    const data = await res.json();
+    ikwToast(data.message || 'Something went wrong.');
+  } catch (e) {
+    ikwToast('Could not reach the app.');
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+const ikwPauseBtn = document.getElementById('ikw-pause-btn');
+function ikwSetPauseLabel(paused) {
+  ikwPauseBtn.textContent = paused ? 'Resume' : 'Pause';
+}
+async function ikwSyncPauseButton() {
+  try {
+    const res = await fetch('/status.json', {cache: 'no-store'});
+    const data = await res.json();
+    ikwSetPauseLabel(!!data.paused);
+  } catch (e) {}
+}
+ikwPauseBtn.addEventListener('click', async () => {
+  ikwPauseBtn.disabled = true;
+  const resuming = ikwPauseBtn.textContent === 'Resume';
+  try {
+    const res = await fetch(resuming ? '/resume' : '/pause', {method: 'POST'});
+    const data = await res.json();
+    // Use the response's own paused state rather than re-polling
+    // /status.json — that file is written synchronously by the same
+    // request, but a round trip back through polling would just add a
+    // needless delay to what should be an instant toggle.
+    ikwSetPauseLabel(!!data.paused);
+    // poll() (defined in dashboard_server.py's own script, sharing this
+    // page) re-reads the now-updated status.json and redraws the big
+    // headline immediately, instead of waiting up to 5s for its own
+    // interval to fire.
+    if (typeof poll === 'function') await poll();
+    ikwToast(data.paused ? 'Paused — checking will stop until you resume.' : 'Resumed checking.');
+  } finally {
+    ikwPauseBtn.disabled = false;
+  }
+});
+ikwSyncPauseButton();
+setInterval(ikwSyncPauseButton, 5000);
 </script>
 """
 
@@ -180,6 +265,10 @@ WIZARD_PAGE = """<!doctype html>
     background: #1c1c1c; color: #eee; padding: 2rem; display: flex; justify-content: center;
   }
   #card { max-width: 560px; width: 100%; }
+  #wiz-close-btn { display: none; position: fixed; top: 1rem; right: 1rem; width: 2.2rem; height: 2.2rem;
+    border-radius: 999px; background: rgba(255,255,255,0.07); color: #eee; border: 1px solid rgba(255,255,255,0.18);
+    font-size: 1.2rem; line-height: 1; cursor: pointer; align-items: center; justify-content: center; }
+  #wiz-close-btn:hover { background: rgba(255,255,255,0.14); border-color: rgba(255,255,255,0.32); }
   h1 { font-size: 1.6rem; margin-bottom: 0.2rem; }
   p.lead { opacity: 0.75; margin-top: 0; margin-bottom: 2rem; }
   fieldset { border: 1px solid #383838; border-radius: 10px; margin-bottom: 1.1rem; padding: 1.1rem 1.2rem 1.25rem; }
@@ -303,6 +392,7 @@ WIZARD_PAGE = """<!doctype html>
 </style>
 </head>
 <body>
+<button id="wiz-close-btn" type="button" title="Back to dashboard" aria-label="Back to dashboard">&times;</button>
 <div id="card">
   <h1 id="page-title">Set up info-kierowca watcher</h1>
   <p class="lead" id="page-lead">This runs entirely on your machine — nothing but info-kierowca.pl ever sees your PKK number or session.</p>
@@ -338,9 +428,7 @@ WIZARD_PAGE = """<!doctype html>
       </div>
       <div id="selected-centers"></div>
       <div class="center-count" id="center-count"></div>
-      <label for="manual-ids" style="margin-top:0.6rem;">Other center IDs (comma-separated, optional)</label>
-      <input type="text" id="manual-ids" placeholder="e.g. 12345, 67890">
-      <div class="hint">Don't see your center? This list is a snapshot and may be missing a newly opened one — add its numeric ID here instead.</div>
+      <div class="hint">The site's search only accepts 5 centers at a time, so at most 5 can be watched.</div>
     </fieldset>
 
     <fieldset>
@@ -409,6 +497,11 @@ const KNOWN_IDS = new Set(CENTERS.map(c => c.id));
 const EYE = '<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>';
 const EYE_OFF = '<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.9 4.24A9.1 9.1 0 0 1 12 4c6.5 0 10 8 10 8a18 18 0 0 1-2.16 3.19M6.6 6.6A18 18 0 0 0 2 12s3.5 7 10 7a9 9 0 0 0 5.4-1.6"/><path d="m2 2 20 20"/></svg>';
 const CENTERS_BY_ID = new Map(CENTERS.map(c => [c.id, c]));
+// The search endpoint rejects anything but exactly 5 organizationIds, so at
+// most 5 centers can ever be watched — notifier.py pads the rest with
+// unrelated fillers whose results get discarded, but that only works up to
+// this many real picks.
+const MAX_CENTERS = 5;
 const selectedIds = new Set([
   ...(EXISTING_CONFIG ? EXISTING_CONFIG.organization_ids : []),
   ...(EXISTING_CONFIG ? EXISTING_CONFIG.watch_organization_ids : []),
@@ -470,7 +563,7 @@ function renderSelected() {
     selectedList.appendChild(row);
   });
   const n = selectedIds.size;
-  centerCount.innerHTML = `Watching <b>${n}</b> center${n === 1 ? '' : 's'} for open slots.`;
+  centerCount.innerHTML = `Watching <b>${n}</b> of ${MAX_CENTERS} centers for open slots.`;
 }
 
 function closeDropdown() {
@@ -481,6 +574,7 @@ function closeDropdown() {
 }
 
 function selectCenter(id) {
+  if (selectedIds.size >= MAX_CENTERS) return;
   selectedIds.add(id);
   renderSelected();
   searchInput.value = '';
@@ -497,13 +591,14 @@ function updateActiveItem() {
 
 function renderDropdown(filter) {
   const f = filter.trim().toLowerCase();
-  currentMatches = CENTERS.filter(c => !selectedIds.has(c.id) && (!f || centerLabel(c).toLowerCase().includes(f)));
+  const atCap = selectedIds.size >= MAX_CENTERS;
+  currentMatches = atCap ? [] : CENTERS.filter(c => !selectedIds.has(c.id) && (!f || centerLabel(c).toLowerCase().includes(f)));
   activeIndex = currentMatches.length ? 0 : -1;
   dropdown.innerHTML = '';
   if (!currentMatches.length) {
     const empty = document.createElement('div');
     empty.className = 'dropdown-empty';
-    empty.textContent = f ? 'No matching centers.' : 'All centers added.';
+    empty.textContent = atCap ? `Maximum of ${MAX_CENTERS} centers reached — remove one to add another.` : (f ? 'No matching centers.' : 'All centers added.');
     dropdown.appendChild(empty);
   } else {
     currentMatches.forEach((c, i) => {
@@ -671,6 +766,12 @@ if (EXISTING_CONFIG) {
   document.getElementById('page-lead').textContent = 'Change anything below and save — takes effect on the next check.';
   document.getElementById('submit-btn').textContent = 'Save changes';
 
+  // Only shown once a config already exists (i.e. this is /settings, not
+  // first-run /setup) — there's no dashboard to go "back" to otherwise.
+  const closeBtn = document.getElementById('wiz-close-btn');
+  closeBtn.style.display = 'flex';
+  closeBtn.addEventListener('click', () => { window.location.href = '/'; });
+
   pkkInput.value = EXISTING_CONFIG.profile_number || '';
   if (pkkInput.value) { pkkInput.type = 'password'; pkkSync(); }
 
@@ -682,12 +783,6 @@ if (EXISTING_CONFIG) {
 
   const examTypes = EXISTING_CONFIG.exam_types || [];
   examGroup.querySelectorAll('.pill').forEach((p) => p.classList.toggle('on', examTypes.includes(p.dataset.val)));
-
-  const manualPrefillIds = Array.from(new Set([
-    ...(EXISTING_CONFIG.organization_ids || []),
-    ...(EXISTING_CONFIG.watch_organization_ids || []),
-  ])).filter(id => !KNOWN_IDS.has(id));
-  document.getElementById('manual-ids').value = manualPrefillIds.join(', ');
 
   if (EXISTING_CONFIG.current_slot_date) {
     const parts = EXISTING_CONFIG.current_slot_date.split('-').map(Number);
@@ -708,10 +803,6 @@ document.getElementById('copy-ntfy').addEventListener('click', () => {
   navigator.clipboard.writeText('https://ntfy.sh/' + ntfyInput.value);
 });
 
-function parseManual(text) {
-  return text.split(',').map(s => s.trim()).filter(Boolean).map(Number).filter(n => !Number.isNaN(n));
-}
-
 document.getElementById('form').addEventListener('submit', async (e) => {
   e.preventDefault();
   const errorEl = document.getElementById('error');
@@ -721,9 +812,9 @@ document.getElementById('form').addEventListener('submit', async (e) => {
     const examTypes = selectedExamTypes();
     if (!examTypes.length) throw new Error('Pick at least one exam type.');
 
-    const manualIds = parseManual(document.getElementById('manual-ids').value);
-    const orgIds = Array.from(new Set([...selectedIds, ...manualIds]));
-    if (!orgIds.length) throw new Error('Pick or enter at least one WORD center.');
+    const orgIds = Array.from(selectedIds);
+    if (!orgIds.length) throw new Error('Pick at least one WORD center.');
+    if (orgIds.length > MAX_CENTERS) throw new Error(`Pick at most ${MAX_CENTERS} WORD centers — the site's search only accepts ${MAX_CENTERS} at a time.`);
     const watchIds = orgIds;
 
     const profileNumber = pkkInput.value.trim();
@@ -810,8 +901,7 @@ class AppHandler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path in ("/", "/index.html"):
             if notifier.CONFIG_FILE.exists():
-                buttons = STOP_BUTTON_HTML + SETTINGS_BUTTON_HTML
-                self._send(200, dashboard_server.PAGE.replace("</body>", buttons + "</body>"))
+                self._send(200, dashboard_server.PAGE.replace("</body>", TOOLBAR_HTML + "</body>"))
             else:
                 self._send(200, render_wizard())
         elif self.path == "/settings":
@@ -831,8 +921,53 @@ class AppHandler(http.server.BaseHTTPRequestHandler):
         elif self.path == "/shutdown":
             self._send_json(200, {"ok": True})
             os._exit(0)
+        elif self.path == "/manual-login":
+            self._handle_manual_login()
+        elif self.path == "/pause":
+            self._set_paused(True)
+        elif self.path == "/resume":
+            self._set_paused(False)
         else:
             self._send(404, b"not found", "text/plain")
+
+    def _set_paused(self, paused):
+        """Writes both the flag file and status.json synchronously, so the
+        dashboard and the toolbar button reflect the change the instant
+        it's clicked instead of waiting for the poll loop's next tick
+        (which could be up to INTERVAL seconds away).
+        """
+        notifier.set_paused(paused)
+        AppHandler.dash_status["paused"] = paused
+        notifier.save_status(AppHandler.dash_status)
+        self._send_json(200, {"ok": True, "paused": paused})
+
+    def _handle_manual_login(self):
+        """Backing handler for the 'Open browser' button: probes the session
+        live and either opens the Chrome+QR relogin (forced, so a forgotten
+        QR window from a previous session can't silently block it — see
+        trigger_auto_refresh()'s docstring) or a plain logged-in browser
+        tab. auto_click=False here on purpose: this button is for opening
+        the site or troubleshooting, not for the reschedule flow, so unlike
+        the automatic urgent-slot-hit trigger it must NOT click through to
+        the date-picker — it should just land on the site, logged in.
+        """
+        config = notifier.load_json(notifier.CONFIG_FILE) if notifier.CONFIG_FILE.exists() else {}
+        if check_session_valid():
+            outcome = notifier.trigger_open_browser(AppHandler.logger, config, auto_click=False)
+            messages = {
+                "launched": "Session looks valid — opening a logged-in browser tab.",
+                "already_running": "A logged-in browser tab is already open.",
+                "disabled": "Session looks valid, but auto_open_browser is turned off in Settings.",
+                "launch_failed": "Session looks valid, but the browser failed to launch — check the log.",
+            }
+        else:
+            outcome = notifier.trigger_auto_refresh(AppHandler.logger, config, force=True)
+            messages = {
+                "launched": "Session looks expired — opening Chrome for a fresh QR login.",
+                "disabled": "Session looks expired, but auto_refresh_chrome is turned off in Settings.",
+                "launch_failed": "Session looks expired, but Chrome failed to launch — check the log.",
+            }
+        self._send_json(200, {"ok": True, "action": outcome, "message": messages.get(outcome, "Done.")})
 
     def _handle_setup(self):
         length = int(self.headers.get("Content-Length", 0) or 0)

@@ -15,7 +15,7 @@ PORT = 8787
 
 EMPTY_STATUS = (
     b'{"last_check": null, "outcome": null, "message": "", '
-    b'"urgent": false, "current_hits": [], "history": []}'
+    b'"urgent": false, "current_hits": [], "history": [], "paused": false}'
 )
 
 # Must match the .timer unit's OnUnitActiveSec - used only to estimate the
@@ -82,6 +82,7 @@ PAGE = """<!doctype html>
 <script>
 let lastCheckRaw = null;
 let lastCheckPerf = null;
+let isPaused = false;
 
 function fmtDateTime(iso) {
   if (!iso) return "";
@@ -124,8 +125,19 @@ async function poll() {
   const history = document.getElementById("history");
 
   const fastest = fastestOf(data.current_hits);
+  isPaused = !!data.paused;
 
-  if (data.outcome === "slot_found" && fastest) {
+  if (isPaused) {
+    // Checked first, ahead of outcome: pausing no longer overwrites the
+    // last real outcome/message in status.json (see notifier.run_check),
+    // so this only affects what's displayed, not what's stored — Resume
+    // falls straight back to the last known state below instead of
+    // waiting on a fresh check to stop saying "Paused".
+    body.className = "none";
+    headline.textContent = "Paused";
+    subline.textContent = "";
+    detail.textContent = "Click Resume to keep checking.";
+  } else if (data.outcome === "slot_found" && fastest) {
     body.className = data.urgent ? "hit-soon" : "hit-far";
     headline.textContent = fmtDateTime(fastest.datetime);
     subline.textContent = `${fastest.word} · ${fastest.places} spots`;
@@ -170,7 +182,7 @@ async function poll() {
 
 function tickCountdown() {
   const el = document.getElementById("countdown");
-  if (lastCheckPerf === null) { el.textContent = ""; return; }
+  if (isPaused || lastCheckPerf === null) { el.textContent = ""; return; }
   const remaining = Math.round((lastCheckPerf + POLL_INTERVAL_MS - performance.now()) / 1000);
   if (remaining <= 0) {
     el.textContent = "Checking any moment now…";

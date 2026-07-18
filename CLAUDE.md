@@ -9,7 +9,15 @@ dependencies (stdlib only).
 ## Files
 
 - `notifier.py` — the poller. Run standalone with `--loop`, or once per invocation (used by the
-  systemd oneshot service).
+  systemd oneshot service). The search endpoint (`MultipleCentersExams`) rejects any
+  `organizationId` list whose length isn't exactly 5 (`400 Validation error: "Exactly 5 exam
+  centers must be provided..."`) — confirmed live 2026-07-18. Since a user may only want to watch
+  1-4 centers, `build_search_organization_ids()` pads `config["organization_ids"]` out to 5 with
+  other real center ids drawn at random from `word_centers.json`; their results are simply
+  discarded afterwards by the `watch_organization_ids` filter, so which fillers land doesn't
+  matter. This also means 5 is a hard ceiling, not just an API detail — `app.py`'s center picker
+  enforces `MAX_CENTERS = 5` (`build_config()` rejects more server-side too) because anything past
+  the 5th pick would never even be queried.
 - `dashboard_server.py` — stdlib HTTP server, binds `127.0.0.1:8787`, serves `status.json` state.
 - `pull_session_cookies.py` — pulls session cookies from a running Chrome via remote-debugging
   port; writes them into `session.json`. Manual: you launch Chrome and log in first.
@@ -53,6 +61,11 @@ dependencies (stdlib only).
   has changed yet. Goes no further than that: picking the new date, the summary step, and any final
   confirm past that stay real clicks from you. No reservation/booking calls of any kind happen in
   this file. Reuses `find_chrome()` from `auto_refresh_session.py` rather than duplicating it.
+  A `--no-auto-click` flag skips both clicks and just leaves the logged-in `/cases` tab open — used
+  by `app.py`'s "Open browser" toolbar button (via `trigger_open_browser(auto_click=False)`) so a
+  manual troubleshooting/browsing click doesn't also kick off the reschedule flow; the automatic
+  urgent-slot-hit trigger keeps the default (`auto_click=True`) since that click-through is the
+  entire point there.
 - `app.py` — the composed, zero-setup entry point: runs `notifier.loop()` in a background thread,
   serves a first-run setup wizard + the dashboard + a `POST /shutdown` (the page's Stop button;
   hard-exits via `os._exit(0)`) from one stdlib HTTP server, and auto-opens the browser. The
@@ -73,6 +86,43 @@ dependencies (stdlib only).
   be verified against an actual build, not `python app.py` — re-test both (delete `session.json`,
   confirm Chrome/Edge still opens for relogin; then, separately, confirm a slot hit still opens a
   logged-in tab) after any change here before tagging a release.
+  The dashboard's toolbar (`TOOLBAR_HTML`, appended before `</body>`) has four buttons, in this
+  order — Open browser, Pause, Settings, Quit (Quit last/rightmost since it's the most destructive):
+  - **Pause/Resume** toggles `notifier.PAUSE_FILE` (`POST /pause` / `POST /resume`) — a plain flag
+    file rather than a config field, checked at the top of `run_check()`, so it works identically
+    whether checks are driven by `app.py`'s in-process loop or a systemd timer tick, and survives a
+    settings resave. `run_check()` no longer overwrites `status.json`'s `outcome`/`message` with an
+    artificial "paused" value when paused — it just skips the real work, leaving the last real
+    result underneath. Instead, `/pause` and `/resume` (`AppHandler._set_paused()`) write
+    `status.json`'s `paused` field directly and synchronously, and return it in the response body —
+    so the toolbar button's label flips instantly on click instead of lagging behind up to
+    `INTERVAL` seconds for the next tick to pick it up. `dashboard_server.py`'s frontend checks
+    `data.paused` *before* `data.outcome` when choosing the headline, so Resume falls straight back
+    to whatever the last real outcome was (e.g. "No slots in the next 31 days") rather than being
+    stuck showing "Paused" until a fresh check runs.
+  - **Open browser** (`POST /manual-login`, `_handle_manual_login()`, named for what it does rather
+    than "Log in" since it covers two different outcomes) probes the session live via
+    `check_session_valid()` (the same `REFRESH_URL` call `run_check()` makes) and routes to whichever
+    flow actually applies — `trigger_open_browser(auto_click=False)` if the session's still good, or
+    `trigger_auto_refresh(force=True)` if not — rather than guessing from file mtimes.
+    `auto_click=False` is the important bit: this button is for opening the site or troubleshooting,
+    not for the reschedule flow, so `open_logged_in_browser.py` is invoked with `--no-auto-click`
+    and just lands on `/cases` logged in, without clicking through to "Zmień termin" — unlike the
+    automatic urgent-slot-hit trigger (`notifier.py`'s call site keeps the default `auto_click=True`,
+    unchanged), which still wants that click-through so the date-picker is ready the moment the push
+    notification lands. This is also the fix/workaround for a reported bug: auto-login reliably
+    fires when cookies expire *while the app is already running*, but was reported as not firing on
+    a fresh launch with cookies that were *already* stale. Root cause (confirmed from
+    `notifier.log`): `AUTO_REFRESH_LOCK` has no timeout (`auto_refresh_session.py` waits indefinitely
+    for a QR scan) and is a detached process, so it outlives an `app.py` restart — a QR window left
+    open and forgotten in a previous session (one observed live held the lock for ~10 hours)
+    silently no-ops every later `trigger_auto_refresh()` call, including the very next launch, with
+    zero visible indication why. The automatic path stays conservative on purpose (a background
+    retry must never kill a window mid-scan) — `force` is what the manual button opts into instead:
+    it kills whatever pid holds the lock and clears it before relaunching. `trigger_open_browser()`
+    has no equivalent `force` — forcing there would mean a second Chrome fighting over the same fixed
+    debug port (`9555`) an already-open one is using, which is fragile rather than useful, so
+    "already_running" is treated as the desired outcome, not something to override.
 - `word_centers.json` — static snapshot (id, name, location) of every active DORD/WORD/MORD/
   PORD/ZORD exam center, used by `app.py`'s setup wizard to show real, searchable center names
   instead of bare numeric IDs. Baked in rather than fetched live because the wizard has to work
