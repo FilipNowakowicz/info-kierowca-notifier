@@ -139,10 +139,11 @@ dependencies (stdlib only).
   (deletes `config.json` + `session.json` and drops back to first-run — the poll thread keeps
   running through it, which is why the missing-config path is the silent `setup_incomplete`
   outcome rather than a critical notification every tick). The
-  dashboard's Settings button hits `GET /settings`, which reuses `render_wizard()` — passed the
-  existing `config.json` so the same form comes back prefilled — rather than a separate edit page;
-  submitting posts to the same `/setup` endpoint that first-run setup uses, so `build_config()`
-  stays the single place config validation lives. The wizard's "Check frequency" control (in the
+  dashboard's Settings button opens `/settings` in a modal (see the toolbar bullet below) rather
+  than navigating there, but `GET /settings` itself is unchanged and still reuses `render_wizard()`
+  — passed the existing `config.json` so the same form comes back prefilled — rather than a
+  separate edit page; submitting posts to the same `/setup` endpoint that first-run setup uses, so
+  `build_config()` stays the single place config validation lives. The wizard's "Check frequency" control (in the
   merged "Automation" fieldset) is a range slider (`#poll_interval_slider`) over `POLL_INTERVAL_STEPS`
   — a hand-picked, non-linear array (finer-grained near the low end, coarser near the high end) so
   the slider offers many more real positions than a dropdown's handful of presets would, without a
@@ -212,6 +213,27 @@ dependencies (stdlib only).
   - **Open browser / Settings / Quit** are icon-only buttons in a toolbar that stays hidden until
     the pointer nears the top of the screen or it takes keyboard focus; a low-opacity dot keeps it
     discoverable before the first reveal. Geometry and styling live in `TOOLBAR_HTML`.
+  - **Settings** opens `/settings` as a modal — `#ikw-settings-overlay` (a translucent, blurred
+    backdrop over the still-visible dashboard) containing `#ikw-settings-frame`, an `<iframe>`
+    pointed at `/settings` — rather than the old full-page navigation. An iframe was chosen over
+    merging the two templates because it keeps `WIZARD_PAGE` and `dashboard_server.PAGE` fully
+    independent (each still works fine loaded on its own — direct `/settings` visit, first-run
+    `/setup`, the read-only `dashboard_server.py`-only path); the tradeoff is the settings form
+    scrolls in its own inner viewport rather than the page's. `ikwOpenSettingsModal()` always sets
+    `iframe.src` fresh (from `about:blank`, which `ikwCloseSettingsModal()` resets it back to on
+    every close) so the form is never stale from a previous open without needing a cache-busting
+    query string — which would've also required `do_GET`'s exact-path route matching to start
+    stripping query strings. Closing happens three ways: the panel's own `wiz-close-btn`, a click on
+    the backdrop outside the panel, or Escape. Because the iframe is same-origin, `WIZARD_PAGE`'s
+    script detects embedding via `IKW_EMBEDDED = window.parent !== window` and swaps its three
+    `window.location.href = '/'` exits (the close button, a successful save, Reset account) for
+    `postMessage`s instead — `ikw-settings-close` / `ikw-settings-saved` / `ikw-settings-reset` —
+    which `TOOLBAR_HTML`'s `message` listener (checked against `window.location.origin`) turns into
+    closing the modal, closing it *and* calling `poll()` immediately so a changed interval/countdown
+    shows without waiting up to 5s, and a full top-level `location.href = '/'` respectively (reset
+    clears `config.json`/`session.json` — there's no dashboard state left to return to inside the
+    modal, unlike a plain save). `IKW_EMBEDDED` being false is what keeps first-run `/setup` and a
+    direct `/settings` visit navigating exactly as they did before this existed.
   - **Open browser** (`POST /manual-login`, `_handle_manual_login()`, named for what it does rather
     than "Log in" since it covers two different outcomes) probes the session live via
     `check_session_valid()` (the same `REFRESH_URL` call `run_check()` makes) and routes to whichever
