@@ -358,8 +358,8 @@ loginBtn.addEventListener('click', async () => {
   try {
     const res = await fetch('/login-start', {method: 'POST'});
     const data = await res.json();
-    if (!data.ok || data.action === 'launch_failed') {
-      throw new Error('Could not open Chrome — try the manual option below.');
+    if (!data.ok || data.action === 'launch_failed' || data.action === 'no_chromium_browser') {
+      throw new Error(data.message || 'Could not open Chrome — try the manual option below.');
     }
     loginHint.classList.add('show');
     loginBtn.textContent = 'Waiting for QR scan...';
@@ -1261,6 +1261,8 @@ class AppHandler(http.server.BaseHTTPRequestHandler):
                 "already_running": "A logged-in browser tab is already open.",
                 "disabled": "Session looks valid, but auto_open_browser is turned off in Settings.",
                 "launch_failed": "Session looks valid, but the browser failed to launch — check the log.",
+                "no_chromium_browser": "Session looks valid, but no Chrome, Edge, or other "
+                    "Chromium-based browser was found on this machine — install one to continue.",
             }
         else:
             outcome = notifier.trigger_auto_refresh(AppHandler.logger, config, force=True)
@@ -1268,6 +1270,8 @@ class AppHandler(http.server.BaseHTTPRequestHandler):
                 "launched": "Session looks expired — opening Chrome for a fresh QR login.",
                 "disabled": "Session looks expired, but auto_refresh_chrome is turned off in Settings.",
                 "launch_failed": "Session looks expired, but Chrome failed to launch — check the log.",
+                "no_chromium_browser": "Session looks expired, but no Chrome, Edge, or other "
+                    "Chromium-based browser was found on this machine — install one to continue.",
             }
         self._send_json(200, {"ok": True, "action": outcome, "message": messages.get(outcome, "Done.")})
 
@@ -1279,7 +1283,12 @@ class AppHandler(http.server.BaseHTTPRequestHandler):
         no-op a user's own deliberate click on their very first run.
         """
         outcome = notifier.trigger_auto_refresh(AppHandler.logger, {}, force=True)
-        self._send_json(200, {"ok": True, "action": outcome})
+        messages = {
+            "no_chromium_browser": "No Chrome, Edge, or other Chromium-based browser was found "
+                "on this machine. Install one and try again.",
+            "launch_failed": "Could not open Chrome — try the manual option below.",
+        }
+        self._send_json(200, {"ok": True, "action": outcome, "message": messages.get(outcome)})
 
     def _handle_setup(self):
         length = int(self.headers.get("Content-Length", 0) or 0)
