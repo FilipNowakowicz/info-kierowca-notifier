@@ -235,7 +235,7 @@ AUTO_REFRESH_SCRIPT = Path(__file__).parent / "auto_refresh_session.py"
 AUTO_REFRESH_LOCK = auto_refresh_session.LOCK_FILE
 
 
-def trigger_auto_refresh(logger, config, force=False):
+def trigger_auto_refresh(logger, config, force=False, notify_phone=True):
     """Best-effort: launch auto_refresh_session.py to relogin via Chrome+QR.
 
     Detached so it survives this (oneshot) process exiting — on systemd it's
@@ -260,6 +260,15 @@ def trigger_auto_refresh(logger, config, force=False):
     including the very next app launch, with no visible sign why. The
     automatic path stays conservative (never force); force is opt-in so a
     background retry never kills a window the user is mid-scan on.
+
+    notify_phone=False (the manual "Open browser"/login-screen buttons) skips
+    the ntfy push telling the user to go scan a QR — they just clicked a
+    button and are already sitting in front of Chrome watching it open, so a
+    phone notification saying the same thing is just noise (and, worse, reads
+    as an alert when nothing's actually wrong). The automatic auth_expired
+    path keeps the push, since that's the one case where the user genuinely
+    isn't watching and needs the nudge. The desktop notification still fires
+    either way — it's local and harmless.
 
     Returns a short status string: "disabled", "no_chromium_browser",
     "already_running", "launched", or "launch_failed".
@@ -315,6 +324,8 @@ def trigger_auto_refresh(logger, config, force=False):
             ]
         else:
             cmd = [python, str(AUTO_REFRESH_SCRIPT)]
+    if not notify_phone:
+        cmd.append("--no-phone-push")
     try:
         subprocess.Popen(
             cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True
@@ -548,7 +559,15 @@ def run_check(logger, dash_status):
         logger.info("outcome=network_error stage=refresh detail=%r", detail)
         update_status(dash_status, "network_error", "Can't reach info-kierowca.pl — will retry")
         return
-    elif status in (401, 403, 404):
+    elif status in (401, 403, 404, 500):
+        # 500 is grouped in with the real auth failures here, same as the
+        # search stage below: confirmed live 2026-07-18 that a 500 from the
+        # refresh endpoint was also just an expired-cookie response, not a
+        # transient upstream error — but it landed in the catch-all "else"
+        # branch below, so it displayed as "Something's wrong" instead of
+        # "Session expired" and never called trigger_auto_refresh(), leaving
+        # the user to notice and relogin by hand instead of Chrome popping
+        # open on its own.
         logger.info("outcome=auth_expired status=%s stage=refresh", status)
         notify(
             "info-kierowca: session expired",
@@ -559,7 +578,7 @@ def run_check(logger, dash_status):
         trigger_auto_refresh(logger, config)
         return
     else:
-        # 5xx included: a transient upstream error is not an expired session,
+        # Other 5xx: a transient upstream error is not an expired session,
         # and must not pop a QR window onto the user's desktop.
         detail = body[:200].decode(errors="replace") if body else ""
         logger.info("outcome=unexpected status=%s stage=refresh detail=%r", status, detail)
@@ -583,7 +602,7 @@ def run_check(logger, dash_status):
         logger.info("outcome=network_error stage=search detail=%r", detail)
         update_status(dash_status, "network_error", "Can't reach info-kierowca.pl — will retry")
         return
-    # 500 stays in the auth set *here* (unlike the refresh stage above): a 500
+    # 500 is in the auth set here too (see the refresh stage above): a 500
     # from the search endpoint has in practice always turned out to be the
     # same underlying cookie expiry. See docs/ADVANCED.md's auto-relogin note.
     if status in (401, 403, 500):

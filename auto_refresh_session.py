@@ -328,6 +328,12 @@ def main():
         help="Seconds to wait for the QR to be scanned before giving up (default: wait indefinitely)",
     )
     parser.add_argument(
+        "--no-phone-push", action="store_true",
+        help="Skip the ntfy push notification — used when a person just clicked a "
+        "button and is already watching Chrome, so a 'scan the QR' push to their "
+        "phone would be redundant. The desktop notification still fires.",
+    )
+    parser.add_argument(
         "--keep-open", action="store_true", help="Leave Chrome open after capturing cookies"
     )
     args = parser.parse_args()
@@ -372,11 +378,12 @@ def main():
             "Chrome opened — scan the QR in the app to log back in",
             "critical",
         )
-        push_ntfy(
-            "info-kierowca: relogin needed",
-            "Chrome opened on your desktop — scan the QR in the app to log back in",
-            priority="default",
-        )
+        if not args.no_phone_push:
+            push_ntfy(
+                "info-kierowca: relogin needed",
+                "Chrome opened on your desktop — scan the QR in the app to log back in",
+                priority="default",
+            )
 
         cdp_client.wait_for_debug_port("127.0.0.1", args.port, timeout=20)
         # Register the click-observer before the real page ever loads, then
