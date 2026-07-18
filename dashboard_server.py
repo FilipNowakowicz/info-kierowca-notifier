@@ -127,16 +127,21 @@ async function poll() {
   const fastest = fastestOf(data.current_hits);
   isPaused = !!data.paused;
 
-  if (data.outcome === "slot_found" && fastest) {
-    body.className = data.urgent ? "hit-soon" : "hit-far";
-    headline.textContent = fmtDateTime(fastest.datetime);
-    subline.textContent = `${fastest.word} · ${fastest.places} spots`;
-    detail.textContent = "";
-  } else if (data.outcome === "paused") {
+  if (isPaused) {
+    // Checked first, ahead of outcome: pausing no longer overwrites the
+    // last real outcome/message in status.json (see notifier.run_check),
+    // so this only affects what's displayed, not what's stored — Resume
+    // falls straight back to the last known state below instead of
+    // waiting on a fresh check to stop saying "Paused".
     body.className = "none";
     headline.textContent = "Paused";
     subline.textContent = "";
     detail.textContent = "Click Resume to keep checking.";
+  } else if (data.outcome === "slot_found" && fastest) {
+    body.className = data.urgent ? "hit-soon" : "hit-far";
+    headline.textContent = fmtDateTime(fastest.datetime);
+    subline.textContent = `${fastest.word} · ${fastest.places} spots`;
+    detail.textContent = "";
   } else if (data.outcome === "auth_expired") {
     body.className = "error";
     headline.textContent = "Session expired";

@@ -130,6 +130,10 @@ def main():
         "--url", default=DEFAULT_URL, help="Page to open Chrome to (default: %(default)s)"
     )
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
+    parser.add_argument(
+        "--no-auto-click", action="store_true",
+        help="Just open a logged-in tab — skip the Zmień termin/confirm auto-click-through",
+    )
     args = parser.parse_args()
 
     if not cdp_client.SESSION_FILE.exists():
@@ -170,7 +174,9 @@ def main():
     cdp_client.navigate("127.0.0.1", args.port, args.url)
 
     print(f"Chrome opened at {args.url}, logged in using {cdp_client.SESSION_FILE}.")
-    if wait_and_click("127.0.0.1", args.port, CHANGE_DATE_TEXT):
+    if args.no_auto_click:
+        print("Skipping the Zmień termin auto-click-through (--no-auto-click).")
+    elif wait_and_click("127.0.0.1", args.port, CHANGE_DATE_TEXT):
         print(f"Clicked '{CHANGE_DATE_TEXT}'.")
         if wait_and_click("127.0.0.1", args.port, CONFIRM_CHANGE_DATE_TEXT):
             print(f"Clicked '{CONFIRM_CHANGE_DATE_TEXT}' — pick the new date and confirm yourself from here.")

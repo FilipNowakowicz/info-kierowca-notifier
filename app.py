@@ -83,7 +83,7 @@ def already_running():
 
 
 def check_session_valid():
-    """Live probe for the manual 'Log in' button: does session.json still
+    """Live probe for the manual 'Open browser' button: does session.json still
     refresh successfully? Same call notifier.run_check() makes at the top
     of every poll, just outside that loop so the button gets an answer
     immediately instead of waiting for the next tick.
@@ -163,7 +163,7 @@ TOOLBAR_HTML = """
     backdrop-filter: blur(6px); transition: background 0.12s, border-color 0.12s; }
   .ikw-btn:hover { background: rgba(255,255,255,0.14); border-color: rgba(255,255,255,0.32); }
   .ikw-btn:disabled { opacity: 0.5; cursor: default; }
-  #ikw-stop-btn:hover { border-color: rgba(224,104,95,0.7); color: #ffb3ad; }
+  #ikw-quit-btn:hover { border-color: rgba(224,104,95,0.7); color: #ffb3ad; }
   .ikw-toast { position: fixed; bottom: 1.2rem; left: 50%; transform: translateX(-50%) translateY(0.4rem);
     max-width: 90vw; background: rgba(20,20,20,0.92); color: #eee; padding: 0.6rem 1rem; border-radius: 8px;
     font-family: -apple-system, 'Segoe UI', system-ui, sans-serif; font-size: 0.85rem; text-align: center;
@@ -172,10 +172,10 @@ TOOLBAR_HTML = """
   .ikw-toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 </style>
 <div class="ikw-toolbar">
+  <button id="ikw-browser-btn" class="ikw-btn">Open browser</button>
   <button id="ikw-pause-btn" class="ikw-btn">Pause</button>
-  <button id="ikw-login-btn" class="ikw-btn">Log in</button>
   <button id="ikw-settings-btn" class="ikw-btn">Settings</button>
-  <button id="ikw-stop-btn" class="ikw-btn">Stop</button>
+  <button id="ikw-quit-btn" class="ikw-btn">Quit</button>
 </div>
 <div class="ikw-toast" id="ikw-toast"></div>
 <script>
@@ -187,8 +187,8 @@ function ikwToast(msg) {
   ikwToast._t = setTimeout(() => el.classList.remove('show'), 4000);
 }
 
-document.getElementById('ikw-stop-btn').addEventListener('click', async () => {
-  if (!confirm('Stop info-kierowca-notifier? You will stop getting checked/notified until you start it again.')) return;
+document.getElementById('ikw-quit-btn').addEventListener('click', async () => {
+  if (!confirm('Quit info-kierowca-notifier? You will stop getting checked/notified until you start it again.')) return;
   try { await fetch('/shutdown', {method: 'POST'}); } catch (e) {}
   document.body.innerHTML =
     '<div style="padding:4rem;text-align:center;font-family:sans-serif;color:#eee;">Stopped. You can close this tab.</div>';
@@ -198,8 +198,8 @@ document.getElementById('ikw-settings-btn').addEventListener('click', () => {
   window.location.href = '/settings';
 });
 
-document.getElementById('ikw-login-btn').addEventListener('click', async () => {
-  const btn = document.getElementById('ikw-login-btn');
+document.getElementById('ikw-browser-btn').addEventListener('click', async () => {
+  const btn = document.getElementById('ikw-browser-btn');
   btn.disabled = true;
   try {
     const res = await fetch('/manual-login', {method: 'POST'});
@@ -213,20 +213,33 @@ document.getElementById('ikw-login-btn').addEventListener('click', async () => {
 });
 
 const ikwPauseBtn = document.getElementById('ikw-pause-btn');
+function ikwSetPauseLabel(paused) {
+  ikwPauseBtn.textContent = paused ? 'Resume' : 'Pause';
+}
 async function ikwSyncPauseButton() {
   try {
     const res = await fetch('/status.json', {cache: 'no-store'});
     const data = await res.json();
-    ikwPauseBtn.textContent = data.paused ? 'Resume' : 'Pause';
+    ikwSetPauseLabel(!!data.paused);
   } catch (e) {}
 }
 ikwPauseBtn.addEventListener('click', async () => {
   ikwPauseBtn.disabled = true;
   const resuming = ikwPauseBtn.textContent === 'Resume';
   try {
-    await fetch(resuming ? '/resume' : '/pause', {method: 'POST'});
-    await ikwSyncPauseButton();
-    ikwToast(resuming ? 'Resumed checking.' : 'Paused — checking will stop until you resume.');
+    const res = await fetch(resuming ? '/resume' : '/pause', {method: 'POST'});
+    const data = await res.json();
+    // Use the response's own paused state rather than re-polling
+    // /status.json — that file is written synchronously by the same
+    // request, but a round trip back through polling would just add a
+    // needless delay to what should be an instant toggle.
+    ikwSetPauseLabel(!!data.paused);
+    // poll() (defined in dashboard_server.py's own script, sharing this
+    // page) re-reads the now-updated status.json and redraws the big
+    // headline immediately, instead of waiting up to 5s for its own
+    // interval to fire.
+    if (typeof poll === 'function') await poll();
+    ikwToast(data.paused ? 'Paused — checking will stop until you resume.' : 'Resumed checking.');
   } finally {
     ikwPauseBtn.disabled = false;
   }
@@ -252,6 +265,10 @@ WIZARD_PAGE = """<!doctype html>
     background: #1c1c1c; color: #eee; padding: 2rem; display: flex; justify-content: center;
   }
   #card { max-width: 560px; width: 100%; }
+  #wiz-close-btn { display: none; position: fixed; top: 1rem; right: 1rem; width: 2.2rem; height: 2.2rem;
+    border-radius: 999px; background: rgba(255,255,255,0.07); color: #eee; border: 1px solid rgba(255,255,255,0.18);
+    font-size: 1.2rem; line-height: 1; cursor: pointer; align-items: center; justify-content: center; }
+  #wiz-close-btn:hover { background: rgba(255,255,255,0.14); border-color: rgba(255,255,255,0.32); }
   h1 { font-size: 1.6rem; margin-bottom: 0.2rem; }
   p.lead { opacity: 0.75; margin-top: 0; margin-bottom: 2rem; }
   fieldset { border: 1px solid #383838; border-radius: 10px; margin-bottom: 1.1rem; padding: 1.1rem 1.2rem 1.25rem; }
@@ -375,6 +392,7 @@ WIZARD_PAGE = """<!doctype html>
 </style>
 </head>
 <body>
+<button id="wiz-close-btn" type="button" title="Back to dashboard" aria-label="Back to dashboard">&times;</button>
 <div id="card">
   <h1 id="page-title">Set up info-kierowca watcher</h1>
   <p class="lead" id="page-lead">This runs entirely on your machine — nothing but info-kierowca.pl ever sees your PKK number or session.</p>
@@ -748,6 +766,12 @@ if (EXISTING_CONFIG) {
   document.getElementById('page-lead').textContent = 'Change anything below and save — takes effect on the next check.';
   document.getElementById('submit-btn').textContent = 'Save changes';
 
+  // Only shown once a config already exists (i.e. this is /settings, not
+  // first-run /setup) — there's no dashboard to go "back" to otherwise.
+  const closeBtn = document.getElementById('wiz-close-btn');
+  closeBtn.style.display = 'flex';
+  closeBtn.addEventListener('click', () => { window.location.href = '/'; });
+
   pkkInput.value = EXISTING_CONFIG.profile_number || '';
   if (pkkInput.value) { pkkInput.type = 'password'; pkkSync(); }
 
@@ -900,23 +924,36 @@ class AppHandler(http.server.BaseHTTPRequestHandler):
         elif self.path == "/manual-login":
             self._handle_manual_login()
         elif self.path == "/pause":
-            notifier.set_paused(True)
-            self._send_json(200, {"ok": True})
+            self._set_paused(True)
         elif self.path == "/resume":
-            notifier.set_paused(False)
-            self._send_json(200, {"ok": True})
+            self._set_paused(False)
         else:
             self._send(404, b"not found", "text/plain")
 
+    def _set_paused(self, paused):
+        """Writes both the flag file and status.json synchronously, so the
+        dashboard and the toolbar button reflect the change the instant
+        it's clicked instead of waiting for the poll loop's next tick
+        (which could be up to INTERVAL seconds away).
+        """
+        notifier.set_paused(paused)
+        AppHandler.dash_status["paused"] = paused
+        notifier.save_status(AppHandler.dash_status)
+        self._send_json(200, {"ok": True, "paused": paused})
+
     def _handle_manual_login(self):
-        """Manual fallback for the 'Log in' button: probes the session live
-        and either opens the Chrome+QR relogin (forced, so a forgotten QR
-        window from a previous session can't silently block it — see
-        trigger_auto_refresh()'s docstring) or a logged-in browser tab.
+        """Backing handler for the 'Open browser' button: probes the session
+        live and either opens the Chrome+QR relogin (forced, so a forgotten
+        QR window from a previous session can't silently block it — see
+        trigger_auto_refresh()'s docstring) or a plain logged-in browser
+        tab. auto_click=False here on purpose: this button is for opening
+        the site or troubleshooting, not for the reschedule flow, so unlike
+        the automatic urgent-slot-hit trigger it must NOT click through to
+        the date-picker — it should just land on the site, logged in.
         """
         config = notifier.load_json(notifier.CONFIG_FILE) if notifier.CONFIG_FILE.exists() else {}
         if check_session_valid():
-            outcome = notifier.trigger_open_browser(AppHandler.logger, config)
+            outcome = notifier.trigger_open_browser(AppHandler.logger, config, auto_click=False)
             messages = {
                 "launched": "Session looks valid — opening a logged-in browser tab.",
                 "already_running": "A logged-in browser tab is already open.",

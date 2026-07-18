@@ -221,7 +221,7 @@ def trigger_auto_refresh(logger, config, force=False):
     re-invoke the binary with a hidden flag that app.py dispatches straight
     to auto_refresh_session.main(), keeping it a separate detached process.
 
-    force=True (the manual "Log in" button) kills whatever's holding the
+    force=True (the manual "Open browser" button) kills whatever's holding the
     lock and relaunches anyway. This exists because the lock has no timeout
     (auto_refresh_session.py waits indefinitely for a QR scan) and survives
     app.py restarts, since the Chrome+QR process it guards is detached —
@@ -285,7 +285,7 @@ OPEN_BROWSER_SCRIPT = Path(__file__).parent / "open_logged_in_browser.py"
 OPEN_BROWSER_PORT = 9555
 
 
-def trigger_open_browser(logger, config):
+def trigger_open_browser(logger, config, auto_click=True):
     """Best-effort: launch open_logged_in_browser.py so a pre-authenticated
     tab is already open by the moment the push notification lands — skips
     the login step that otherwise costs you the fastest-moving slots.
@@ -299,6 +299,12 @@ def trigger_open_browser(logger, config):
     its docstring — since sys.executable is the bundled binary itself
     inside a PyInstaller build, not a Python interpreter that can run a
     loose .py file.
+
+    auto_click=False (the manual "Open browser" button when the session is
+    still valid) passes --no-auto-click through, so it just opens the
+    logged-in tab without clicking through to the reschedule date-picker —
+    that click-through is only wanted for the automatic urgent-slot-hit
+    path, which keeps the default auto_click=True.
 
     Returns a short status string: "disabled", "already_running",
     "launched", or "launch_failed". No force option here (unlike
@@ -321,6 +327,8 @@ def trigger_open_browser(logger, config):
         if not OPEN_BROWSER_SCRIPT.exists():
             return "launch_failed"
         cmd = [sys.executable, str(OPEN_BROWSER_SCRIPT)]
+    if not auto_click:
+        cmd.append("--no-auto-click")
     try:
         subprocess.Popen(
             cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True
@@ -371,11 +379,20 @@ def do_request(url, session, method="GET", json_body=None):
 
 
 def run_check(logger, dash_status):
-    if is_paused():
-        dash_status["paused"] = True
-        update_status(dash_status, "paused", "Paused — click Resume to keep checking")
+    """Note: pausing/resuming itself is applied instantly by app.py's
+    /pause and /resume handlers (they write dash_status/status.json
+    directly) — this check just stops the real work from running while
+    paused. It deliberately leaves outcome/message untouched instead of
+    overwriting them with a "paused" outcome, so status.json still holds
+    the last real result underneath and Resume doesn't have to wait for a
+    fresh check to stop showing "Paused".
+    """
+    paused = is_paused()
+    if dash_status.get("paused") != paused:
+        dash_status["paused"] = paused
+        save_status(dash_status)
+    if paused:
         return
-    dash_status["paused"] = False
 
     if not CONFIG_FILE.exists():
         logger.info("outcome=fatal detail=missing_config")
