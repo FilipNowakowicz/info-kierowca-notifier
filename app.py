@@ -221,8 +221,30 @@ TOOLBAR_HTML = """
     border: 1px solid rgba(255,255,255,0.15); opacity: 0; pointer-events: none; z-index: 20;
     transition: opacity 0.2s, transform 0.2s; }
   .ikw-toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+  /* Settings modal: the dashboard stays visible (dimmed) behind a
+     translucent, blurred backdrop, with /settings loaded into an iframe
+     panel on top — rather than the old full-page navigation to /settings.
+     An iframe (not a merged template) keeps app.py's two big templates
+     independent; see WIZARD_PAGE's IKW_EMBEDDED for the other half of
+     this, which lets the same settings page run standalone (first-run
+     /setup, a direct /settings visit) or embedded here. */
+  #ikw-settings-overlay { position: fixed; inset: 0; z-index: 50; display: none; align-items: center;
+    justify-content: center; background: rgba(0,0,0,0.55); backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
+    opacity: 0; transition: opacity 0.18s ease; }
+  #ikw-settings-overlay.show { display: flex; opacity: 1; }
+  #ikw-settings-panel { width: min(600px, 92vw); height: min(85vh, 760px); border-radius: 14px;
+    overflow: hidden; background: #1c1c1c; box-shadow: 0 24px 70px rgba(0,0,0,0.6);
+    border: 1px solid rgba(255,255,255,0.08); transform: scale(0.97) translateY(6px); transition: transform 0.18s ease; }
+  #ikw-settings-overlay.show #ikw-settings-panel { transform: scale(1) translateY(0); }
+  #ikw-settings-frame { width: 100%; height: 100%; border: 0; display: block; }
 </style>
 <div id="ikw-toolbar-zone"></div>
+<div id="ikw-settings-overlay">
+  <div id="ikw-settings-panel" role="dialog" aria-modal="true" aria-label="Settings">
+    <iframe id="ikw-settings-frame" title="Settings" src="about:blank"></iframe>
+  </div>
+</div>
 <div class="ikw-toolbar" id="ikw-toolbar">
   <button id="ikw-browser-btn" class="ikw-icon-btn" title="Open browser" aria-label="Open browser">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
@@ -259,8 +281,53 @@ document.getElementById('ikw-quit-btn').addEventListener('click', async () => {
     '<div style="padding:4rem;text-align:center;font-family:sans-serif;color:#eee;">Stopped. You can close this tab.</div>';
 });
 
-document.getElementById('ikw-settings-btn').addEventListener('click', () => {
-  window.location.href = '/settings';
+const ikwSettingsOverlay = document.getElementById('ikw-settings-overlay');
+const ikwSettingsFrame = document.getElementById('ikw-settings-frame');
+
+function ikwOpenSettingsModal() {
+  // Reset to about:blank on every close (below) means this is always a
+  // fresh navigation, never a same-URL no-op — so the settings form always
+  // reflects the just-saved config without needing a cache-busting query
+  // string (which would also need do_GET's exact-path routing to strip it).
+  ikwSettingsFrame.src = '/settings';
+  ikwSettingsOverlay.classList.add('show');
+  document.body.style.overflow = 'hidden';
+}
+
+function ikwCloseSettingsModal() {
+  ikwSettingsOverlay.classList.remove('show');
+  document.body.style.overflow = '';
+  ikwSettingsFrame.src = 'about:blank';
+}
+
+document.getElementById('ikw-settings-btn').addEventListener('click', ikwOpenSettingsModal);
+
+ikwSettingsOverlay.addEventListener('mousedown', (e) => {
+  if (e.target === ikwSettingsOverlay) ikwCloseSettingsModal();
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && ikwSettingsOverlay.classList.contains('show')) ikwCloseSettingsModal();
+});
+
+// WIZARD_PAGE's IKW_EMBEDDED posts these instead of navigating, since it's
+// running inside #ikw-settings-frame rather than as its own top-level page.
+window.addEventListener('message', (e) => {
+  if (e.origin !== window.location.origin) return;
+  const type = e.data && e.data.type;
+  if (type === 'ikw-settings-close') {
+    ikwCloseSettingsModal();
+  } else if (type === 'ikw-settings-saved') {
+    ikwCloseSettingsModal();
+    // poll() is dashboard_server.py's own function, sharing this page's
+    // script scope — re-reads status.json immediately so a changed poll
+    // interval/countdown shows right away instead of waiting up to 5s.
+    if (typeof poll === 'function') poll();
+    ikwToast('Settings saved.');
+  } else if (type === 'ikw-settings-reset') {
+    // Reset clears config.json/session.json — a full top-level navigation
+    // to the login screen, not just closing the modal.
+    window.location.href = '/';
+  }
 });
 
 document.getElementById('ikw-browser-btn').addEventListener('click', async () => {
@@ -717,6 +784,19 @@ const CENTERS = __CENTERS_JSON__;
 const CATEGORIES = __CATEGORIES_JSON__;
 const EXISTING_CONFIG = __EXISTING_CONFIG_JSON__;
 const KNOWN_IDS = new Set(CENTERS.map(c => c.id));
+// True when this page is loaded inside the dashboard's Settings modal
+// (see TOOLBAR_HTML's #ikw-settings-frame) rather than as its own top-level
+// page (first-run /setup, or a direct /settings visit) — same-origin, so
+// postMessage is just the cleanest way to hand control back to the parent
+// rather than assuming direct window.parent access always stays safe.
+const IKW_EMBEDDED = window.parent !== window;
+function ikwGoDashboard(type) {
+  if (IKW_EMBEDDED) {
+    window.parent.postMessage({ type }, window.location.origin);
+  } else {
+    window.location.href = '/';
+  }
+}
 const EYE = '<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>';
 const EYE_OFF = '<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.9 4.24A9.1 9.1 0 0 1 12 4c6.5 0 10 8 10 8a18 18 0 0 1-2.16 3.19M6.6 6.6A18 18 0 0 0 2 12s3.5 7 10 7a9 9 0 0 0 5.4-1.6"/><path d="m2 2 20 20"/></svg>';
 const CENTERS_BY_ID = new Map(CENTERS.map(c => [c.id, c]));
@@ -1085,7 +1165,7 @@ if (EXISTING_CONFIG) {
   // first-run /setup) — there's no dashboard to go "back" to otherwise.
   const closeBtn = document.getElementById('wiz-close-btn');
   closeBtn.style.display = 'flex';
-  closeBtn.addEventListener('click', () => { window.location.href = '/'; });
+  closeBtn.addEventListener('click', () => { ikwGoDashboard('ikw-settings-close'); });
 
   pkkInput.value = EXISTING_CONFIG.profile_number || '';
   if (pkkInput.value) { pkkInput.type = 'password'; pkkSync(); }
@@ -1148,7 +1228,12 @@ resetAccountBtn.addEventListener('click', async () => {
   resetAccountBtn.disabled = true;
   try {
     await fetch('/reset-account', {method: 'POST'});
-    window.location.href = '/';
+    // Always a full top-level navigation, even when embedded: reset clears
+    // config.json and session.json, so what comes next is the login screen,
+    // not just an updated settings form — there's no "back to dashboard" to
+    // return to inside the modal.
+    if (IKW_EMBEDDED) { window.parent.postMessage({ type: 'ikw-settings-reset' }, window.location.origin); }
+    else { window.location.href = '/'; }
   } catch (e) {
     resetAccountBtn.disabled = false;
     alert('Reset failed — check the log.');
@@ -1197,7 +1282,7 @@ document.getElementById('form').addEventListener('submit', async (e) => {
     const data = await res.json();
     if (!res.ok || !data.ok) throw new Error(data.error || 'Save failed.');
 
-    window.location.href = '/';
+    ikwGoDashboard('ikw-settings-saved');
   } catch (err) {
     errorEl.textContent = err.message;
     errorEl.classList.add('show');
