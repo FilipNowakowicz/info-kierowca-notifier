@@ -160,6 +160,21 @@ def find_chrome():
     raise SystemExit("Couldn't find a Chrome/Chromium/Edge binary on PATH.")
 
 
+def chrome_available():
+    """Whether find_chrome() would succeed, without raising. Used by
+    notifier.trigger_auto_refresh()/trigger_open_browser() to detect a
+    missing Chromium browser (e.g. a Mac with only Safari installed)
+    synchronously, before spawning the detached subprocess whose own
+    find_chrome() failure would otherwise be invisible — its stdout/stderr
+    go to DEVNULL since the launch is fire-and-forget.
+    """
+    try:
+        find_chrome()
+        return True
+    except SystemExit:
+        return False
+
+
 def notify_desktop(summary, body, urgency="normal"):
     try:
         subprocess.run(

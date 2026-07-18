@@ -21,6 +21,8 @@ import urllib.request
 from datetime import datetime, timedelta
 from pathlib import Path
 
+import auto_refresh_session
+
 CONFIG_DIR = Path.home() / ".config" / "info-kierowca-notifier"
 CONFIG_FILE = CONFIG_DIR / "config.json"
 SESSION_FILE = CONFIG_DIR / "session.json"
@@ -237,11 +239,14 @@ def trigger_auto_refresh(logger, config, force=False):
     automatic path stays conservative (never force); force is opt-in so a
     background retry never kills a window the user is mid-scan on.
 
-    Returns a short status string: "disabled", "already_running",
-    "launched", or "launch_failed".
+    Returns a short status string: "disabled", "no_chromium_browser",
+    "already_running", "launched", or "launch_failed".
     """
     if not config.get("auto_refresh_chrome", True):
         return "disabled"
+    if not auto_refresh_session.chrome_available():
+        logger.info("outcome=auto_refresh_no_browser detail=no_chromium_found")
+        return "no_chromium_browser"
     if AUTO_REFRESH_LOCK.exists():
         try:
             pid = int(AUTO_REFRESH_LOCK.read_text().strip())
@@ -330,15 +335,18 @@ def trigger_open_browser(logger, config, auto_click=True):
     that click-through is only wanted for the automatic urgent-slot-hit
     path, which keeps the default auto_click=True.
 
-    Returns a short status string: "disabled", "already_running",
-    "launched", or "launch_failed". No force option here (unlike
-    trigger_auto_refresh) — forcing would mean launching a second Chrome
-    on the same fixed debug port an already-open one is using, which is
-    fragile rather than useful; if one's already open that's already the
+    Returns a short status string: "disabled", "no_chromium_browser",
+    "already_running", "launched", or "launch_failed". No force option here
+    (unlike trigger_auto_refresh) — forcing would mean launching a second
+    Chrome on the same fixed debug port an already-open one is using, which
+    is fragile rather than useful; if one's already open that's already the
     outcome a caller wants.
     """
     if not config.get("auto_open_browser", True):
         return "disabled"
+    if not auto_refresh_session.chrome_available():
+        logger.info("outcome=open_browser_no_browser detail=no_chromium_found")
+        return "no_chromium_browser"
     try:
         urllib.request.urlopen(f"http://127.0.0.1:{OPEN_BROWSER_PORT}/json/version", timeout=1)
         logger.info("outcome=open_browser_skipped detail=already_running")
