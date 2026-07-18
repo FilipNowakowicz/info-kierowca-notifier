@@ -309,6 +309,92 @@ document.addEventListener('mousemove', (e) => { if (e.clientY < 88) ikwRevealToo
 </script>
 """
 
+LOGIN_PAGE = """<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>info-kierowca watcher — connect your account</title>
+<style>
+  * { box-sizing: border-box; }
+  :root { --accent: #6a9c7c; --accent-soft: #9dc2ac; }
+  body { margin: 0; min-height: 100vh; font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+    background: #1c1c1c; color: #eee; padding: 2rem; display: flex; justify-content: center; align-items: center; }
+  #card { max-width: 440px; width: 100%; text-align: center; }
+  h1 { font-size: 1.5rem; margin-bottom: 0.4rem; }
+  p.lead { opacity: 0.75; margin-top: 0; margin-bottom: 1.8rem; }
+  button { width: 100%; padding: 0.85rem; background: var(--accent); color: #1c1c1c; border: none;
+    border-radius: 8px; font-size: 1rem; font-weight: 600; cursor: pointer; }
+  button:hover { background: var(--accent-soft); }
+  button:disabled { opacity: 0.6; cursor: default; }
+  #hint { opacity: 0.65; font-size: 0.88rem; margin-top: 1.1rem; display: none; }
+  #hint.show { display: block; }
+  #skip { display: block; opacity: 0.5; font-size: 0.85rem; margin-top: 1.6rem; color: #ccc; }
+  #skip:hover { opacity: 0.8; }
+  #error { display: none; margin-top: 1rem; background: #3a1f1f; color: #ff9d9d;
+    border: 1px solid rgba(255,128,128,0.45); padding: 0.6rem 0.9rem; border-radius: 8px; font-size: 0.88rem; }
+  #error.show { display: block; }
+</style>
+</head>
+<body>
+<div id="card">
+  <h1>Connect your account</h1>
+  <p class="lead">Log in once via the mObywatel QR code — this is what lets the watcher check for
+  slots on your behalf. While we're at it, we'll also find your PKK number and license category
+  automatically, so you don't have to type them in.</p>
+  <button id="login-btn">Log in with mObywatel</button>
+  <div id="hint">A Chrome window should open — scan the QR code in the mObywatel app. This page
+  continues on its own once you're logged in.</div>
+  <div id="error"></div>
+  <a href="/setup" id="skip">Skip and enter my PKK number manually</a>
+</div>
+<script>
+const loginBtn = document.getElementById('login-btn');
+const loginHint = document.getElementById('hint');
+const loginError = document.getElementById('error');
+
+loginBtn.addEventListener('click', async () => {
+  loginBtn.disabled = true;
+  loginError.classList.remove('show');
+  try {
+    const res = await fetch('/login-start', {method: 'POST'});
+    const data = await res.json();
+    if (!data.ok || data.action === 'launch_failed') {
+      throw new Error('Could not open Chrome — try the manual option below.');
+    }
+    loginHint.classList.add('show');
+    loginBtn.textContent = 'Waiting for QR scan...';
+    let elapsed = 0;
+    const polling = setInterval(async () => {
+      elapsed += 2000;
+      const r = await fetch('/login-status');
+      const d = await r.json();
+      if (d.ready) {
+        clearInterval(polling);
+        window.location.href = '/';
+      } else if (!d.in_progress && elapsed > 8000) {
+        // Chrome closed or crashed before the QR was scanned — nothing left
+        // to wait on, so let the user try again instead of spinning forever.
+        // (The grace period covers the moment right after launch, before the
+        // spawned process has even had a chance to acquire its lock file.)
+        clearInterval(polling);
+        loginBtn.disabled = false;
+        loginBtn.textContent = 'Log in with mObywatel';
+        loginHint.classList.remove('show');
+        loginError.textContent = "Login didn't complete — the Chrome window may have been closed. Try again.";
+        loginError.classList.add('show');
+      }
+    }, 2000);
+  } catch (e) {
+    loginBtn.disabled = false;
+    loginError.textContent = e.message;
+    loginError.classList.add('show');
+  }
+});
+</script>
+</body>
+</html>
+"""
+
 WIZARD_PAGE = """<!doctype html>
 <html lang="en">
 <head>
@@ -372,6 +458,12 @@ WIZARD_PAGE = """<!doctype html>
   #copy-ntfy { padding: 0 0.9rem; background: #2f2f2f; color: #eee; border: 1px solid #3d3d3d;
     border-radius: 7px; cursor: pointer; font-size: 0.88rem; white-space: nowrap; }
   #copy-ntfy:hover { border-color: #555; }
+  #test-push-btn { width: auto; padding: 0.5rem 0.9rem; background: #2f2f2f; color: #eee;
+    border: 1px solid #3d3d3d; border-radius: 7px; cursor: pointer; font-size: 0.85rem; font-weight: 400; }
+  #test-push-btn:hover { border-color: #555; }
+  #reset-account-btn { width: auto; padding: 0.55rem 1rem; background: transparent; color: #d98c8c;
+    border: 1px solid rgba(217,140,140,0.4); border-radius: 7px; cursor: pointer; font-size: 0.88rem; font-weight: 500; }
+  #reset-account-btn:hover { background: rgba(217,140,140,0.1); border-color: rgba(217,140,140,0.7); }
 
   /* combobox + selected centers */
   .combobox { position: relative; margin-bottom: 0.8rem; }
@@ -447,8 +539,6 @@ WIZARD_PAGE = """<!doctype html>
     padding: 0.7rem 1rem; border-radius: 8px; box-shadow: 0 10px 30px rgba(0,0,0,0.55);
     font-size: 0.9rem; white-space: pre-line; }
   #error.show { display: block; }
-  #done { display: none; text-align: center; padding: 2rem 0; }
-  #done a { color: var(--accent-soft); }
 </style>
 </head>
 <body>
@@ -462,16 +552,25 @@ WIZARD_PAGE = """<!doctype html>
   <form id="form">
     <fieldset>
       <legend>Your exam</legend>
-      <label for="profile_number">PKK number</label>
-      <div class="reveal">
-        <input type="text" id="profile_number" autocomplete="off" required>
-        <button type="button" class="reveal-btn" id="reveal-pkk" aria-label="Show or hide PKK number"></button>
+      <div id="pkk-auto-block" style="display:none;">
+        <label for="pkk-profile-select">Your PKK profile</label>
+        <select id="pkk-profile-select"></select>
+        <button type="button" class="cat-more" id="pkk-manual-link">Enter manually instead</button>
       </div>
 
-      <label>License category</label>
-      <div class="cat-group" id="cat-primary"></div>
-      <button type="button" class="cat-more" id="cat-more-btn">More categories</button>
-      <div class="cat-group cat-rest" id="cat-rest"></div>
+      <div id="pkk-manual-block">
+        <label for="profile_number">PKK number</label>
+        <div class="reveal">
+          <input type="text" id="profile_number" autocomplete="off" required>
+          <button type="button" class="reveal-btn" id="reveal-pkk" aria-label="Show or hide PKK number"></button>
+        </div>
+
+        <label>License category</label>
+        <div class="cat-group" id="cat-primary"></div>
+        <button type="button" class="cat-more" id="cat-more-btn">More categories</button>
+        <div class="cat-group cat-rest" id="cat-rest"></div>
+        <button type="button" class="cat-more" id="pkk-auto-link" style="display:none;">Use my PKK profile instead</button>
+      </div>
 
       <label>Exam type</label>
       <div class="pill-group" id="exam-types">
@@ -529,6 +628,8 @@ WIZARD_PAGE = """<!doctype html>
           <button type="button" id="copy-ntfy">Copy link</button>
         </div>
         <div class="hint" style="margin-top:0.8rem;">Anyone who knows this link can read your notifications — don't share it.</div>
+        <button type="button" id="test-push-btn" style="margin-top:0.8rem;">Send test push</button>
+        <div class="hint" id="test-push-status" style="margin-top:0.5rem;"></div>
       </div>
     </fieldset>
 
@@ -553,9 +654,9 @@ WIZARD_PAGE = """<!doctype html>
     <button type="submit" id="submit-btn">Save and log in</button>
   </form>
 
-  <div id="done">
-    <p>Config saved. A Chrome window should open shortly — scan the QR code in the mObywatel app to log in.</p>
-    <p><a href="/">Go to dashboard</a></p>
+  <div id="reset-account-block" style="display:none; margin-top:1.5rem; text-align:center;">
+    <button type="button" id="reset-account-btn">Reset account</button>
+    <div class="hint" style="margin-top:0.5rem;">Logs you out and clears your saved settings — you'll land back on the QR login screen.</div>
   </div>
 </div>
 
@@ -787,6 +888,47 @@ const pkkSync = wireReveal(pkkInput, document.getElementById('reveal-pkk'));
 const ntfyInput = document.getElementById('ntfy_topic');
 wireReveal(ntfyInput, document.getElementById('reveal-ntfy'));
 
+// ---- PKK profile picker (prefilled after QR login, see build_pkk_prefill) ----
+const PKK_PROFILES = __PKK_PROFILES_JSON__;
+if (PKK_PROFILES.length) {
+  const pkkAutoBlock = document.getElementById('pkk-auto-block');
+  const pkkManualBlock = document.getElementById('pkk-manual-block');
+  const pkkProfileSelect = document.getElementById('pkk-profile-select');
+  const pkkManualLink = document.getElementById('pkk-manual-link');
+  const pkkAutoLink = document.getElementById('pkk-auto-link');
+
+  PKK_PROFILES.forEach((p, i) => {
+    const opt = document.createElement('option');
+    opt.value = String(i);
+    opt.textContent = `${p.pkkNumber} — ${p.categoryCode}`;
+    pkkProfileSelect.appendChild(opt);
+  });
+
+  function applyPkkProfile(p) {
+    pkkInput.value = p.pkkNumber;
+    setCategory(p.categoryId);
+    const isTop = CATEGORIES.some((c) => c.id === p.categoryId && TOP_CATEGORY_CODES.includes(c.code));
+    if (!isTop) expandCatRest();
+  }
+
+  pkkAutoBlock.style.display = 'block';
+  pkkManualBlock.style.display = 'none';
+  applyPkkProfile(PKK_PROFILES[0]);
+
+  pkkProfileSelect.addEventListener('change', () => applyPkkProfile(PKK_PROFILES[Number(pkkProfileSelect.value)]));
+  pkkManualLink.addEventListener('click', () => {
+    pkkAutoBlock.style.display = 'none';
+    pkkManualBlock.style.display = 'block';
+    pkkAutoLink.style.display = 'block';
+  });
+  pkkAutoLink.addEventListener('click', () => {
+    pkkAutoBlock.style.display = 'block';
+    pkkManualBlock.style.display = 'none';
+    pkkAutoLink.style.display = 'none';
+    applyPkkProfile(PKK_PROFILES[Number(pkkProfileSelect.value)]);
+  });
+}
+
 // ---- custom date picker ----
 const dpInput = document.getElementById('current_slot_date_display');
 const dpValue = document.getElementById('current_slot_date');
@@ -876,10 +1018,45 @@ if (EXISTING_CONFIG) {
   setSwitch(document.getElementById('auto_refresh_chrome'), EXISTING_CONFIG.auto_refresh_chrome !== false);
   setSwitch(document.getElementById('auto_open_browser'), EXISTING_CONFIG.auto_open_browser !== false);
   applyNtfyDim();
+
+  // Nothing to reset on a fresh /setup with no saved config yet.
+  document.getElementById('reset-account-block').style.display = 'block';
 }
 
 document.getElementById('copy-ntfy').addEventListener('click', () => {
   navigator.clipboard.writeText('https://ntfy.sh/' + ntfyInput.value);
+});
+
+const testPushBtn = document.getElementById('test-push-btn');
+const testPushStatus = document.getElementById('test-push-status');
+testPushBtn.addEventListener('click', async () => {
+  testPushBtn.disabled = true;
+  testPushStatus.textContent = 'Sending...';
+  try {
+    const res = await fetch('/test-push', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({topic: ntfyInput.value}),
+    });
+    const data = await res.json();
+    testPushStatus.textContent = data.ok ? 'Sent — check your phone.' : (data.error || 'Failed to send.');
+  } catch (e) {
+    testPushStatus.textContent = 'Failed to send.';
+  } finally {
+    testPushBtn.disabled = false;
+  }
+});
+
+const resetAccountBtn = document.getElementById('reset-account-btn');
+resetAccountBtn.addEventListener('click', async () => {
+  if (!confirm("This logs you out and clears your saved settings. You'll need to scan the QR code again. Continue?")) return;
+  resetAccountBtn.disabled = true;
+  try {
+    await fetch('/reset-account', {method: 'POST'});
+    window.location.href = '/';
+  } catch (e) {
+    resetAccountBtn.disabled = false;
+    alert('Reset failed — check the log.');
+  }
 });
 
 document.getElementById('form').addEventListener('submit', async (e) => {
@@ -925,12 +1102,7 @@ document.getElementById('form').addEventListener('submit', async (e) => {
     const data = await res.json();
     if (!res.ok || !data.ok) throw new Error(data.error || 'Save failed.');
 
-    if (EXISTING_CONFIG) {
-      window.location.href = '/';
-    } else {
-      document.getElementById('form').style.display = 'none';
-      document.getElementById('done').style.display = 'block';
-    }
+    window.location.href = '/';
   } catch (err) {
     errorEl.textContent = err.message;
     errorEl.classList.add('show');
@@ -942,12 +1114,42 @@ document.getElementById('form').addEventListener('submit', async (e) => {
 """
 
 
-def render_wizard(existing_config=None):
+def pkk_category_id(category_code):
+    for c in CATEGORIES:
+        if c.get("code") == category_code:
+            return c["id"]
+    return None
+
+
+def build_pkk_prefill():
+    """Best-effort prefill for the first-run wizard: looks up the account's
+    PKK profile(s) via the session the login screen just captured (see
+    notifier.fetch_pkk_profiles), so the wizard can offer a ready-made
+    "PKK number — category" pick instead of asking for both blind. Drops
+    any profile whose categoryName doesn't map to a known category id
+    rather than guessing; if that empties the list, the wizard's normal
+    manual-entry fields are all that's shown, same as before this existed.
+    """
+    if not notifier.SESSION_FILE.exists():
+        return []
+    session = notifier.load_json(notifier.SESSION_FILE)
+    prefill = []
+    for p in notifier.fetch_pkk_profiles(session):
+        category_id = pkk_category_id(p["categoryName"])
+        if category_id is None:
+            continue
+        prefill.append({"pkkNumber": p["pkkNumber"], "categoryId": category_id, "categoryCode": p["categoryName"]})
+    return prefill
+
+
+def render_wizard(existing_config=None, pkk_profiles=None):
     centers_json = json.dumps(WORD_CENTERS, ensure_ascii=False).replace("</", "<\\/")
     page = WIZARD_PAGE.replace("__CENTERS_JSON__", centers_json)
     page = page.replace("__CENTER_COUNT__", str(len(WORD_CENTERS)))
     categories_json = json.dumps(CATEGORIES, ensure_ascii=False).replace("</", "<\\/")
     page = page.replace("__CATEGORIES_JSON__", categories_json)
+    pkk_profiles_json = json.dumps(pkk_profiles or [], ensure_ascii=False).replace("</", "<\\/")
+    page = page.replace("__PKK_PROFILES_JSON__", pkk_profiles_json)
     ntfy_topic = existing_config["ntfy_topic"] if existing_config else "ik-" + secrets.token_urlsafe(24)
     page = page.replace("__NTFY_TOPIC__", ntfy_topic)
     existing_json = (
@@ -982,13 +1184,27 @@ class AppHandler(http.server.BaseHTTPRequestHandler):
         if self.path in ("/", "/index.html"):
             if notifier.CONFIG_FILE.exists():
                 self._send(200, dashboard_server.PAGE.replace("</body>", TOOLBAR_HTML + "</body>"))
+            elif not notifier.SESSION_FILE.exists():
+                # First run, not logged in yet: get the QR login out of the
+                # way first so the wizard that follows can prefill the PKK
+                # number/category instead of asking for them blind.
+                self._send(200, LOGIN_PAGE)
             else:
-                self._send(200, render_wizard())
+                self._send(200, render_wizard(pkk_profiles=build_pkk_prefill()))
+        elif self.path == "/setup":
+            # The login screen's "skip" link, and a stable direct URL: the
+            # plain wizard with no PKK prefill, regardless of session state.
+            self._send(200, render_wizard())
         elif self.path == "/settings":
             if notifier.CONFIG_FILE.exists():
                 self._send(200, render_wizard(notifier.load_json(notifier.CONFIG_FILE)))
             else:
                 self._send(200, render_wizard())
+        elif self.path == "/login-status":
+            self._send_json(200, {
+                "ready": notifier.SESSION_FILE.exists(),
+                "in_progress": notifier.auto_refresh_in_progress(),
+            })
         elif self.path == "/status.json":
             data = notifier.STATUS_FILE.read_bytes() if notifier.STATUS_FILE.exists() else dashboard_server.EMPTY_STATUS
             self._send(200, data, "application/json")
@@ -998,6 +1214,8 @@ class AppHandler(http.server.BaseHTTPRequestHandler):
     def do_POST(self):
         if self.path == "/setup":
             self._handle_setup()
+        elif self.path == "/login-start":
+            self._handle_login_start()
         elif self.path == "/shutdown":
             self._send_json(200, {"ok": True})
             os._exit(0)
@@ -1007,6 +1225,10 @@ class AppHandler(http.server.BaseHTTPRequestHandler):
             self._set_paused(True)
         elif self.path == "/resume":
             self._set_paused(False)
+        elif self.path == "/test-push":
+            self._handle_test_push()
+        elif self.path == "/reset-account":
+            self._handle_reset_account()
         else:
             self._send(404, b"not found", "text/plain")
 
@@ -1049,6 +1271,16 @@ class AppHandler(http.server.BaseHTTPRequestHandler):
             }
         self._send_json(200, {"ok": True, "action": outcome, "message": messages.get(outcome, "Done.")})
 
+    def _handle_login_start(self):
+        """Backs the login screen's button: launches Chrome for the QR scan
+        before any config exists yet. force=True for the same reason the
+        "Open browser" button uses it (see trigger_auto_refresh's docstring)
+        — a stale lock left by a forgotten QR window must not silently
+        no-op a user's own deliberate click on their very first run.
+        """
+        outcome = notifier.trigger_auto_refresh(AppHandler.logger, {}, force=True)
+        self._send_json(200, {"ok": True, "action": outcome})
+
     def _handle_setup(self):
         length = int(self.headers.get("Content-Length", 0) or 0)
         raw = self.rfile.read(length) if length else b"{}"
@@ -1063,10 +1295,57 @@ class AppHandler(http.server.BaseHTTPRequestHandler):
             self._send_json(400, {"ok": False, "error": str(e)})
             return
         notifier.save_json(notifier.CONFIG_FILE, config)
-        self._send_json(200, {"ok": True})
-        if not notifier.SESSION_FILE.exists():
+        needs_login = not notifier.SESSION_FILE.exists()
+        self._send_json(200, {"ok": True, "needs_login": needs_login})
+        if needs_login:
             AppHandler.logger.info("outcome=setup_complete detail=triggering_login")
-            notifier.trigger_auto_refresh(AppHandler.logger, config)
+        # Run a check immediately rather than waiting for the next periodic
+        # tick (up to INTERVAL later) -- otherwise the dashboard the user's
+        # about to land on would still show whatever stale status predates
+        # this config (e.g. "Missing config.json") for up to a minute.
+        # run_check() itself calls trigger_auto_refresh() when session.json
+        # is still missing, so this covers the needs_login case too without
+        # a separate explicit call.
+        threading.Thread(
+            target=notifier.run_check, args=(AppHandler.logger, AppHandler.dash_status), daemon=True
+        ).start()
+
+    def _handle_test_push(self):
+        """Backs the Alerts section's "Send test push" button. Takes the
+        topic straight from the request body (not the saved config) so it
+        works before the form has ever been saved, same as the readonly
+        ntfy_topic field itself is populated client-side before any save.
+        """
+        length = int(self.headers.get("Content-Length", 0) or 0)
+        raw = self.rfile.read(length) if length else b"{}"
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError:
+            self._send_json(400, {"ok": False, "error": "Invalid request."})
+            return
+        topic = (payload.get("topic") or "").strip()
+        if not topic:
+            self._send_json(400, {"ok": False, "error": "No notification topic set yet."})
+            return
+        notifier.push_ntfy(
+            AppHandler.logger, topic,
+            "info-kierowca: test notification",
+            "This is what a real alert will look like.",
+            priority="default",
+        )
+        self._send_json(200, {"ok": True})
+
+    def _handle_reset_account(self):
+        """Backs the settings page's "Reset account" button: clears
+        config.json and session.json so the app falls straight back to the
+        login-first screen (see do_GET's "/" routing) instead of the user
+        having to go find and delete those files by hand to switch accounts
+        or recover from a broken setup.
+        """
+        notifier.CONFIG_FILE.unlink(missing_ok=True)
+        notifier.SESSION_FILE.unlink(missing_ok=True)
+        AppHandler.logger.info("outcome=account_reset")
+        self._send_json(200, {"ok": True})
 
 
 class ThreadingServer(socketserver.ThreadingMixIn, socketserver.TCPServer):

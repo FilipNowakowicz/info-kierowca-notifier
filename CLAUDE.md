@@ -17,7 +17,13 @@ dependencies (stdlib only).
   discarded afterwards by the `watch_organization_ids` filter, so which fillers land doesn't
   matter. This also means 5 is a hard ceiling, not just an API detail — `app.py`'s center picker
   enforces `MAX_CENTERS = 5` (`build_config()` rejects more server-side too) because anything past
-  the 5th pick would never even be queried.
+  the 5th pick would never even be queried. `fetch_pkk_profiles()`/`PKK_PROFILES_URL` (`GET
+  /bknd/status/api/v1/pkk/get_profiles`, traced from the site's own `main-*.js`
+  `pkkProfilesResource()`, confirmed live 2026-07-18) — used by `app.py`'s setup wizard to prefill
+  the PKK number and license category from the account right after QR login instead of asking for
+  either blind. The endpoint also returns `pesel`/`firstName`/`lastName`/`birthDate`; only
+  `pkkNumber`/`categoryName` are kept, matching this project's minimal-footprint PII stance. Returns
+  `[]` on any failure so a fetch hiccup just falls back to manual entry.
 - `dashboard_server.py` — stdlib HTTP server, binds `127.0.0.1:8787`, serves `status.json` state.
 - `pull_session_cookies.py` — pulls session cookies from a running Chrome via remote-debugging
   port; writes them into `session.json`. Manual: you launch Chrome and log in first.
@@ -77,7 +83,30 @@ dependencies (stdlib only).
   actually run. Shares `notifier.CONFIG_DIR`/`STATE_DIR` with the source/systemd path, so switching
   between "ran the binary" and "ran from source" never loses config/session/history. Detects an
   already-running instance on the dashboard port and just opens a browser tab at it instead of
-  binding twice. Inside a frozen build, neither `trigger_auto_refresh()` nor
+  binding twice.
+  The first-run flow is login-first, so the wizard can prefill the PKK number/category instead of
+  asking for them blind: `GET /` serves a new `LOGIN_PAGE` (not the wizard) whenever neither
+  `config.json` nor `session.json` exists yet. Its "Log in with mObywatel" button hits `POST
+  /login-start` (`_handle_login_start()` → `trigger_auto_refresh(force=True)` — same `force=True`
+  rationale as the toolbar's "Open browser" button below, since a stale lock from a forgotten QR
+  window must not silently no-op a user's own deliberate click on their very first run), then polls
+  `GET /login-status` (`{"ready": SESSION_FILE.exists()}`) every 2s and redirects to `/` once ready.
+  Once `session.json` exists but `config.json` still doesn't, `/` renders the wizard with
+  `build_pkk_prefill()`'s result — calls `notifier.fetch_pkk_profiles()` and maps each profile's
+  `categoryName` to a `categories.json` id via `pkk_category_id()`, dropping any that don't map
+  rather than guessing (if that empties the list, the wizard falls back to today's plain manual
+  fields with no special-casing needed). When prefill data exists, the wizard shows a linked
+  "pkkNumber — category" `<select>` (`#pkk-profile-select`, auto-selecting the first entry — most
+  accounts only have one PKK profile) in place of the bare PKK text field + category pills, with an
+  "Enter manually instead" link that swaps back to them (and a reverse link back). `GET /setup` is
+  the escape hatch — the login screen's "Skip and enter my PKK number manually" link, and a stable
+  direct URL — and always renders the plain manual-only wizard with no prefill, regardless of
+  session state. `/settings` (editing an already-existing config) never fetches a prefill, so
+  editing an existing setup is unchanged. `_handle_setup` now returns `needs_login` in its JSON
+  response so the first-run "done" screen's Chrome/QR hint only shows when `session.json` didn't
+  already exist by the time setup was submitted — still true on the skip path, which still
+  triggers `trigger_auto_refresh()` on submit exactly like every first run did before this existed.
+  Inside a frozen build, neither `trigger_auto_refresh()` nor
   `trigger_open_browser()` (both in `notifier.py`) can shell out to their respective `.py` files
   (they don't exist on disk, and `sys.executable` is the bundled binary itself) — each re-invokes
   the binary with its own hidden flag instead (`--internal-auto-refresh` / `--internal-open-browser`),
