@@ -32,6 +32,7 @@ from paths import (  # noqa: F401  (re-exported: other modules read these off no
     STATE_DIR,
     STATUS_FILE,
     WORD_CENTERS_FILE,
+    __version__,
 )
 
 MAX_HISTORY = 200
@@ -779,6 +780,11 @@ def loop(logger, dash_status, interval=None, stop_event=None, wake_event=None):
 
 def main():
     parser = argparse.ArgumentParser(description="info-kierowca.pl slot checker")
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {__version__}",
+    )
     parser.add_argument(
         "--loop",
         action="store_true",

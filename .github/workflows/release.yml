@@ -25,7 +25,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - run: pip install pyinstaller
+      - run: pip install pyinstaller==6.21.0
       - run: pyinstaller pyinstaller.spec
       - name: Rename artifact
         shell: bash
