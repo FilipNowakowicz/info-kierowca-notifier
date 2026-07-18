@@ -31,7 +31,29 @@ dependencies (stdlib only).
   the PKK number and license category from the account right after QR login instead of asking for
   either blind. The endpoint also returns `pesel`/`firstName`/`lastName`/`birthDate`; only
   `pkkNumber`/`categoryName` are kept, matching this project's minimal-footprint PII stance. Returns
-  `[]` on any failure so a fetch hiccup just falls back to manual entry.
+  `[]` on any failure so a fetch hiccup just falls back to manual entry. The check interval is
+  adjustable (`poll_interval_seconds` in `config.json`, set via `app.py`'s Settings — see below)
+  rather than the old fixed 60s: `configured_poll_interval()` re-reads `config.json` fresh every
+  cycle (clamped to `[MIN_POLL_INTERVAL_SECONDS, MAX_POLL_INTERVAL_SECONDS]` = `[15, 1800]` — the
+  floor was explicitly lowered from the original 60s by user request on 2026-07-19). `loop()`'s
+  `interval` arg (from `--interval`/`app.py`'s `INTERVAL`) is only the fallback used when
+  `config.json` has no `poll_interval_seconds` yet. Every wait also goes through `jittered_wait()`,
+  which adds up to `POLL_JITTER_FRACTION` (15%) extra delay — never subtracted, so the effective
+  cadence never beats what's configured — expressed as a fraction of the interval rather than flat
+  seconds, so the randomness scales with whatever interval is picked. `loop()` computes that exact
+  post-jitter wait once per cycle and writes it forward as `dash_status["next_check_at"]` (an
+  absolute timestamp, `datetime.now() + timedelta(seconds=wait_s)`) before sleeping — this is what
+  both dashboards' next-check countdown reads (see `dashboard_server.py` below) instead of
+  re-deriving an estimate from the base interval, so the countdown shown is the *exact* resolved
+  time, jitter included, not a guess. `loop()` also takes a `wake_event` — app.py's `/setup` handler
+  (`_handle_setup()`) sets it right after saving a new `poll_interval_seconds` so the loop's current
+  sleep (which could otherwise be up to the *old* interval long) is cut short immediately: the loop
+  wakes, clears the event, re-checks, and recomputes `next_check_at` from the just-saved config,
+  rather than the dashboard/countdown staying stuck on the interval that was live when the current
+  wait started. This replaced an earlier design where `_handle_setup()` spawned a second, independent
+  `run_check()` thread for the same "apply immediately" purpose — waking the one real loop thread
+  instead removes the resulting race on `dash_status`/`status.json` between two threads checking
+  concurrently.
 - `paths.py` — the single owner of every config/state file location (`CONFIG_FILE`, `SESSION_FILE`,
   `STATUS_FILE`, `PAUSE_FILE`, `AUTO_REFRESH_LOCK`, …). Imports nothing from the project so it can
   sit at the bottom of the import graph; `notifier.py` re-exports the names it used to define, so
@@ -44,7 +66,13 @@ dependencies (stdlib only).
   that's the only field either dashboard renders, and a busy check returning dozens of hits would
   otherwise be rewritten every 60s and re-parsed by the page every 5s. Entries written before that
   narrowing still carry `hits`; the page reads `entry.fastest || fastestOf(entry.hits)`, so don't
-  drop that fallback while anyone's `status.json` predates it.
+  drop that fallback while anyone's `status.json` predates it. The next-check countdown is driven
+  entirely by `status.json`'s own `next_check_at` (an absolute ISO timestamp `notifier.py`'s
+  `loop()` writes every cycle, jitter already baked in — see `notifier.py`'s entry above): `poll()`
+  parses it into the page-level `nextCheckAt` (epoch ms), and `tickCountdown()` just diffs that
+  against `Date.now()` every second. No client-side interval constant or `performance.now()`
+  reference point is involved, so the display can't drift out of sync with a Settings-page interval
+  change or with the actual (post-jitter) wait the poll thread is using.
 - `pull_session_cookies.py` — pulls session cookies from a running Chrome via remote-debugging
   port; writes them into `session.json`. Manual: you launch Chrome and log in first.
 - `auto_refresh_session.py` — launches Chrome (or, as a fallback via `CHROME_CANDIDATES`/
@@ -114,7 +142,19 @@ dependencies (stdlib only).
   dashboard's Settings button hits `GET /settings`, which reuses `render_wizard()` — passed the
   existing `config.json` so the same form comes back prefilled — rather than a separate edit page;
   submitting posts to the same `/setup` endpoint that first-run setup uses, so `build_config()`
-  stays the single place config validation lives. This is
+  stays the single place config validation lives. The wizard's "Check frequency" control (in the
+  merged "Automation" fieldset) is a range slider (`#poll_interval_slider`) over `POLL_INTERVAL_STEPS`
+  — a hand-picked, non-linear array (finer-grained near the low end, coarser near the high end) so
+  the slider offers many more real positions than a dropdown's handful of presets would, without a
+  purely linear 15s–1800s scale wasting most of the range on intervals nobody wants. The slider's
+  value is just an index into that array; `#poll_interval_seconds` (hidden) holds the actual seconds
+  and is what's submitted — `setPollIntervalSeconds()` snaps any existing config value to its
+  nearest step when prefilling Settings, so a value from before this array existed (or a raw
+  `--interval` on the CLI) still lands somewhere sensible instead of silently resetting to the
+  default. `POLL_INTERVAL_STEPS`' min/max must stay inside
+  `notifier.MIN_POLL_INTERVAL_SECONDS`/`MAX_POLL_INTERVAL_SECONDS` — `build_config()` validates the
+  submitted value against those independently, not against the array, so a mismatch would only
+  surface as the slider offering a step the server then rejects. This is
   what the packaged release binaries (`pyinstaller.spec`, built `--windowed` — no console window)
   actually run. Shares `paths.py`'s `CONFIG_DIR`/`STATE_DIR` with the source/systemd path, so switching
   between "ran the binary" and "ran from source" never loses config/session/history. Detects an
@@ -338,6 +378,9 @@ auto-refresh trigger itself in real isolation, set `auto_refresh_chrome: false` 
   `docs/ADVANCED.md` tell users. When you do extend automation past the date picker, move all three
   docs (here, README, ADVANCED) together, and get the same kind of explicit sign-off for anything
   past the summary screen, since past that point mistakes act on a real, already-paid exam booking.
-- Don't tighten the poll interval below the current default without being asked; this is
-  explicitly a design choice to stay a good citizen of an undocumented API.
+- Don't lower `notifier.MIN_POLL_INTERVAL_SECONDS` (15s, itself already lowered once from 60s by
+  explicit user request on 2026-07-19) further without being asked again; the interval is
+  user-adjustable within `[MIN_POLL_INTERVAL_SECONDS, MAX_POLL_INTERVAL_SECONDS]`
+  (`poll_interval_seconds`, see `notifier.py`/`app.py` above) but the floor itself is a hard-coded
+  design choice to stay a good citizen of an undocumented API, not just a UI default.
 - Session cookies / PKK number must never be sent anywhere except info-kierowca.pl itself.

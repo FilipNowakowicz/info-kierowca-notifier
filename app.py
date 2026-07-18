@@ -28,7 +28,9 @@ import open_logged_in_browser
 
 HOST = dashboard_server.HOST
 PORT = dashboard_server.PORT
-INTERVAL = 60
+# Fallback only, used before a config.json with its own poll_interval_seconds
+# exists (see notifier.configured_poll_interval()); Settings sets the real one.
+INTERVAL = notifier.DEFAULT_POLL_INTERVAL_SECONDS
 
 # Static snapshot of every active DORD/WORD/MORD/PORD/ZORD center, fetched
 # from the site's own (session-gated) dictionary endpoint — see
@@ -135,6 +137,18 @@ def build_config(payload):
     except (TypeError, ValueError):
         raise ValueError("Category must be a number")
 
+    try:
+        poll_interval_seconds = int(
+            payload.get("poll_interval_seconds", notifier.DEFAULT_POLL_INTERVAL_SECONDS)
+        )
+    except (TypeError, ValueError):
+        raise ValueError("Check frequency must be a number")
+    if not notifier.MIN_POLL_INTERVAL_SECONDS <= poll_interval_seconds <= notifier.MAX_POLL_INTERVAL_SECONDS:
+        raise ValueError(
+            f"Check frequency must be between {notifier.MIN_POLL_INTERVAL_SECONDS} and "
+            f"{notifier.MAX_POLL_INTERVAL_SECONDS} seconds"
+        )
+
     current_slot_date = require_str("current_slot_date", "Current slot date")
     # Must be ISO: notifier.is_urgent() feeds this straight to
     # datetime.fromisoformat() on every check that finds a slot. An
@@ -153,6 +167,7 @@ def build_config(payload):
         "exam_types": exam_types,
         "ntfy_topic": ntfy_topic,
         "current_slot_date": current_slot_date,
+        "poll_interval_seconds": poll_interval_seconds,
         "phone_alerts": bool(payload.get("phone_alerts", True)),
         "phone_alerts_relogin": bool(payload.get("phone_alerts_relogin", True)),
         "auto_refresh_chrome": bool(payload.get("auto_refresh_chrome", True)),
@@ -510,6 +525,25 @@ WIZARD_PAGE = """<!doctype html>
   .switch.on { background: var(--accent); border-color: var(--accent); }
   .switch.on::after { transform: translateX(20px); background: #1c1c1c; }
   .divider { border-top: 1px solid #2a2a2a; margin: 1rem 0; }
+
+  /* check-frequency slider */
+  .freq-head { display: flex; justify-content: space-between; align-items: baseline; }
+  .freq-head label { margin-bottom: 0; }
+  .freq-value { font-size: 0.88rem; font-weight: 600; color: var(--accent-soft); white-space: nowrap; }
+  input[type=range] {
+    -webkit-appearance: none; appearance: none; width: 100%; height: 4px; border-radius: 999px;
+    background: #3d3d3d; margin: 0.6rem 0 0.9rem; cursor: pointer;
+  }
+  input[type=range]:focus { outline: none; }
+  input[type=range]::-webkit-slider-runnable-track { height: 4px; border-radius: 999px; background: #3d3d3d; }
+  input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none; appearance: none; width: 16px; height: 16px; border-radius: 50%;
+    background: var(--accent); cursor: pointer; margin-top: -6px; box-shadow: 0 1px 3px rgba(0,0,0,0.4);
+  }
+  input[type=range]::-moz-range-track { height: 4px; border-radius: 999px; background: #3d3d3d; }
+  input[type=range]::-moz-range-thumb {
+    width: 16px; height: 16px; border-radius: 50%; background: var(--accent); border: none; cursor: pointer;
+  }
   #ntfy-field { transition: opacity 0.15s; }
   #ntfy-field.disabled { opacity: 0.4; pointer-events: none; }
 
@@ -641,6 +675,19 @@ WIZARD_PAGE = """<!doctype html>
 
     <fieldset>
       <legend>Automation</legend>
+      <div class="freq-head">
+        <label for="poll_interval_slider">Check frequency</label>
+        <span class="freq-value" id="poll-interval-label"></span>
+      </div>
+      <!-- Steps must stay within notifier.MIN_POLL_INTERVAL_SECONDS/MAX_POLL_INTERVAL_SECONDS
+           (see POLL_INTERVAL_STEPS below) - poll_interval_seconds is the hidden field actually
+           submitted; the range input is just an index into that array. -->
+      <input type="range" id="poll_interval_slider" min="0" max="18" step="1" value="6">
+      <input type="hidden" id="poll_interval_seconds" value="60">
+      <div class="hint" style="margin-top:-0.35rem;">Checks land a little later than this at random each time (up to +15%), so requests don't all hit the site on one exact, predictable cadence. Faster than a minute means noticeably more requests against a site with no documented rate limits.</div>
+
+      <div class="divider"></div>
+
       <div class="toggle-row">
         <div class="toggle-text">
           <div class="tt-title">Reopen Chrome to log back in</div>
@@ -838,6 +885,48 @@ wireSwitch(phoneAlertsReloginSwitch, applyNtfyDim);
 wireSwitch(document.getElementById('auto_refresh_chrome'));
 wireSwitch(document.getElementById('auto_open_browser'));
 
+// ---- check-frequency slider ----
+// Non-linear steps (finer near the low end, coarser near the high end) so the
+// slider gives many more real options than a handful of dropdown presets did,
+// without a purely linear 15s-1800s scale wasting most of its range on
+// intervals nobody wants. Must stay within notifier.MIN_POLL_INTERVAL_SECONDS/
+// MAX_POLL_INTERVAL_SECONDS - build_config() validates the submitted value
+// against those independently of this array.
+const POLL_INTERVAL_STEPS = [15, 20, 25, 30, 40, 50, 60, 75, 90, 120, 150, 180, 240, 300, 420, 600, 900, 1200, 1800];
+const pollSlider = document.getElementById('poll_interval_slider');
+const pollIntervalHidden = document.getElementById('poll_interval_seconds');
+const pollIntervalLabel = document.getElementById('poll-interval-label');
+
+function fmtInterval(seconds) {
+  if (seconds < 60) return `${seconds}s`;
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return s ? `${m}m ${s}s` : `${m} min`;
+}
+
+function updatePollIntervalDisplay() {
+  const seconds = POLL_INTERVAL_STEPS[Number(pollSlider.value)];
+  pollIntervalHidden.value = seconds;
+  pollIntervalLabel.textContent = `Every ${fmtInterval(seconds)}`;
+}
+
+function setPollIntervalSeconds(seconds) {
+  // Snaps to the closest step so a value from an older config (or a raw
+  // --interval on the CLI) that isn't one of today's steps still lands
+  // somewhere sensible on the slider instead of defaulting silently.
+  let bestIdx = 0;
+  let bestDiff = Infinity;
+  POLL_INTERVAL_STEPS.forEach((s, i) => {
+    const diff = Math.abs(s - seconds);
+    if (diff < bestDiff) { bestDiff = diff; bestIdx = i; }
+  });
+  pollSlider.value = bestIdx;
+  updatePollIntervalDisplay();
+}
+
+pollSlider.addEventListener('input', updatePollIntervalDisplay);
+updatePollIntervalDisplay();
+
 // ---- license-category pills (data-driven from categories.json) ----
 // A and B are shown up top; the rest live behind a "More categories" reveal.
 const TOP_CATEGORY_CODES = ['A', 'B'];
@@ -1018,6 +1107,7 @@ if (EXISTING_CONFIG) {
     }
   }
 
+  setPollIntervalSeconds(EXISTING_CONFIG.poll_interval_seconds || 60);
   setSwitch(phoneAlertsSwitch, EXISTING_CONFIG.phone_alerts !== false);
   setSwitch(phoneAlertsReloginSwitch, EXISTING_CONFIG.phone_alerts_relogin !== false);
   setSwitch(document.getElementById('auto_refresh_chrome'), EXISTING_CONFIG.auto_refresh_chrome !== false);
@@ -1092,6 +1182,7 @@ document.getElementById('form').addEventListener('submit', async (e) => {
       category: category,
       exam_types: examTypes,
       current_slot_date: currentSlotDate,
+      poll_interval_seconds: parseInt(document.getElementById('poll_interval_seconds').value, 10),
       phone_alerts: switchOn('phone-alerts'),
       phone_alerts_relogin: switchOn('phone-alerts-relogin'),
       auto_refresh_chrome: switchOn('auto_refresh_chrome'),
@@ -1166,6 +1257,7 @@ def render_wizard(existing_config=None, pkk_profiles=None):
 class AppHandler(http.server.BaseHTTPRequestHandler):
     logger = None
     dash_status = None
+    wake_event = None
 
     def log_message(self, format, *args):
         pass
@@ -1315,16 +1407,18 @@ class AppHandler(http.server.BaseHTTPRequestHandler):
         self._send_json(200, {"ok": True, "needs_login": needs_login})
         if needs_login:
             AppHandler.logger.info("outcome=setup_complete detail=triggering_login")
-        # Run a check immediately rather than waiting for the next periodic
-        # tick (up to INTERVAL later) -- otherwise the dashboard the user's
-        # about to land on would still show whatever stale status predates
-        # this config (e.g. "Missing config.json") for up to a minute.
-        # run_check() itself calls trigger_auto_refresh() when session.json
-        # is still missing, so this covers the needs_login case too without
-        # a separate explicit call.
-        threading.Thread(
-            target=notifier.run_check, args=(AppHandler.logger, AppHandler.dash_status), daemon=True
-        ).start()
+        # Wake the already-running poll loop rather than waiting for its
+        # current cycle to time out (up to the *old* poll_interval_seconds
+        # away) -- otherwise the dashboard the user's about to land on would
+        # still show whatever stale status predates this config (e.g.
+        # "Missing config.json"), and the countdown would keep counting down
+        # the interval from before this save. Waking the real loop thread
+        # (rather than spawning a second one-off run_check() here) also
+        # means there's only ever one thread touching dash_status/status.json
+        # at a time. run_check() itself calls trigger_auto_refresh() when
+        # session.json is still missing, so this covers the needs_login case
+        # too without a separate explicit call.
+        AppHandler.wake_event.set()
 
     def _handle_test_push(self):
         """Backs the Alerts section's "Send test push" button. Takes the
@@ -1403,8 +1497,12 @@ def main():
     AppHandler.dash_status = dash_status
 
     stop_event = threading.Event()
+    wake_event = threading.Event()
+    AppHandler.wake_event = wake_event
     poll_thread = threading.Thread(
-        target=notifier.loop, args=(logger, dash_status, INTERVAL, stop_event), daemon=True
+        target=notifier.loop,
+        args=(logger, dash_status, INTERVAL, stop_event, wake_event),
+        daemon=True,
     )
     poll_thread.start()
 

@@ -25,12 +25,9 @@ EMPTY_STATUS = json.dumps(
         "current_hits": [],
         "history": [],
         "paused": False,
+        "next_check_at": None,
     }
 ).encode()
-
-# Must match the .timer unit's OnUnitActiveSec - used only to estimate the
-# next-check countdown client-side; it resyncs to reality every poll.
-POLL_INTERVAL_SECONDS = 60
 
 PAGE = """<!doctype html>
 <html lang="en">
@@ -135,9 +132,12 @@ PAGE = """<!doctype html>
   <div id="history"></div>
 
 <script>
-let lastCheckRaw = null;
-let lastCheckPerf = null;
 let isPaused = false;
+// Epoch ms of the next scheduled check, straight off status.json's own
+// next_check_at (notifier.py's loop() writes it as the *actual* resolved
+// wait, jitter included) - so the countdown counts down to the real next
+// check instead of guessing from a fixed interval.
+let nextCheckAt = null;
 
 function fmtDateTime(iso) {
   if (!iso) return "";
@@ -239,10 +239,7 @@ async function poll() {
   }
 
   meta.textContent = data.last_check ? `Last checked: ${fmtDateTime(data.last_check)}` : "No checks yet";
-  if (data.last_check !== lastCheckRaw) {
-    lastCheckRaw = data.last_check;
-    lastCheckPerf = data.last_check ? performance.now() : null;
-  }
+  nextCheckAt = data.next_check_at ? new Date(data.next_check_at).getTime() : null;
 
   history.innerHTML = "";
   (data.history || []).slice().reverse().forEach(entry => {
@@ -259,8 +256,8 @@ async function poll() {
 
 function tickCountdown() {
   const el = document.getElementById("countdown");
-  if (isPaused || lastCheckPerf === null) { el.textContent = ""; return; }
-  const remaining = Math.round((lastCheckPerf + POLL_INTERVAL_MS - performance.now()) / 1000);
+  if (isPaused || nextCheckAt === null) { el.textContent = ""; return; }
+  const remaining = Math.round((nextCheckAt - Date.now()) / 1000);
   if (remaining <= 0) {
     el.textContent = "Checking any moment now…";
   } else {
@@ -270,14 +267,13 @@ function tickCountdown() {
   }
 }
 
-const POLL_INTERVAL_MS = __POLL_INTERVAL_MS__;
 poll();
 setInterval(poll, 5000);
 setInterval(tickCountdown, 1000);
 </script>
 </body>
 </html>
-""".replace("__POLL_INTERVAL_MS__", str(POLL_INTERVAL_SECONDS * 1000))
+"""
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
