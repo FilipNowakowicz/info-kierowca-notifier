@@ -148,6 +148,7 @@ def build_config(payload):
         "ntfy_topic": ntfy_topic,
         "current_slot_date": current_slot_date,
         "phone_alerts": bool(payload.get("phone_alerts", True)),
+        "phone_alerts_relogin": bool(payload.get("phone_alerts_relogin", True)),
         "auto_refresh_chrome": bool(payload.get("auto_refresh_chrome", True)),
         "auto_open_browser": bool(payload.get("auto_open_browser", True)),
     }
@@ -508,6 +509,16 @@ WIZARD_PAGE = """<!doctype html>
         </div>
         <div class="switch on" id="phone-alerts" role="switch" aria-checked="true" tabindex="0"></div>
       </div>
+
+      <div class="divider"></div>
+
+      <div class="toggle-row">
+        <div class="toggle-text">
+          <div class="tt-title">Send a phone alert when your session expires</div>
+          <div class="tt-sub">Buzzes your phone when your login expires and Chrome reopens for you to scan the QR again. Turn off to only get the desktop popup.</div>
+        </div>
+        <div class="switch on" id="phone-alerts-relogin" role="switch" aria-checked="true" tabindex="0"></div>
+      </div>
       <div id="ntfy-field" style="margin-top:1rem;">
         <label>Your private notification link — install the <a href="https://ntfy.sh/app" target="_blank" style="color:var(--accent-soft);">ntfy app</a> and subscribe to it exactly:</label>
         <div class="ntfy-row">
@@ -711,9 +722,13 @@ function wireSwitch(el, onChange) {
 function switchOn(id) { return document.getElementById(id).classList.contains('on'); }
 
 const phoneAlertsSwitch = document.getElementById('phone-alerts');
+const phoneAlertsReloginSwitch = document.getElementById('phone-alerts-relogin');
 const ntfyField = document.getElementById('ntfy-field');
-function applyNtfyDim() { ntfyField.classList.toggle('disabled', !phoneAlertsSwitch.classList.contains('on')); }
+function applyNtfyDim() {
+  ntfyField.classList.toggle('disabled', !phoneAlertsSwitch.classList.contains('on') && !phoneAlertsReloginSwitch.classList.contains('on'));
+}
 wireSwitch(phoneAlertsSwitch, applyNtfyDim);
+wireSwitch(phoneAlertsReloginSwitch, applyNtfyDim);
 wireSwitch(document.getElementById('auto_refresh_chrome'));
 wireSwitch(document.getElementById('auto_open_browser'));
 
@@ -728,7 +743,11 @@ function setCategory(id) {
   selectedCategory = id;
   document.querySelectorAll('.cat-pill').forEach((p) => p.classList.toggle('on', p.dataset.id === String(id)));
 }
-function expandCatRest() { catRest.classList.add('open'); catMoreBtn.style.display = 'none'; }
+function setCatRestOpen(open) {
+  catRest.classList.toggle('open', open);
+  catMoreBtn.textContent = open ? 'Fewer categories' : 'More categories';
+}
+function expandCatRest() { setCatRestOpen(true); }
 CATEGORIES.forEach((c) => {
   const el = document.createElement('div');
   el.className = 'pill cat-pill';
@@ -742,7 +761,7 @@ CATEGORIES.forEach((c) => {
   (TOP_CATEGORY_CODES.includes(c.code) ? catPrimary : catRest).appendChild(el);
 });
 if (!catRest.children.length) catMoreBtn.style.display = 'none';
-catMoreBtn.addEventListener('click', expandCatRest);
+catMoreBtn.addEventListener('click', () => setCatRestOpen(!catRest.classList.contains('open')));
 if (CATEGORIES.some((c) => c.id === 5)) setCategory(5);
 
 // ---- exam-type pills ----
@@ -853,6 +872,7 @@ if (EXISTING_CONFIG) {
   }
 
   setSwitch(phoneAlertsSwitch, EXISTING_CONFIG.phone_alerts !== false);
+  setSwitch(phoneAlertsReloginSwitch, EXISTING_CONFIG.phone_alerts_relogin !== false);
   setSwitch(document.getElementById('auto_refresh_chrome'), EXISTING_CONFIG.auto_refresh_chrome !== false);
   setSwitch(document.getElementById('auto_open_browser'), EXISTING_CONFIG.auto_open_browser !== false);
   applyNtfyDim();
@@ -893,6 +913,7 @@ document.getElementById('form').addEventListener('submit', async (e) => {
       exam_types: examTypes,
       current_slot_date: currentSlotDate,
       phone_alerts: switchOn('phone-alerts'),
+      phone_alerts_relogin: switchOn('phone-alerts-relogin'),
       auto_refresh_chrome: switchOn('auto_refresh_chrome'),
       auto_open_browser: switchOn('auto_open_browser'),
       ntfy_topic: ntfyInput.value,

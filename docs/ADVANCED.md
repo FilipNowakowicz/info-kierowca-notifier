@@ -75,6 +75,7 @@ claim still holds either way).
    | `ntfy_topic` | Your [ntfy.sh](https://ntfy.sh) topic for phone push (pick a long random string — anyone who knows it can read your notifications) |
    | `current_slot_date` | Date (`"YYYY-MM-DD"`) of your current booked slot. A found slot on or before this date counts as *urgent* (turns the dashboard red, and — when `phone_alerts` is on — sends a phone push), inclusive — an earlier date, or the same date at a different time. |
    | `phone_alerts` *(optional, default `true`)* | Whether an urgent slot sends a phone push at all. Set to `false` to just watch the dashboard silently; the dashboard, urgency colouring, and `auto_open_browser` still work. |
+   | `phone_alerts_relogin` *(optional, default `true`)* | Whether an `auth_expired` outcome (session expired, Chrome reopening for a fresh QR scan) also sends a phone push. Independent of `phone_alerts` above — that one only covers urgent-slot hits. Set to `false` to only get the desktop notification when relogin is needed. |
    | `auto_refresh_chrome` *(optional, default `true`)* | Whether an `auth_expired` outcome should automatically launch `auto_refresh_session.py` (see below). Set to `false` to fall back to a manual relogin. |
    | `auto_open_browser` *(optional, default `true`)* | Whether a matching urgent slot should also launch `open_logged_in_browser.py` (see [Reschedule assist](#reschedule-assist) below). Set to `false` to disable. |
 
