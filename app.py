@@ -148,6 +148,7 @@ def build_config(payload):
         "ntfy_topic": ntfy_topic,
         "current_slot_date": current_slot_date,
         "phone_alerts": bool(payload.get("phone_alerts", True)),
+        "phone_alerts_relogin": bool(payload.get("phone_alerts_relogin", True)),
         "auto_refresh_chrome": bool(payload.get("auto_refresh_chrome", True)),
         "auto_open_browser": bool(payload.get("auto_open_browser", True)),
     }
@@ -316,8 +317,8 @@ WIZARD_PAGE = """<!doctype html>
 <style>
   * { box-sizing: border-box; }
   :root {
-    --accent: #e0a13c; --accent-soft: #f0c47e;
-    --accent-dim: rgba(224,161,60,0.15); --accent-line: rgba(224,161,60,0.55);
+    --accent: #52c88a; --accent-soft: #8fe0b3;
+    --accent-dim: rgba(82,200,138,0.15); --accent-line: rgba(82,200,138,0.55);
   }
   body {
     margin: 0; min-height: 100vh; font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
@@ -492,7 +493,7 @@ WIZARD_PAGE = """<!doctype html>
 
     <fieldset>
       <legend>Alerts</legend>
-      <label for="current_slot_date_display">Date of your current booked slot — a found slot on or before this counts as urgent (an earlier date, or a different time the same day)</label>
+      <label for="current_slot_date_display">Date of your current booked slot — a found slot beats this (an earlier date, or a different time the same day) and triggers the alerts below</label>
       <div class="datepick" id="datepick">
         <input type="text" class="datepick-input" id="current_slot_date_display" placeholder="Select a date" readonly required>
         <input type="hidden" id="current_slot_date">
@@ -503,10 +504,20 @@ WIZARD_PAGE = """<!doctype html>
 
       <div class="toggle-row">
         <div class="toggle-text">
-          <div class="tt-title">Send a phone alert on an urgent slot</div>
+          <div class="tt-title">Send a phone alert when a slot beats your booked date</div>
           <div class="tt-sub">Buzzes your phone when a watched center opens a slot on or before your booked date. Turn off to just watch the dashboard.</div>
         </div>
         <div class="switch on" id="phone-alerts" role="switch" aria-checked="true" tabindex="0"></div>
+      </div>
+
+      <div class="divider"></div>
+
+      <div class="toggle-row">
+        <div class="toggle-text">
+          <div class="tt-title">Send a phone alert when your session expires</div>
+          <div class="tt-sub">Buzzes your phone when your login expires and Chrome reopens for you to scan the QR again. Turn off to only get the desktop popup.</div>
+        </div>
+        <div class="switch on" id="phone-alerts-relogin" role="switch" aria-checked="true" tabindex="0"></div>
       </div>
       <div id="ntfy-field" style="margin-top:1rem;">
         <label>Your private notification link — install the <a href="https://ntfy.sh/app" target="_blank" style="color:var(--accent-soft);">ntfy app</a> and subscribe to it exactly:</label>
@@ -532,7 +543,7 @@ WIZARD_PAGE = """<!doctype html>
       </div>
       <div class="toggle-row">
         <div class="toggle-text">
-          <div class="tt-title">Open my booking on an urgent slot</div>
+          <div class="tt-title">Open my booking when a slot beats your booked date</div>
           <div class="tt-sub">Opens a logged-in browser at your booking's "change date" screen. You still pick the date and confirm yourself.</div>
         </div>
         <div class="switch on" id="auto_open_browser" role="switch" aria-checked="true" tabindex="0"></div>
@@ -711,9 +722,13 @@ function wireSwitch(el, onChange) {
 function switchOn(id) { return document.getElementById(id).classList.contains('on'); }
 
 const phoneAlertsSwitch = document.getElementById('phone-alerts');
+const phoneAlertsReloginSwitch = document.getElementById('phone-alerts-relogin');
 const ntfyField = document.getElementById('ntfy-field');
-function applyNtfyDim() { ntfyField.classList.toggle('disabled', !phoneAlertsSwitch.classList.contains('on')); }
+function applyNtfyDim() {
+  ntfyField.classList.toggle('disabled', !phoneAlertsSwitch.classList.contains('on') && !phoneAlertsReloginSwitch.classList.contains('on'));
+}
 wireSwitch(phoneAlertsSwitch, applyNtfyDim);
+wireSwitch(phoneAlertsReloginSwitch, applyNtfyDim);
 wireSwitch(document.getElementById('auto_refresh_chrome'));
 wireSwitch(document.getElementById('auto_open_browser'));
 
@@ -728,7 +743,11 @@ function setCategory(id) {
   selectedCategory = id;
   document.querySelectorAll('.cat-pill').forEach((p) => p.classList.toggle('on', p.dataset.id === String(id)));
 }
-function expandCatRest() { catRest.classList.add('open'); catMoreBtn.style.display = 'none'; }
+function setCatRestOpen(open) {
+  catRest.classList.toggle('open', open);
+  catMoreBtn.textContent = open ? 'Fewer categories' : 'More categories';
+}
+function expandCatRest() { setCatRestOpen(true); }
 CATEGORIES.forEach((c) => {
   const el = document.createElement('div');
   el.className = 'pill cat-pill';
@@ -742,7 +761,7 @@ CATEGORIES.forEach((c) => {
   (TOP_CATEGORY_CODES.includes(c.code) ? catPrimary : catRest).appendChild(el);
 });
 if (!catRest.children.length) catMoreBtn.style.display = 'none';
-catMoreBtn.addEventListener('click', expandCatRest);
+catMoreBtn.addEventListener('click', () => setCatRestOpen(!catRest.classList.contains('open')));
 if (CATEGORIES.some((c) => c.id === 5)) setCategory(5);
 
 // ---- exam-type pills ----
@@ -853,6 +872,7 @@ if (EXISTING_CONFIG) {
   }
 
   setSwitch(phoneAlertsSwitch, EXISTING_CONFIG.phone_alerts !== false);
+  setSwitch(phoneAlertsReloginSwitch, EXISTING_CONFIG.phone_alerts_relogin !== false);
   setSwitch(document.getElementById('auto_refresh_chrome'), EXISTING_CONFIG.auto_refresh_chrome !== false);
   setSwitch(document.getElementById('auto_open_browser'), EXISTING_CONFIG.auto_open_browser !== false);
   applyNtfyDim();
@@ -893,6 +913,7 @@ document.getElementById('form').addEventListener('submit', async (e) => {
       exam_types: examTypes,
       current_slot_date: currentSlotDate,
       phone_alerts: switchOn('phone-alerts'),
+      phone_alerts_relogin: switchOn('phone-alerts-relogin'),
       auto_refresh_chrome: switchOn('auto_refresh_chrome'),
       auto_open_browser: switchOn('auto_open_browser'),
       ntfy_topic: ntfyInput.value,

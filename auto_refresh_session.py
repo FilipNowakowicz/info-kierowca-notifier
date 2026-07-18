@@ -176,7 +176,7 @@ def push_ntfy(title, message, priority="default", tags=None):
     except Exception:
         return
     topic = config.get("ntfy_topic")
-    if not topic:
+    if not topic or not config.get("phone_alerts_relogin", True):
         return
     headers = {"Title": title, "Priority": priority}
     if tags:
