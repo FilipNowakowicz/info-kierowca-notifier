@@ -230,19 +230,31 @@ TOOLBAR_HTML = """
      this, which lets the same settings page run standalone (first-run
      /setup, a direct /settings visit) or embedded here. */
   #ikw-settings-overlay { position: fixed; inset: 0; z-index: 50; display: none; align-items: center;
-    justify-content: center; background: rgba(0,0,0,0.55); backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
+    justify-content: center; background: rgba(0,0,0,0.45); backdrop-filter: blur(5px); -webkit-backdrop-filter: blur(5px);
     opacity: 0; transition: opacity 0.18s ease; }
   #ikw-settings-overlay.show { display: flex; opacity: 1; }
+  /* Frosted glass, not a second opaque page: the panel's own background is
+     translucent (+ blurred, where the browser composites it) so the dimmed
+     dashboard behind shows through as a soft ambient glow instead of either
+     vanishing entirely (an earlier, much lower opacity read as "just a
+     transparent page") or staying sharp enough to read as legible ghosted-
+     over text (an earlier, blur-reliant pass, before accounting for
+     backdrop-filter needing real compositing some environments don't do -
+     this opacity alone, without any blur at all, is what keeps the panel
+     readable and calm either way). WIZARD_PAGE's body goes fully transparent
+     when embedded (see its html.ikw-embedded rule) so this is the only
+     surface painting anything behind the form content. */
   #ikw-settings-panel { width: min(600px, 92vw); height: min(85vh, 760px); border-radius: 14px;
-    overflow: hidden; background: #1c1c1c; box-shadow: 0 24px 70px rgba(0,0,0,0.6);
-    border: 1px solid rgba(255,255,255,0.08); transform: scale(0.97) translateY(6px); transition: transform 0.18s ease; }
+    overflow: hidden; background: rgba(24,24,24,0.93); backdrop-filter: blur(48px) saturate(140%);
+    -webkit-backdrop-filter: blur(48px) saturate(140%); box-shadow: 0 24px 70px rgba(0,0,0,0.55);
+    border: 1px solid rgba(255,255,255,0.12); transform: scale(0.97) translateY(6px); transition: transform 0.18s ease; }
   #ikw-settings-overlay.show #ikw-settings-panel { transform: scale(1) translateY(0); }
-  #ikw-settings-frame { width: 100%; height: 100%; border: 0; display: block; }
+  #ikw-settings-frame { width: 100%; height: 100%; border: 0; display: block; background: transparent; }
 </style>
 <div id="ikw-toolbar-zone"></div>
 <div id="ikw-settings-overlay">
   <div id="ikw-settings-panel" role="dialog" aria-modal="true" aria-label="Settings">
-    <iframe id="ikw-settings-frame" title="Settings" src="about:blank"></iframe>
+    <iframe id="ikw-settings-frame" title="Settings" src="about:blank" allowtransparency="true"></iframe>
   </div>
 </div>
 <div class="ikw-toolbar" id="ikw-toolbar">
@@ -488,6 +500,15 @@ WIZARD_PAGE = """<!doctype html>
 <head>
 <meta charset="utf-8">
 <title>info-kierowca watcher — setup</title>
+<script>
+  // Runs before <body> paints (no defer/async, and this sits ahead of the
+  // rest of <head>) so the transparent-background rule below is already
+  // active on first paint - otherwise the modal would flash opaque for a
+  // frame before turning see-through. window.parent !== window is the same
+  // embedded-in-the-dashboard-modal check the bottom-of-body script (see
+  // IKW_EMBEDDED there) uses for postMessage vs. navigation.
+  if (window.parent !== window) document.documentElement.classList.add('ikw-embedded');
+</script>
 <style>
   * { box-sizing: border-box; }
   :root {
@@ -498,6 +519,12 @@ WIZARD_PAGE = """<!doctype html>
     margin: 0; min-height: 100vh; font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
     background: #1c1c1c; color: #eee; padding: 2rem; display: flex; justify-content: center;
   }
+  /* Embedded in the dashboard's Settings modal (see TOOLBAR_HTML's
+     #ikw-settings-panel): let the panel's own frosted-glass background show
+     through the iframe instead of painting a second opaque page over it.
+     Standalone (first-run /setup, a direct /settings visit) keeps the solid
+     background above untouched. */
+  html.ikw-embedded, html.ikw-embedded body { background: transparent; }
   #card { max-width: 560px; width: 100%; }
   #wiz-close-btn { display: none; position: fixed; top: 1rem; right: 1rem; width: 2.2rem; height: 2.2rem;
     border-radius: 999px; background: rgba(255,255,255,0.07); color: #eee; border: 1px solid rgba(255,255,255,0.18);
