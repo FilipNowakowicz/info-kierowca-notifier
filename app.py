@@ -317,8 +317,8 @@ WIZARD_PAGE = """<!doctype html>
 <style>
   * { box-sizing: border-box; }
   :root {
-    --accent: #52c88a; --accent-soft: #8fe0b3;
-    --accent-dim: rgba(82,200,138,0.15); --accent-line: rgba(82,200,138,0.55);
+    --accent: #6a9c7c; --accent-soft: #9dc2ac;
+    --accent-dim: rgba(106,156,124,0.15); --accent-line: rgba(106,156,124,0.55);
   }
   body {
     margin: 0; min-height: 100vh; font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
