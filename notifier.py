@@ -44,6 +44,23 @@ MAX_HISTORY = 200
 # the padding picks doesn't matter.
 SEARCH_ORG_ID_COUNT = 5
 
+# Adjustable via app.py's Settings (poll_interval_seconds in config.json).
+# MIN is a deliberate, explicitly-requested-by-the-user policy loosening
+# (2026-07-19) from the original 60s floor down to 15s - still a hard floor,
+# just a lower one, not a UI default; MAX is just a sanity cap so "watching"
+# doesn't become effectively "not watching".
+DEFAULT_POLL_INTERVAL_SECONDS = 60
+MIN_POLL_INTERVAL_SECONDS = 15
+MAX_POLL_INTERVAL_SECONDS = 1800
+
+# Applied on top of the configured interval, never subtracted - so the
+# effective cadence never goes below what the user picked (or the floor
+# above). Expressed as a fraction of the interval rather than a flat number
+# of seconds, so the randomness scales with whatever interval is chosen
+# instead of becoming relatively bigger at short intervals and negligible at
+# long ones.
+POLL_JITTER_FRACTION = 0.15
+
 
 def load_word_center_ids():
     try:
@@ -140,6 +157,7 @@ def load_status():
         "current_hits": [],
         "history": [],
         "paused": False,
+        "next_check_at": None,
     }
 
 
@@ -703,22 +721,60 @@ def run_check(logger, dash_status):
         update_status(dash_status, "no_slot", "", hit_dicts)
 
 
-def loop(logger, dash_status, interval, stop_event=None):
+def configured_poll_interval(default=DEFAULT_POLL_INTERVAL_SECONDS):
+    """Read config.json's poll_interval_seconds fresh every call, so a
+    Settings save (app.py's /setup) takes effect on the very next wait
+    instead of needing the poll thread restarted. `default` is only used
+    when config.json doesn't exist yet or predates this setting."""
+    try:
+        config = load_json(CONFIG_FILE)
+    except FileNotFoundError:
+        return default
+    seconds = config.get("poll_interval_seconds", default)
+    return min(MAX_POLL_INTERVAL_SECONDS, max(MIN_POLL_INTERVAL_SECONDS, seconds))
+
+
+def jittered_wait(interval):
+    return interval + random.uniform(0, interval * POLL_JITTER_FRACTION)
+
+
+def loop(logger, dash_status, interval=None, stop_event=None, wake_event=None):
     """Check on a timer until stop_event is set (or forever, if none given).
 
     Factored out of main()'s --loop branch so app.py can run this in a
     background thread instead of shelling out to `python notifier.py --loop`
     as a subprocess — stop_event lets that thread be told to exit cleanly.
+
+    `interval` is only the fallback default passed to configured_poll_interval()
+    each cycle (e.g. from --interval on the CLI); once config.json has its own
+    poll_interval_seconds, that value wins.
+
+    `wake_event`, if given, lets app.py's /setup handler cut the current wait
+    short the instant a new poll_interval_seconds is saved, instead of the
+    dashboard's countdown (and the actual next check) staying stuck on
+    whatever interval was configured when this cycle's wait started — set it
+    and it's cleared right after waking so the *next* cycle's wait isn't
+    accidentally skipped too.
     """
     if stop_event is None:
         stop_event = threading.Event()
-    logger.info("outcome=loop_start interval=%s", interval)
+    if wake_event is None:
+        wake_event = threading.Event()
+    default_interval = interval or DEFAULT_POLL_INTERVAL_SECONDS
+    logger.info("outcome=loop_start interval=%s", default_interval)
     while not stop_event.is_set():
         try:
             run_check(logger, dash_status)
         except Exception:
             logger.exception("outcome=crash stage=run_check")
-        stop_event.wait(interval)
+        wait_s = jittered_wait(configured_poll_interval(default_interval))
+        # The exact resolved wait (post-jitter) so the dashboard's countdown
+        # can show precisely when the next check will fire instead of
+        # guessing from the base interval alone.
+        dash_status["next_check_at"] = (datetime.now() + timedelta(seconds=wait_s)).isoformat()
+        save_status(dash_status)
+        wake_event.wait(wait_s)
+        wake_event.clear()
 
 
 def main():
@@ -732,7 +788,11 @@ def main():
         "--interval",
         type=int,
         default=60,
-        help="Seconds between checks in --loop mode (default: 60)",
+        help=(
+            "Seconds between checks in --loop mode (default: 60). Only used "
+            "as a fallback when config.json has no poll_interval_seconds "
+            "(set via app.py's Settings page)."
+        ),
     )
     args = parser.parse_args()
 
