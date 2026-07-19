@@ -26,6 +26,7 @@ EMPTY_STATUS = json.dumps(
         "history": [],
         "paused": False,
         "next_check_at": None,
+        "session_expires_estimate": None,
     }
 ).encode()
 
@@ -92,6 +93,14 @@ PAGE = """<!doctype html>
      are handled the way they are above. */
   #countdown { margin-top: 2rem; font-size: 1rem; min-height: 1.25rem; opacity: 0.6; font-variant-numeric: tabular-nums; }
   #meta { margin-top: 0.4rem; font-size: 0.85rem; opacity: 0.45; }
+  /* #session-refresh-btn stays display:none here - only app.py's
+     TOOLBAR_HTML (which backs /relogin-now) reveals and styles it, same
+     reason #headline-wrap's cursor/hover styling is gated on TOOLBAR_HTML
+     adding .ikw-pausable: the plain read-only dashboard has no endpoint
+     behind this button and must not show an affordance it can't act on. */
+  #session-expiry-wrap { margin-top: 0.15rem; display: flex; align-items: center; justify-content: center; gap: 0.35rem; }
+  #session-expiry { font-size: 0.85rem; opacity: 0.45; }
+  #session-refresh-btn { display: none; }
 
   #history {
     margin-top: 3rem;
@@ -128,6 +137,14 @@ PAGE = """<!doctype html>
     <div id="detail"></div>
     <div id="countdown"></div>
     <div id="meta"></div>
+    <div id="session-expiry-wrap">
+      <span id="session-expiry"></span>
+      <button id="session-refresh-btn" type="button" title="Get new session" aria-label="Get new session">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 4v5h-5"/>
+        </svg>
+      </button>
+    </div>
   </div>
   <div id="history"></div>
 
@@ -240,6 +257,21 @@ async function poll() {
 
   meta.textContent = data.last_check ? `Last checked: ${fmtDateTime(data.last_check)}` : "No checks yet";
   nextCheckAt = data.next_check_at ? new Date(data.next_check_at).getTime() : null;
+
+  const sessionExpiry = document.getElementById("session-expiry");
+  // Estimate only - the real signal is the "Session expired" outcome above;
+  // see SESSION_ESTIMATED_LIFETIME_SECONDS in notifier.py. Minutes, not a
+  // live mm:ss ticker like tickCountdown() below: recomputed each 5s poll,
+  // which is plenty for an hour-scale estimate and doesn't flicker like a
+  // per-second countdown would.
+  if (data.session_expires_estimate) {
+    const remainingMin = Math.round((new Date(data.session_expires_estimate).getTime() - Date.now()) / 60000);
+    sessionExpiry.textContent = remainingMin > 0
+      ? `Session expires in ${remainingMin} min`
+      : "Session expired";
+  } else {
+    sessionExpiry.textContent = "";
+  }
 
   history.innerHTML = "";
   (data.history || []).slice().reverse().forEach(entry => {

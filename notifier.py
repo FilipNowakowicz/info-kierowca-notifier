@@ -54,6 +54,17 @@ DEFAULT_POLL_INTERVAL_SECONDS = 60
 MIN_POLL_INTERVAL_SECONDS = 15
 MAX_POLL_INTERVAL_SECONDS = 1800
 
+# The access token in session.json (__Secure-PUDOJT) carries its own 900s
+# iat/exp and is silently renewed every refresh call above - it is not what
+# eventually forces a relogin. The relogin wall observed live (2026-07-19,
+# consistent across several hours) is a separate, absolute ~3600s session
+# ceiling tied to the original QR auth ("sid" claim), invisible in either
+# session cookie's own claims and not extendable by refreshing more often.
+# This constant is only used to estimate/display when that wall will hit
+# (dashboard, see session_expires_estimate) - it is not documented by the
+# API and not enforced by this code.
+SESSION_ESTIMATED_LIFETIME_SECONDS = 3600
+
 # Applied on top of the configured interval, never subtracted - so the
 # effective cadence never goes below what the user picked (or the floor
 # above). Expressed as a fraction of the interval rather than a flat number
@@ -159,6 +170,7 @@ def load_status():
         "history": [],
         "paused": False,
         "next_check_at": None,
+        "session_expires_estimate": None,
     }
 
 
@@ -554,6 +566,7 @@ def run_check(logger, dash_status):
 
     if not SESSION_FILE.exists():
         logger.info("outcome=auth_missing")
+        dash_status["session_expires_estimate"] = None
         notify(
             "info-kierowca: no session",
             "session.json missing — log in via browser and populate cookies",
@@ -563,6 +576,12 @@ def run_check(logger, dash_status):
         trigger_auto_refresh(logger, config)
         return
     session = load_json(SESSION_FILE)
+    captured_at = session.get("captured_at")
+    dash_status["session_expires_estimate"] = (
+        datetime.fromtimestamp(captured_at + SESSION_ESTIMATED_LIFETIME_SECONDS).isoformat()
+        if captured_at
+        else None
+    )
 
     # 1. Keep the session alive.
     status, body, headers = do_request(REFRESH_URL, session, method="GET")

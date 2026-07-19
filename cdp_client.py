@@ -256,6 +256,6 @@ def write_session_file(cookies):
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     tmp = SESSION_FILE.with_suffix(".tmp")
     with open(tmp, "w") as f:
-        json.dump({"cookies": cookies}, f, indent=2)
+        json.dump({"cookies": cookies, "captured_at": time.time()}, f, indent=2)
     tmp.replace(SESSION_FILE)
     SESSION_FILE.chmod(0o600)
