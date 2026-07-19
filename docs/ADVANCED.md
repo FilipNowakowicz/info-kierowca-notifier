@@ -137,6 +137,16 @@ are treated as problems worth interrupting you about.
 
 ## Auto-relogin on session expiry
 
+**Expect a full QR relogin roughly every hour, no matter what.** The access-token cookie
+(`__Secure-PUDOJT`) is silently refreshed on every poll via `/jwt/refresh`, but that refresh only
+extends the token — it doesn't touch a separate, absolute session ceiling of about 3600 seconds
+from when you last scanned the QR code (confirmed live, consistent across several hours). Once
+that ceiling passes, the next check comes back `auth_expired` regardless of how healthy the
+refreshes were, and a fresh QR scan is the only way past it. `app.py`'s dashboard shows a
+countdown to that estimated expiry (next to a small reset icon that forces a new QR login on
+demand — useful if you know you'll be away when it's about to expire) so this isn't a surprise;
+the estimate is derived from `session.json`'s `captured_at`, stamped on every fresh login.
+
 By default (`auto_refresh_chrome: true`), whenever a check comes back `auth_expired` — a 401,
 403, 404, or 500 on the refresh call, or a 401/403/500 on the search call, all of which have in
 practice turned out to be the same underlying cookie-expiry problem — `notifier.py` launches

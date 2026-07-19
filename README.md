@@ -38,6 +38,12 @@ slot also opens a Chrome window already logged in with your session, and clicks 
 nothing submitted — picking the new date and confirming is always done by you, by hand. See
 [docs/ADVANCED.md](docs/ADVANCED.md) for exactly what it clicks and why.
 
+Your login session lasts about an hour before info-kierowca.pl forces a fresh QR scan — that's a
+site-side limit, not something this tool can extend. When it happens, a Chrome window opens
+automatically asking you to rescan the QR code with mObywatel; the dashboard also shows a countdown
+to the estimated expiry with a button to reset it early. See [Auto-relogin on session
+expiry](docs/ADVANCED.md#auto-relogin-on-session-expiry) for details.
+
 Your session cookies and PKK number never go anywhere except info-kierowca.pl itself.
 
 It relies on an undocumented API that info-kierowca.pl could change or block at any time, so use
