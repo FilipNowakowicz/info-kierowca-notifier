@@ -189,7 +189,8 @@ dependencies (stdlib only).
     the structural markup (`#headline-wrap`/`#headline-icon`/`#headline-hint`, and the `poll()` loop
     that fills them in) but leaves it inert — no cursor, no hover styling — since that file alone is
     also served read-only, with no `/pause`/`/settings`/`/manual-login`/`/shutdown` behind it.
-    `app.py`'s `TOOLBAR_HTML` (appended before `</body>`) layers the actual interactivity on top, so
+    `TOOLBAR_HTML` (in `templates.py`, appended before `</body>` by `app.py`) layers the actual
+    interactivity on top, so
     the plain systemd-dashboard path never shows an affordance it can't back up:
     - **Pause/Resume** is a click (or Enter/Space) on the headline itself, not a separate button.
       Writes `notifier.PAUSE_FILE` (`POST /pause`/`/resume`) — a flag file rather than a config
@@ -233,6 +234,13 @@ dependencies (stdlib only).
       auto-relogin lock gotcha below. `trigger_open_browser()` has no equivalent `force` — forcing
       there would mean a second Chrome fighting over the same fixed debug port an already-open one
       is using, so "already_running" is the desired outcome, not something to override.
+- `templates.py` — holds `TOOLBAR_HTML`, `LOGIN_PAGE`, and `WIZARD_PAGE`: the three big HTML/JS
+  strings `app.py` serves, moved out verbatim (2026-07-20) since they made up the bulk of that
+  file's line count (~1180 of ~1750 lines) with none of its request-handling logic. Plain string
+  constants only — no rendering logic, no imports of its own; `app.py` still owns everything that
+  touches them (`WIZARD_PAGE.replace("__CENTERS_JSON__", ...)`, splicing `TOOLBAR_HTML` into
+  `dashboard_server.PAGE`, etc.), so read `app.py`'s own notes above for what each template does at
+  runtime — this file is just where their markup lives.
 - `word_centers.json` — static snapshot (id, name, location) of every active DORD/WORD/MORD/
   PORD/ZORD exam center, used by `app.py`'s setup wizard to show real, searchable center names
   instead of bare numeric IDs. Baked in rather than fetched live because the wizard has to work
