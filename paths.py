@@ -13,7 +13,7 @@ can sit at the bottom of the import graph and be safely imported everywhere.
 """
 from pathlib import Path
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 
 CONFIG_DIR = Path.home() / ".config" / "info-kierowca-notifier"
 CONFIG_FILE = CONFIG_DIR / "config.json"
