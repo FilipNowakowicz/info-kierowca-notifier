@@ -16,6 +16,7 @@ import socket
 import socketserver
 import sys
 import threading
+import time
 import urllib.request
 import webbrowser
 from datetime import datetime
@@ -99,6 +100,37 @@ def check_session_valid():
         notifier.save_json(notifier.SESSION_FILE, session)
         return True
     return False
+
+
+def _wait_for_relogin_and_wake(prior_captured_at, wake_event):
+    """Runs in a background thread after a forced relogin is launched, so
+    the dashboard's session-expiry estimate updates the moment the QR scan
+    lands instead of waiting for the poll loop's next regularly scheduled
+    cycle (up to MAX_POLL_INTERVAL_SECONDS away). Waking the loop just
+    re-runs run_check(), which recomputes session_expires_estimate from
+    session.json's fresh captured_at - same mechanism /setup already uses
+    for an interval change, so there's still only one thread ever touching
+    dash_status/status.json.
+
+    Watches for session.json's captured_at to actually change rather than
+    just the auto-refresh lock clearing, since a stuck/failed relogin
+    releases the lock too and waking on that alone would just re-run a
+    check against the still-stale session.
+    """
+    time.sleep(2)  # grace period - mirrors login-status's own, covers the
+    # moment right after launch before the process has acquired its lock
+    deadline = time.time() + 3600
+    while time.time() < deadline:
+        if notifier.SESSION_FILE.exists():
+            try:
+                if notifier.load_json(notifier.SESSION_FILE).get("captured_at") != prior_captured_at:
+                    break
+            except Exception:
+                pass
+        if not notifier.auto_refresh_in_progress():
+            break  # Chrome closed/crashed before scanning - nothing to wait on
+        time.sleep(1)
+    wake_event.set()
 
 
 def build_config(payload):
@@ -194,6 +226,16 @@ TOOLBAR_HTML = """
   .ikw-icon-btn:disabled { opacity: 0.5; cursor: default; }
   .ikw-icon-btn svg { width: 1.05rem; height: 1.05rem; }
   #ikw-quit-btn:hover { border-color: rgba(224,104,95,0.7); color: #ffb3ad; }
+  /* Small inline icon button next to dashboard_server.py's #session-expiry
+     text - deliberately lighter-weight than .ikw-icon-btn (the top toolbar's
+     larger circular badges), since this one sits inline with 0.85rem text
+     rather than floating over the page. */
+  #session-refresh-btn { width: 1.3rem; height: 1.3rem; display: flex; align-items: center; justify-content: center;
+    border-radius: 999px; cursor: pointer; background: rgba(255,255,255,0.07); color: #eee; opacity: 0.55;
+    border: 1px solid rgba(255,255,255,0.18); transition: opacity 0.12s, background 0.12s; }
+  #session-refresh-btn:hover { opacity: 0.9; background: rgba(255,255,255,0.16); }
+  #session-refresh-btn:disabled { opacity: 0.3; cursor: default; }
+  #session-refresh-btn svg { width: 0.8rem; height: 0.8rem; }
   /* Faint permanent dot so the toolbar is discoverable even before its
      hover/focus reveal has ever fired. */
   #ikw-toolbar-hint { position: fixed; top: 1.1rem; right: 1.25rem; width: 0.35rem; height: 0.35rem;
@@ -353,6 +395,26 @@ document.getElementById('ikw-browser-btn').addEventListener('click', async () =>
     ikwToast('Could not reach the app.');
   } finally {
     btn.disabled = false;
+  }
+});
+
+// dashboard_server.py's #session-refresh-btn stays display:none (and has no
+// listener) without this script - see its CSS comment there for why. Shown
+// unconditionally rather than only when data.session_expires_estimate is
+// set, since it's also the way to get a *first* estimate going.
+const ikwSessionRefreshBtn = document.getElementById('session-refresh-btn');
+ikwSessionRefreshBtn.style.display = 'flex';
+ikwSessionRefreshBtn.addEventListener('click', async () => {
+  if (!confirm('Open Chrome for a fresh QR login now? This replaces your current session.')) return;
+  ikwSessionRefreshBtn.disabled = true;
+  try {
+    const res = await fetch('/relogin-now', {method: 'POST'});
+    const data = await res.json();
+    ikwToast(data.message || 'Something went wrong.');
+  } catch (e) {
+    ikwToast('Could not reach the app.');
+  } finally {
+    ikwSessionRefreshBtn.disabled = false;
   }
 });
 
@@ -1437,6 +1499,8 @@ class AppHandler(http.server.BaseHTTPRequestHandler):
             os._exit(0)
         elif self.path == "/manual-login":
             self._handle_manual_login()
+        elif self.path == "/relogin-now":
+            self._handle_relogin_now()
         elif self.path == "/pause":
             self._set_paused(True)
         elif self.path == "/resume":
@@ -1491,6 +1555,36 @@ class AppHandler(http.server.BaseHTTPRequestHandler):
                 "no_chromium_browser": "Session looks expired, but no Chrome, Edge, or other "
                     "Chromium-based browser was found on this machine — install one to continue.",
             }
+        self._send_json(200, {"ok": True, "action": outcome, "message": messages.get(outcome, "Done.")})
+
+    def _handle_relogin_now(self):
+        """Backing handler for the small refresh icon next to the dashboard's
+        session-expiry estimate. Unlike _handle_manual_login(), this always
+        forces a fresh QR login regardless of whether the current session
+        still passes refresh - the whole point is resetting the ~hour
+        estimate on demand, not recovering from a dead one.
+        """
+        config = notifier.load_json(notifier.CONFIG_FILE) if notifier.CONFIG_FILE.exists() else {}
+        prior_captured_at = None
+        if notifier.SESSION_FILE.exists():
+            try:
+                prior_captured_at = notifier.load_json(notifier.SESSION_FILE).get("captured_at")
+            except Exception:
+                pass
+        outcome = notifier.trigger_auto_refresh(AppHandler.logger, config, force=True, notify_phone=False)
+        if outcome == "launched":
+            threading.Thread(
+                target=_wait_for_relogin_and_wake,
+                args=(prior_captured_at, AppHandler.wake_event),
+                daemon=True,
+            ).start()
+        messages = {
+            "launched": "Opening Chrome for a fresh QR login.",
+            "disabled": "auto_refresh_chrome is turned off in Settings.",
+            "launch_failed": "Chrome failed to launch — check the log.",
+            "no_chromium_browser": "No Chrome, Edge, or other Chromium-based browser was found "
+                "on this machine — install one to continue.",
+        }
         self._send_json(200, {"ok": True, "action": outcome, "message": messages.get(outcome, "Done.")})
 
     def _handle_login_start(self):
