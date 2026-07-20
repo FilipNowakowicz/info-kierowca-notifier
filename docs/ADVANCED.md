@@ -72,7 +72,7 @@ claim still holds either way).
    | `profile_number` | Your PKK profile number |
    | `exam_types` | Which exam(s) to watch: `["Theoretical"]`, `["Practice"]`, or both `["Theoretical", "Practice"]` |
    | `ntfy_topic` | Your [ntfy.sh](https://ntfy.sh) topic for phone push (pick a long random string — anyone who knows it can read your notifications) |
-   | `current_slot_date` | Date (`"YYYY-MM-DD"`) of your current booked slot. A found slot beats this (turns the dashboard red, and — when `phone_alerts` is on — sends a phone push) if it's on an earlier date, or the same date at a different time. |
+   | `current_slot_date` | Date (`"YYYY-MM-DD"`) of your current booked slot. A found slot beats this (turns the dashboard red, and — when `phone_alerts` is on — sends a phone push) only if it's on a strictly earlier date; a different time on the same date doesn't count on its own (as of 2026-07-20 — see `notifier.is_urgent()`). |
    | `phone_alerts` *(optional, default `true`)* | Whether a slot that beats your booked date sends a phone push at all. Set to `false` to just watch the dashboard silently; the dashboard's red/gray colouring and `auto_open_browser` still work. |
    | `phone_alerts_relogin` *(optional, default `true`)* | Whether an `auth_expired` outcome (session expired, Chrome reopening for a fresh QR scan) also sends a phone push. Independent of `phone_alerts` above — that one only covers slots that beat your booked date. Set to `false` to only get the desktop notification when relogin is needed. |
    | `auto_refresh_chrome` *(optional, default `true`)* | Whether an `auth_expired` outcome should automatically launch `auto_refresh_session.py` (see below). Set to `false` to fall back to a manual relogin. |
@@ -200,6 +200,68 @@ keeps reappearing under a new signature won't pile up duplicate Chrome windows. 
 that's already `Potwierdzony` (confirmed) — if you don't have one, there's nothing on `/cases` for
 this to click, and it'll just report that it couldn't find the button. This flow moves the date on
 a booking you already hold; it doesn't create one.
+
+### Experimental: auto-selecting the matching slot and reaching the summary screen
+
+Add `"auto_select_slot": true` to `config.json` by hand (there's no Settings toggle for this yet)
+to go further: after landing on the empty date-range picker, it also expands the date group that
+matches the slot notifier.py just found, clicks the radio button for that exact exam type + time,
+and then clicks "Przejdź do podsumowania" (go to summary) to land on the summary/review screen. It
+deliberately never touches the "Data rozpoczęcia" field — every slot notifier finds is already
+within the ~31-day window the picker shows without changing it.
+
+With just this flag on, it stops there, unconditionally, on the summary/review screen: nothing past
+that click is automated, whether or not a matching slot was found (someone else may have taken it
+in the few seconds since the check that triggered this).
+
+**This is unverified.** It was written from screenshots of the picker, not confirmed against the
+live DOM the way the rest of this flow was, so treat it as experimental until you've watched it
+select the right row and reach the summary screen yourself. Off by default for exactly that reason.
+
+### Experimental: auto-confirming the reservation change
+
+The summary screen (the "Potwierdź wybrany egzamin" modal — exam type, category, date/time, and
+price, with no separate payment step) has its own confirm button, "Potwierdź i przejdź dalej".
+Add `"auto_confirm_reschedule": true` to `config.json` **in addition to** `"auto_select_slot":
+true`, and it clicks that too — actually submitting the reservation date change. This flag alone,
+without `auto_select_slot`, does nothing: without it, the flow never reaches the summary screen to
+confirm on.
+
+Before that click, it re-checks the summary screen's own text actually shows the date, time, and
+exam type you intended — a safety check against the slot-selection step having matched the wrong
+row. If that check fails, or the confirm button never becomes clickable, it stops and leaves the
+screen for you to finish by hand instead of guessing.
+
+**This is the single highest-stakes automated action in this project.** Every earlier step in the
+reschedule flow can be undone just by closing the Chrome window; this one can't — it submits a real
+change to an already-paid exam booking. It's unverified against the live DOM (written from a
+screenshot, like the slot-selection step above) and off by default for exactly that reason. Don't
+turn it on until you've confirmed the slot-selection step alone works correctly and reliably first.
+
+After clicking confirm, it also reloads `/cases` and checks whether the booking now actually shows
+your slot with a confirmed status. If — and only if — that check succeeds, it updates
+`current_slot_date` in `config.json` to the new date for you, so the notifier immediately knows
+about its own success instead of comparing future checks against the old date. If the check doesn't
+succeed (the page didn't update in time, wording differs, etc.), `config.json` is left untouched and
+you're told to check the site and update "Date of your current booked slot" in Settings yourself if
+it did go through.
+
+**How you find out what happened.** This whole flow is auto-triggered by a detached background
+process, so none of it prints to a terminal you're watching. Two things surface it instead:
+
+- Everything gets logged to `~/.local/state/info-kierowca-notifier/reschedule.log` (plain
+  append-only text — separate from the main `notifier.log`).
+- A phone push (via your existing `ntfy_topic`) fires for anything from the point it starts trying
+  to click the final confirm button onward: couldn't verify the summary matched, couldn't click
+  confirm, confirmed but couldn't verify it landed, or confirmed and verified. The earlier
+  slot-selection steps don't get a second push — you already got one when the slot was first found.
+
+**A short cooldown after every confirm attempt.** Once it's tried the final confirm click — whether
+or not that click, or the verification after it, actually succeeded — it won't try again for 15
+minutes. This matters specifically for the "confirmed but couldn't verify" case: if the reservation
+actually went through but the check just timed out, `current_slot_date` stays on the old date, and
+without this cooldown the very next check finding some other nearby slot could immediately submit
+*another* real reservation change before you've had a chance to see the push above and step in.
 
 ## Pausing / resuming
 

@@ -28,6 +28,8 @@ from paths import (  # noqa: F401  (re-exported: other modules read these off no
     CONFIG_FILE,
     LOG_FILE,
     PAUSE_FILE,
+    RESCHEDULE_CONFIRM_COOLDOWN_FILE,
+    RESCHEDULE_LOG_FILE,
     SESSION_FILE,
     STATE_DIR,
     STATUS_FILE,
@@ -200,16 +202,26 @@ def short_word(name):
 
 
 def is_urgent(fastest_dt, config):
-    """Whether fastest_dt is on or before the date of the user's current slot.
+    """Whether fastest_dt is strictly before the date of the user's current
+    slot.
 
-    Inclusive: a slot on the same day still counts, since that's a same-day
-    time change rather than an earlier date.
+    Exclusive as of 2026-07-20, by explicit user request (previously
+    inclusive — a slot on the same day as current_slot_date used to count
+    too, as a same-day time change). Matters most alongside
+    auto_confirm_reschedule (see trigger_open_browser()): once that updates
+    current_slot_date to a newly-booked date on a successful reschedule,
+    inclusive same-day matching could immediately re-trigger on a different
+    time slot that same day, chasing minor same-day changes instead of
+    settling. Reversible in one line if this turns out to be the wrong
+    call — the dashboard/history still show every hit found regardless of
+    urgency; this only changes what counts as a phone push / auto-browser
+    trigger.
     """
     current_slot_date = config["current_slot_date"]
     cutoff = datetime.fromisoformat(current_slot_date).replace(
-        hour=23, minute=59, second=59
+        hour=0, minute=0, second=0, microsecond=0
     )
-    return fastest_dt <= cutoff
+    return fastest_dt < cutoff
 
 
 def update_status(status, outcome, message="", current_hits=None, urgent=False):
@@ -390,8 +402,34 @@ def auto_refresh_in_progress():
 OPEN_BROWSER_SCRIPT = Path(__file__).parent / "open_logged_in_browser.py"
 OPEN_BROWSER_PORT = open_logged_in_browser.DEFAULT_PORT
 
+# How long after an attempted final-confirm click (see
+# open_logged_in_browser.try_select_target_slot(), which writes
+# RESCHEDULE_CONFIRM_COOLDOWN_FILE right before that click) trigger_open_browser()
+# holds off passing --confirm-reschedule again. Added 2026-07-20: without it, a
+# confirm attempt whose own post-click verification timed out (so
+# current_slot_date never got updated) could have a very next poll cycle attempt
+# another confirm on some other nearby slot — a real reservation change,
+# possibly to a worse date, before there's been any chance for a human to
+# notice and step in. Not user-configurable, same as AUTO_REFRESH_LOCK having
+# no timeout of its own — this is a safety margin, not a tunable.
+RESCHEDULE_CONFIRM_COOLDOWN_SECONDS = 900
 
-def trigger_open_browser(logger, config, auto_click=True):
+
+def confirm_reschedule_cooldown_active():
+    """Whether a --confirm-reschedule attempt happened recently enough that
+    trigger_open_browser() should hold off passing that flag again. Missing or
+    unparseable RESCHEDULE_CONFIRM_COOLDOWN_FILE just means no recent attempt
+    is known — not a hard stop, so a fresh install/state dir behaves as if the
+    cooldown already elapsed.
+    """
+    try:
+        last = datetime.fromisoformat(RESCHEDULE_CONFIRM_COOLDOWN_FILE.read_text().strip())
+    except (FileNotFoundError, ValueError):
+        return False
+    return (datetime.now() - last).total_seconds() < RESCHEDULE_CONFIRM_COOLDOWN_SECONDS
+
+
+def trigger_open_browser(logger, config, auto_click=True, target_hit=None):
     """Best-effort: launch open_logged_in_browser.py so a pre-authenticated
     tab is already open by the moment the push notification lands — skips
     the login step that otherwise costs you the fastest-moving slots.
@@ -411,6 +449,44 @@ def trigger_open_browser(logger, config, auto_click=True):
     logged-in tab without clicking through to the reschedule date-picker —
     that click-through is only wanted for the automatic urgent-slot-hit
     path, which keeps the default auto_click=True.
+
+    target_hit, when given together with auto_click and config's
+    experimental, default-off "auto_select_slot" flag, is one of
+    run_check()'s hit_dicts (word/exam_type/datetime/places) — passed
+    through as --target-slot JSON so open_logged_in_browser.py can also try
+    to expand that date's slot group, select the matching time radio
+    button, and click through to the summary/review screen, past the plain
+    date-picker screen.
+
+    A second, separate, also default-off flag — config's
+    "auto_confirm_reschedule" — additionally passes --confirm-reschedule,
+    which (only once auto_select_slot has already landed on the summary
+    screen, and only after open_logged_in_browser.py itself re-verifies
+    that screen matches the intended slot) clicks through the final
+    "Potwierdź i przejdź dalej" confirm button — actually submitting the
+    reservation change. auto_confirm_reschedule alone, without
+    auto_select_slot, does nothing (no --target-slot means
+    open_logged_in_browser.py never reaches that screen to confirm on).
+    UNVERIFIED against the live site as of 2026-07-20, by explicit user
+    request that same day — see open_logged_in_browser.py's own docstrings
+    for exactly what it does and does not click, and the verification step
+    that gates the final click. Both flags are omitted entirely (no
+    --target-slot/--confirm-reschedule at all) whenever off, so a config
+    predating this feature behaves identically to before.
+
+    --confirm-reschedule is further gated by confirm_reschedule_cooldown_active()
+    (see its own docstring) — even with auto_confirm_reschedule on, it's
+    withheld (falling back to --target-slot alone, same as auto_select_slot
+    without auto_confirm_reschedule) if a confirm attempt was made too
+    recently, regardless of whether that attempt's own outcome is known.
+
+    The launched subprocess's stdout/stderr go to RESCHEDULE_LOG_FILE
+    (append mode, added 2026-07-20) rather than DEVNULL — this is a
+    detached, fire-and-forget launch with no other way for its outcome to
+    reach anyone, and open_logged_in_browser.py's own print()s are the only
+    record of what an auto-triggered run actually did, especially the
+    "couldn't verify automatically — check yourself" messages past the
+    confirm click.
 
     Returns a short status string: "disabled", "no_chromium_browser",
     "already_running", "launched", or "launch_failed". No force option here
@@ -438,10 +514,19 @@ def trigger_open_browser(logger, config, auto_click=True):
         cmd = [sys.executable, str(OPEN_BROWSER_SCRIPT)]
     if not auto_click:
         cmd.append("--no-auto-click")
+    elif target_hit is not None and config.get("auto_select_slot", False):
+        cmd += ["--target-slot", json.dumps(target_hit)]
+        if config.get("auto_confirm_reschedule", False):
+            if confirm_reschedule_cooldown_active():
+                logger.info("outcome=confirm_reschedule_skipped detail=cooldown_active")
+            else:
+                cmd.append("--confirm-reschedule")
     try:
-        subprocess.Popen(
-            cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True
-        )
+        RESCHEDULE_LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with open(RESCHEDULE_LOG_FILE, "a") as logf:
+            logf.write(f"\n--- {datetime.now().isoformat()} launching: {cmd!r} ---\n")
+            logf.flush()
+            subprocess.Popen(cmd, stdout=logf, stderr=subprocess.STDOUT, start_new_session=True)
         logger.info("outcome=open_browser_launched")
         return "launched"
     except Exception as e:
@@ -735,7 +820,7 @@ def run_check(logger, dash_status):
                     )
                     logger.info("outcome=push_sent detail=%r", fastest)
                 dash_status["last_push_signature"] = fastest
-                trigger_open_browser(logger, config)
+                trigger_open_browser(logger, config, target_hit=fastest)
         else:
             dash_status["last_push_signature"] = None
 
