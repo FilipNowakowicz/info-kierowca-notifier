@@ -679,6 +679,11 @@ def run_check(logger, dash_status):
     max_date = datetime.now() + timedelta(days=MAX_DAYS_AHEAD)
     wanted_types = set(config["exam_types"])
     watch_ids = set(config["organization_ids"])
+    # Hour-of-day preference (wizard's dual-handle slider) — [earliest, latest)
+    # against dt.hour, so a config predating this feature (both keys absent)
+    # defaults to the full day and filters nothing.
+    earliest_hour = config.get("earliest_slot_hour", 0)
+    latest_hour = config.get("latest_slot_hour", 24)
     hits = []
     for word in results:
         if word.get("wordId") not in watch_ids:
@@ -691,7 +696,7 @@ def run_check(logger, dash_status):
             if not dt_str:
                 continue
             dt = datetime.fromisoformat(dt_str)
-            if dt <= max_date:
+            if dt <= max_date and earliest_hour <= dt.hour < latest_hour:
                 places = exam.get("placeTheoryAmount") or exam.get("placePracticeAmount")
                 hits.append((word.get("wordName"), exam_type, dt, places))
 

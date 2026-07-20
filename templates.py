@@ -509,6 +509,19 @@ WIZARD_PAGE = """<!doctype html>
   #ntfy-field { transition: opacity 0.15s; }
   #ntfy-field.disabled { opacity: 0.4; pointer-events: none; }
 
+  /* preferred time-of-day dual-handle slider */
+  .dual-range { position: relative; height: 26px; margin: 0.5rem 0 0.4rem; }
+  .dual-range-track { position: absolute; top: 11px; left: 0; right: 0; height: 4px;
+    border-radius: 999px; background: #3d3d3d; }
+  .dual-range-fill { position: absolute; top: 11px; height: 4px; border-radius: 999px;
+    background: var(--accent); }
+  .dual-range input[type=range] { position: absolute; top: 0; left: 0; width: 100%;
+    margin: 0; background: none; pointer-events: none; }
+  .dual-range input[type=range]::-webkit-slider-runnable-track { background: none; }
+  .dual-range input[type=range]::-moz-range-track { background: none; }
+  .dual-range input[type=range]::-webkit-slider-thumb { pointer-events: auto; }
+  .dual-range input[type=range]::-moz-range-thumb { pointer-events: auto; }
+
   /* custom date picker */
   .datepick { position: relative; margin-bottom: 0.3rem; }
   .datepick-input { cursor: pointer; margin-bottom: 0 !important; }
@@ -579,6 +592,20 @@ WIZARD_PAGE = """<!doctype html>
         <div class="pill on" data-val="Theoretical" role="button" tabindex="0">Theoretical</div>
         <div class="pill" data-val="Practice" role="button" tabindex="0">Practical</div>
       </div>
+
+      <div class="freq-head" style="margin-top:1rem;">
+        <label for="time_from_slider">Preferred time of day</label>
+        <span class="freq-value" id="time-window-label">All day</span>
+      </div>
+      <div class="dual-range" id="time-window-slider">
+        <div class="dual-range-track"></div>
+        <div class="dual-range-fill" id="time-window-fill"></div>
+        <input type="range" id="time_from_slider" min="0" max="24" step="1" value="0">
+        <input type="range" id="time_to_slider" min="0" max="24" step="1" value="24">
+      </div>
+      <input type="hidden" id="earliest_slot_hour" value="0">
+      <input type="hidden" id="latest_slot_hour" value="24">
+      <div class="hint" style="margin-top:-0.15rem;">A slot outside this window won't trigger an alert or open the reschedule browser. Checking and the dashboard still show everything found.</div>
 
       <div class="divider"></div>
 
@@ -901,6 +928,63 @@ function setPollIntervalSeconds(seconds) {
 pollSlider.addEventListener('input', updatePollIntervalDisplay);
 updatePollIntervalDisplay();
 
+// ---- preferred time-of-day dual-handle slider ----
+// Two overlapping native range inputs (0-24, hour granularity) rather than a
+// single custom-built slider: input[type=range]'s own track/background is
+// set to none via CSS so only its thumb is visible, and pointer-events is
+// none on the input itself but auto on just the thumb (::-webkit-slider-thumb/
+// ::-moz-range-thumb) — the standard trick for two draggable handles sharing
+// one track without a pointer-capture library. A .dual-range-fill div drawn
+// between them (position/width set below) gives the "selected range"
+// highlight the single-slider's own runnable-track background normally
+// would.
+const timeFromSlider = document.getElementById('time_from_slider');
+const timeToSlider = document.getElementById('time_to_slider');
+const timeFromHidden = document.getElementById('earliest_slot_hour');
+const timeToHidden = document.getElementById('latest_slot_hour');
+const timeWindowFill = document.getElementById('time-window-fill');
+const timeWindowLabel = document.getElementById('time-window-label');
+
+function fmtHour(h) {
+  return `${String(h).padStart(2, '0')}:00`;
+}
+
+function updateTimeWindow(movedSlider) {
+  let from = Number(timeFromSlider.value);
+  let to = Number(timeToSlider.value);
+  // Keep at least a 1-hour gap between the two handles rather than letting
+  // them cross or collapse to a zero-width (and so unmatchable-by-design)
+  // window; whichever handle the user is actively dragging wins and pushes
+  // the other one ahead of/behind it.
+  if (to - from < 1) {
+    if (movedSlider === timeToSlider) {
+      from = to - 1;
+      timeFromSlider.value = from;
+    } else {
+      to = from + 1;
+      timeToSlider.value = to;
+    }
+  }
+  timeFromHidden.value = from;
+  timeToHidden.value = to;
+  const fromPct = (from / 24) * 100;
+  const toPct = (to / 24) * 100;
+  timeWindowFill.style.left = fromPct + '%';
+  timeWindowFill.style.width = (toPct - fromPct) + '%';
+  timeWindowLabel.textContent =
+    (from === 0 && to === 24) ? 'All day' : `${fmtHour(from)} – ${fmtHour(to)}`;
+}
+
+function setTimeWindow(fromHour, toHour) {
+  timeFromSlider.value = Math.max(0, Math.min(23, fromHour ?? 0));
+  timeToSlider.value = Math.max(1, Math.min(24, toHour ?? 24));
+  updateTimeWindow();
+}
+
+timeFromSlider.addEventListener('input', () => updateTimeWindow(timeFromSlider));
+timeToSlider.addEventListener('input', () => updateTimeWindow(timeToSlider));
+updateTimeWindow();
+
 // ---- license-category pills (data-driven from categories.json) ----
 // A and B are shown up top; the rest live behind a "More categories" reveal.
 const TOP_CATEGORY_CODES = ['A', 'B'];
@@ -1084,6 +1168,7 @@ if (EXISTING_CONFIG) {
   }
 
   setPollIntervalSeconds(EXISTING_CONFIG.poll_interval_seconds || 60);
+  setTimeWindow(EXISTING_CONFIG.earliest_slot_hour, EXISTING_CONFIG.latest_slot_hour);
   setSwitch(phoneAlertsSwitch, EXISTING_CONFIG.phone_alerts !== false);
   setSwitch(phoneAlertsReloginSwitch, EXISTING_CONFIG.phone_alerts_relogin !== false);
   setSwitch(document.getElementById('auto_refresh_chrome'), EXISTING_CONFIG.auto_refresh_chrome !== false);
@@ -1164,6 +1249,8 @@ document.getElementById('form').addEventListener('submit', async (e) => {
       exam_types: examTypes,
       current_slot_date: currentSlotDate,
       poll_interval_seconds: parseInt(document.getElementById('poll_interval_seconds').value, 10),
+      earliest_slot_hour: parseInt(timeFromHidden.value, 10),
+      latest_slot_hour: parseInt(timeToHidden.value, 10),
       phone_alerts: switchOn('phone-alerts'),
       phone_alerts_relogin: switchOn('phone-alerts-relogin'),
       auto_refresh_chrome: switchOn('auto_refresh_chrome'),
