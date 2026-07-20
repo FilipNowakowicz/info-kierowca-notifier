@@ -118,9 +118,31 @@ dependencies (stdlib only).
     it can't also match `CHANGE_DATE_TEXT`'s own button. Confirmed live this lands on the actual
     date-picker screen ("Wybierz datę początkową dla nowego terminu") with an empty range and a
     disabled "Przejdź do podsumowania" button — nothing about the booking has changed. Goes no
-    further: picking the new date, the summary step, and any confirm past that stay real clicks
-    from you; no reservation/booking call happens in this file. Reuses `find_chrome()` from
-    `auto_refresh_session.py` rather than duplicating it.
+    further by default: picking the new date, the summary step, and any confirm past that stay
+    real clicks from you; no reservation/booking call happens in this file. Reuses `find_chrome()`
+    from `auto_refresh_session.py` rather than duplicating it.
+  - `--target-slot` (added 2026-07-20) is the one opt-in exception, gated behind config's
+    experimental, default-off `auto_select_slot` flag (no wizard toggle — hand-edit `config.json`)
+    — `trigger_open_browser()` only appends it when that flag is on, so an unset config behaves
+    exactly as before. Given the fastest hit_dict notifier.py's own search already found
+    (word/exam_type/datetime/places — the same object the push notification is built from),
+    `try_select_target_slot()` expands the date group matching that datetime in the "Najbliższe
+    dostępne terminy" list and clicks the radio button matching its exam type + time
+    (`select_slot_js()`/`EXAM_TYPE_LABELS_PL`). Deliberately does not drive the "Data rozpoczęcia"
+    date field — every hit notifier.py finds is already within the ~31-day window that list shows
+    without it (confirmed live 2026-07-20). By explicit user request as of 2026-07-20 it then also
+    clicks `SUMMARY_BUTTON_TEXT` ("Przejdź do podsumowania") via `wait_and_click_summary()` once
+    the selection has enabled it — `click_summary_button_js()` checks `disabled`/`aria-disabled`
+    itself rather than reusing `click_text_js()`, since a plain `.click()` on a still-disabled
+    button is a silent no-op in most browsers and the poll loop needs to tell that apart from an
+    actual click to keep retrying. Stops unconditionally on landing on that summary screen: nothing
+    past it is automated on either a successful or failed match — a slot someone else just took, a
+    DOM this hasn't been verified against, or whatever that screen's own confirm step looks like
+    (never scouted) must not submit anything on its own. **UNVERIFIED as of 2026-07-20** —
+    `select_slot_js()`/`click_summary_button_js()` were written from screenshots (walks up to 6
+    ancestor levels from each radio input looking for text containing both the exam label and time,
+    not a live DOM inspection like the rest of this file's click helpers), so confirm it actually
+    finds/clicks the right row and button before relying on it.
   - A `--no-auto-click` flag skips both clicks and just leaves the logged-in `/cases` tab open —
     used by `app.py`'s "Open browser" toolbar button (`trigger_open_browser(auto_click=False)`) so
     a manual troubleshooting click doesn't also kick off the reschedule flow; the automatic
@@ -384,14 +406,19 @@ isolation, set `auto_refresh_chrome: false` in the sandboxed `config.json` first
 - Polling/checking stays strictly read-only. The one deliberate exception is
   `open_logged_in_browser.py`'s reschedule assist. As of 2026-07-17, by explicit user request, the
   policy ceiling was raised to allow fuller automation in future (picking the new date, and
-  eventually the summary/confirm steps) — but the **current build deliberately stops at the
-  date-range picker**: it clicks only "Zmień termin" and "Zmień termin rezerwacji" and lands on the
-  empty "Wybierz datę początkową dla nowego terminu" screen with nothing selected. Picking the new
-  date, the summary step, and every confirm past that are still real clicks from the user, and no
-  code here selects a date or submits a reservation change. This matches what the README and
-  `docs/ADVANCED.md` tell users. When you do extend automation past the date picker, move all three
-  docs (here, README, ADVANCED) together, and get the same kind of explicit sign-off for anything
-  past the summary screen, since past that point mistakes act on a real, already-paid exam booking.
+  eventually the summary/confirm steps). By default the build still stops at the date-range picker:
+  it clicks only "Zmień termin" and "Zmień termin rezerwacji" and lands on the empty "Wybierz datę
+  początkową dla nowego terminu" screen with nothing selected. As of 2026-07-20, picking the new
+  date is implemented too, but only as an experimental, default-off opt-in (`auto_select_slot` in
+  `config.json`, no wizard toggle, unverified against the live site — see `open_logged_in_browser.py`
+  bullet above). As of 2026-07-20 (same explicit request), with the flag on it also clicks "Przejdź
+  do podsumowania" (go to summary) and lands on the summary/review screen — but stops there
+  unconditionally: whatever that screen's own confirm step looks like has never been scouted, and
+  it stays a real click from the user; no code here submits a reservation change. This matches what
+  the README and `docs/ADVANCED.md` tell users. When you extend automation past landing on the
+  summary screen, move all three docs (here, README, ADVANCED) together, and get the same kind of
+  explicit sign-off again first, since past that point mistakes act on a real, already-paid exam
+  booking.
 - Don't lower `notifier.MIN_POLL_INTERVAL_SECONDS` (15s, itself already lowered once from 60s by
   explicit user request on 2026-07-19) further without being asked again; the interval is
   user-adjustable within `[MIN_POLL_INTERVAL_SECONDS, MAX_POLL_INTERVAL_SECONDS]`

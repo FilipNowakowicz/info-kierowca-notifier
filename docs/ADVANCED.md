@@ -201,6 +201,25 @@ that's already `Potwierdzony` (confirmed) — if you don't have one, there's not
 this to click, and it'll just report that it couldn't find the button. This flow moves the date on
 a booking you already hold; it doesn't create one.
 
+### Experimental: auto-selecting the matching slot and reaching the summary screen
+
+Add `"auto_select_slot": true` to `config.json` by hand (there's no Settings toggle for this yet)
+to go further: after landing on the empty date-range picker, it also expands the date group that
+matches the slot notifier.py just found, clicks the radio button for that exact exam type + time,
+and then clicks "Przejdź do podsumowania" (go to summary) to land on the summary/review screen. It
+deliberately never touches the "Data rozpoczęcia" field — every slot notifier finds is already
+within the ~31-day window the picker shows without changing it.
+
+It stops there, unconditionally, on the summary/review screen: nothing past that click is
+automated, whether or not a matching slot was found (someone else may have taken it in the few
+seconds since the check that triggered this). Whatever that screen's own confirm step looks like
+has never been scouted — reviewing it and confirming yourself, if you want to, is still always on
+you.
+
+**This is unverified.** It was written from screenshots of the picker, not confirmed against the
+live DOM the way the rest of this flow was, so treat it as experimental until you've watched it
+select the right row and reach the summary screen yourself. Off by default for exactly that reason.
+
 ## Pausing / resuming
 
 **`app.py`:** click the headline on the dashboard — it toggles pause/resume (hover it and a

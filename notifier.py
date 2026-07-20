@@ -391,7 +391,7 @@ OPEN_BROWSER_SCRIPT = Path(__file__).parent / "open_logged_in_browser.py"
 OPEN_BROWSER_PORT = open_logged_in_browser.DEFAULT_PORT
 
 
-def trigger_open_browser(logger, config, auto_click=True):
+def trigger_open_browser(logger, config, auto_click=True, target_hit=None):
     """Best-effort: launch open_logged_in_browser.py so a pre-authenticated
     tab is already open by the moment the push notification lands — skips
     the login step that otherwise costs you the fastest-moving slots.
@@ -411,6 +411,18 @@ def trigger_open_browser(logger, config, auto_click=True):
     logged-in tab without clicking through to the reschedule date-picker —
     that click-through is only wanted for the automatic urgent-slot-hit
     path, which keeps the default auto_click=True.
+
+    target_hit, when given together with auto_click and config's
+    experimental, default-off "auto_select_slot" flag, is one of
+    run_check()'s hit_dicts (word/exam_type/datetime/places) — passed
+    through as --target-slot JSON so open_logged_in_browser.py can also try
+    to expand that date's slot group, select the matching time radio
+    button, and click through to the summary/review screen, past the plain
+    date-picker screen. Still never confirms anything on that screen —
+    UNVERIFIED against the live site as of 2026-07-20; see
+    open_logged_in_browser.py's own docstrings for exactly what it does and
+    does not click. Omitted (no --target-slot at all) whenever the flag is
+    off, so a config predating this feature behaves identically to before.
 
     Returns a short status string: "disabled", "no_chromium_browser",
     "already_running", "launched", or "launch_failed". No force option here
@@ -438,6 +450,8 @@ def trigger_open_browser(logger, config, auto_click=True):
         cmd = [sys.executable, str(OPEN_BROWSER_SCRIPT)]
     if not auto_click:
         cmd.append("--no-auto-click")
+    elif target_hit is not None and config.get("auto_select_slot", False):
+        cmd += ["--target-slot", json.dumps(target_hit)]
     try:
         subprocess.Popen(
             cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True
@@ -730,7 +744,7 @@ def run_check(logger, dash_status):
                     )
                     logger.info("outcome=push_sent detail=%r", fastest)
                 dash_status["last_push_signature"] = fastest
-                trigger_open_browser(logger, config)
+                trigger_open_browser(logger, config, target_hit=fastest)
         else:
             dash_status["last_push_signature"] = None
 

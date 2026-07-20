@@ -19,6 +19,7 @@ import json
 import subprocess
 import time
 import uuid
+from datetime import datetime
 
 import auto_refresh_session
 import cdp_client
@@ -62,12 +63,18 @@ def consent_cookie():
 # AUTO_CLICK_TARGETS in auto_refresh_session.py) — because the list page
 # also has an "Anuluj" (cancel the booking outright) button close by, and
 # CONFIRM_CHANGE_DATE_TEXT is intentionally the longer, more specific phrase
-# so it can't also match CHANGE_DATE_TEXT's own button. This still stops
-# right after the second click; nothing past it is automated, so picking
-# the actual new date and any final confirm past that stays a real click
-# from you.
+# so it can't also match CHANGE_DATE_TEXT's own button. By default nothing
+# past the second click is automated, so picking the actual new date and
+# any final confirm past that stays a real click from you. The only
+# optional exception is --target-slot (see try_select_target_slot()),
+# itself off unless config's experimental auto_select_slot flag is set —
+# and even then it stops at landing on the summary/review screen (selects
+# the matching slot, then clicks "Przejdź do podsumowania"): whatever that
+# screen's own confirm step looks like is unscouted and stays a real click
+# from you, by explicit user request as of 2026-07-20.
 CHANGE_DATE_TEXT = "Zmień termin"
 CONFIRM_CHANGE_DATE_TEXT = "Zmień termin rezerwacji"
+SUMMARY_BUTTON_TEXT = "Przejdź do podsumowania"
 
 
 def click_text_js(text):
@@ -94,6 +101,108 @@ def click_text_js(text):
 """ % json.dumps(text)
 
 
+# notifier.py's hit_dicts use the search API's own exam_type values
+# ("Theoretical"/"Practice"); these are the labels the reschedule modal
+# renders in each slot row (confirmed from screenshots, not live DOM).
+EXAM_TYPE_LABELS_PL = {
+    "Theoretical": "Egzamin teoretyczny",
+    "Practice": "Egzamin praktyczny",
+}
+
+
+def select_slot_js(exam_label, time_str):
+    # EXPERIMENTAL / UNVERIFIED against the live site as of 2026-07-20 —
+    # written from screenshots of the slot-picker modal, not a live DOM
+    # inspection like click_text_js's button/role="button" selector was.
+    # The modal renders one radio input per (date, time) slot row inside an
+    # expanded date group; this walks up from each radio looking for an
+    # ancestor whose text contains both the Polish exam-type label and the
+    # HH:MM time, then clicks that radio directly (not a clickable-ancestor
+    # heuristic like click_text_js's, since a radio input is always
+    # clickable regardless of how the row around it is styled). Capped at 6
+    # ancestor levels, same as __ikw_clickableAncestor, to avoid walking
+    # high enough to span into a sibling row's text.
+    return auto_refresh_session.CLICKABLE_HELPERS_JS + """
+(function(examLabel, timeStr) {
+  var radios = document.querySelectorAll('input[type="radio"]');
+  for (var i = 0; i < radios.length; i++) {
+    var radio = radios[i];
+    var cur = radio;
+    var t = '';
+    for (var depth = 0; depth < 6 && cur; depth++) {
+      t = (cur.innerText || cur.textContent || '').trim();
+      if (t.indexOf(examLabel) !== -1 && t.indexOf(timeStr) !== -1) break;
+      cur = cur.parentElement;
+    }
+    if (t.indexOf(examLabel) !== -1 && t.indexOf(timeStr) !== -1) {
+      radio.click();
+      return true;
+    }
+  }
+  return false;
+})(%s, %s)
+""" % (json.dumps(exam_label), json.dumps(time_str))
+
+
+def wait_and_select_slot(host, port, exam_label, time_str, timeout=20):
+    """Same polling shape as wait_and_click(), for select_slot_js() instead —
+    the matching slot row may not be in the DOM yet right after the date
+    group is expanded."""
+    js = select_slot_js(exam_label, time_str)
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            if cdp_client.evaluate_in_page(host, port, js):
+                return True
+        except Exception:
+            pass
+        time.sleep(0.5)
+    return False
+
+
+def click_summary_button_js():
+    # Deliberately its own function rather than reusing click_text_js():
+    # SUMMARY_BUTTON_TEXT starts out present but disabled (see screenshots —
+    # greyed out until a slot radio is selected), and a plain el.click() on
+    # a disabled button is a silent no-op in most browsers rather than an
+    # error. click_text_js() has no notion of "disabled", so a caller
+    # couldn't tell a real click from one that did nothing; this checks
+    # el.disabled/aria-disabled explicitly and only reports success (and
+    # only clicks) once it's actually enabled, so the polling wait loop
+    # below keeps retrying meanwhile instead of falsely reporting done.
+    return auto_refresh_session.CLICKABLE_HELPERS_JS + """
+(function(text) {
+  var all = document.querySelectorAll('button, [role="button"]');
+  for (var i = 0; i < all.length; i++) {
+    var el = all[i];
+    var t = (el.innerText || el.textContent || '').trim();
+    if (t === text) {
+      if (el.disabled || el.getAttribute('aria-disabled') === 'true') return false;
+      el.click();
+      return true;
+    }
+  }
+  return false;
+})(%s)
+""" % json.dumps(SUMMARY_BUTTON_TEXT)
+
+
+def wait_and_click_summary(host, port, timeout=20):
+    """Same polling shape as wait_and_click(), for click_summary_button_js()
+    instead — the button needs a moment to go from disabled to enabled
+    after the slot radio click lands."""
+    js = click_summary_button_js()
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            if cdp_client.evaluate_in_page(host, port, js):
+                return True
+        except Exception:
+            pass
+        time.sleep(0.5)
+    return False
+
+
 def wait_and_click(host, port, text, timeout=20):
     """Poll for an element containing `text` and click it once it renders —
     content on this SPA loads asynchronously after navigation/a previous
@@ -114,6 +223,60 @@ def wait_and_click(host, port, text, timeout=20):
     return False
 
 
+def try_select_target_slot(host, port, target_slot_json):
+    """Best-effort continuation of the auto-click-through, gated behind
+    --target-slot (itself only ever passed when config's experimental
+    auto_select_slot flag is on — see notifier.trigger_open_browser()).
+
+    Slots within a ~31-day window show up in the "Najbliższe dostępne
+    terminy" list on the date-picker screen without needing to touch the
+    "Data rozpoczęcia" field at all — every slot notifier.py finds is
+    already inside that window (MAX_DAYS_AHEAD), so this deliberately
+    doesn't attempt to drive that date input. Confirmed live 2026-07-20:
+    the field only matters for pushing the window further out than that.
+
+    Expands the date group matching the target's date, selects the radio
+    button matching its exam type + time, then — by explicit user request
+    as of 2026-07-20 — clicks "Przejdź do podsumowania" (go to summary) to
+    land on the summary/review screen. Stops unconditionally there: nothing
+    past that click is automated, since that screen's own confirm step has
+    never been scouted. If the slot can't be found (already taken by
+    someone else, or a DOM this hasn't been verified against) it stops even
+    earlier and leaves you to pick it by hand — this never guesses.
+    """
+    try:
+        target = json.loads(target_slot_json)
+        dt = datetime.fromisoformat(target["datetime"])
+        exam_label = EXAM_TYPE_LABELS_PL.get(target["exam_type"], target["exam_type"])
+    except Exception as e:
+        print(f"Couldn't parse --target-slot ({e!r}) — pick the slot yourself.")
+        return
+    date_str = dt.strftime("%d/%m/%Y")
+    time_str = dt.strftime("%H:%M")
+    print(f"Looking for {exam_label} at {time_str} on {date_str}...")
+    if not wait_and_click(host, port, date_str):
+        print(f"Couldn't find the '{date_str}' date group automatically — pick the slot yourself.")
+        return
+    print(f"Expanded '{date_str}'.")
+    if wait_and_select_slot(host, port, exam_label, time_str):
+        print(f"Selected {exam_label} at {time_str}.")
+        if wait_and_click_summary(host, port):
+            print(
+                f"Clicked '{SUMMARY_BUTTON_TEXT}' — review the summary screen and confirm "
+                "yourself from here. Nothing past this has been automated or verified."
+            )
+        else:
+            print(
+                f"Selected the slot but couldn't click '{SUMMARY_BUTTON_TEXT}' automatically "
+                "— click it yourself."
+            )
+    else:
+        print(
+            f"Couldn't find a matching {exam_label} row at {time_str} "
+            "(may already be taken) — pick the slot yourself."
+        )
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument(
@@ -123,6 +286,16 @@ def main():
     parser.add_argument(
         "--no-auto-click", action="store_true",
         help="Just open a logged-in tab — skip the Zmień termin/confirm auto-click-through",
+    )
+    parser.add_argument(
+        "--target-slot", default=None,
+        help=(
+            "JSON hit dict (word/exam_type/datetime/places, matching notifier.py's hit_dicts) "
+            "to also select on the date-range picker and carry through to the summary screen "
+            "after the Zmień termin click-through. Experimental/unverified — see "
+            "try_select_target_slot()'s docstring. Never clicks past landing on that summary "
+            "screen: its own confirm step stays a manual click."
+        ),
     )
     args = parser.parse_args()
 
@@ -169,7 +342,11 @@ def main():
     elif wait_and_click("127.0.0.1", args.port, CHANGE_DATE_TEXT):
         print(f"Clicked '{CHANGE_DATE_TEXT}'.")
         if wait_and_click("127.0.0.1", args.port, CONFIRM_CHANGE_DATE_TEXT):
-            print(f"Clicked '{CONFIRM_CHANGE_DATE_TEXT}' — pick the new date and confirm yourself from here.")
+            print(f"Clicked '{CONFIRM_CHANGE_DATE_TEXT}'.")
+            if args.target_slot:
+                try_select_target_slot("127.0.0.1", args.port, args.target_slot)
+            else:
+                print("Pick the new date and confirm yourself from here.")
         else:
             print(f"Couldn't find '{CONFIRM_CHANGE_DATE_TEXT}' automatically — click it yourself.")
     else:
