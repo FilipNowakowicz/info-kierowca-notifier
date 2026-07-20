@@ -521,13 +521,19 @@ WIZARD_PAGE = """<!doctype html>
      — not container padding, which absolutely positioned children ignore
      (their containing block is the padding *edge*, i.e. as if the padding
      weren't there) — so the thumbs land flush with the track ends instead
-     of overhanging past them. */
+     of overhanging past them.
+     The inputs' own `top` is also set to match .dual-range-track's `top`
+     (11px), not 0: the shared ::-webkit-slider-thumb rule's margin-top:-6px
+     centers the thumb on the *input's own* 4px-tall box, not on wherever
+     the separately-drawn visible track div happens to sit — with top:0
+     that math centers the thumb 11px above the visible track instead of on
+     it. */
   .dual-range { position: relative; height: 26px; margin: 0.5rem 0 0.4rem; }
   .dual-range-track { position: absolute; top: 11px; left: 8px; right: 8px; height: 4px;
     border-radius: 999px; background: #3d3d3d; }
   .dual-range-fill { position: absolute; top: 11px; height: 4px; border-radius: 999px;
     background: var(--accent); }
-  .dual-range input[type=range] { position: absolute; top: 0; left: 8px; width: calc(100% - 16px);
+  .dual-range input[type=range] { position: absolute; top: 11px; left: 8px; width: calc(100% - 16px);
     margin: 0; background: none; pointer-events: none; }
   .dual-range input[type=range]::-webkit-slider-runnable-track { background: none; }
   .dual-range input[type=range]::-moz-range-track { background: none; }
