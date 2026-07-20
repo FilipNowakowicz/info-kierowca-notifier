@@ -775,8 +775,8 @@ function selectCenter(id) {
   selectedIds.add(id);
   renderSelected();
   searchInput.value = '';
-  renderDropdown('');
-  searchInput.focus();
+  closeDropdown();
+  searchInput.blur();
 }
 
 function updateActiveItem() {
