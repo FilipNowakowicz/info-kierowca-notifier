@@ -28,6 +28,19 @@ STATUS_FILE = STATE_DIR / "status.json"
 PAUSE_FILE = STATE_DIR / "paused"
 AUTO_REFRESH_LOCK = STATE_DIR / "auto-refresh.lock"
 
+# Both added 2026-07-20 for open_logged_in_browser.py's experimental
+# auto_confirm_reschedule flow (see notifier.trigger_open_browser() and
+# open_logged_in_browser.try_select_target_slot()). RESCHEDULE_LOG_FILE is
+# separate from LOG_FILE rather than shared with it: that one's written via
+# a RotatingFileHandler from notifier.py's own process, and a detached
+# subprocess writing raw stdout into the same path could straddle a
+# rotation and silently write into an already-renamed file. This one is a
+# plain append-only file with no rotation — events here are rare (one
+# reschedule attempt at a time, not once a tick) so it isn't expected to
+# grow the way the poll log does.
+RESCHEDULE_LOG_FILE = STATE_DIR / "reschedule.log"
+RESCHEDULE_CONFIRM_COOLDOWN_FILE = STATE_DIR / "reschedule-confirm-cooldown"
+
 # Static data shipped alongside the code (and bundled into the frozen build).
 WORD_CENTERS_FILE = Path(__file__).parent / "word_centers.json"
 CATEGORIES_FILE = Path(__file__).parent / "categories.json"

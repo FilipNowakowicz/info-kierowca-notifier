@@ -184,6 +184,37 @@ dependencies (stdlib only).
     change immediately — see that function's own bullet above for why this matters alongside the
     exclusive-urgency change. On no match within timeout, config is left untouched and the user is
     told to check/update it by hand — this never guesses at a new date.
+  - Two follow-up fixes added 2026-07-20 after a review of the above found the auto-triggered path
+    was writing all its outcomes nowhere and could re-fire before a prior attempt's own outcome was
+    even known:
+    - `notifier.trigger_open_browser()` now launches this file with stdout/stderr going to
+      `paths.RESCHEDULE_LOG_FILE` (append mode) instead of `DEVNULL` — every `print()` in
+      `try_select_target_slot()` used to be unreachable on the actual auto-triggered path (only
+      visible when run by hand from a terminal); now it's at least inspectable after the fact.
+      Deliberately a separate plain file, not shared with `notifier.LOG_FILE`: that one's written by
+      a `RotatingFileHandler` from `notifier.py`'s own process, and a detached subprocess writing raw
+      stdout into the same path could straddle a rotation and silently write into an
+      already-renamed file.
+    - `push_ntfy()` (in this file — duplicated from `notifier.push_ntfy()`, same circular-import
+      reason as elsewhere here, and deliberately no `tags` param to match this project's earlier
+      decision to drop emoji tags from pushes) now fires, reusing `config`'s existing `ntfy_topic`,
+      for every outcome from the point `auto_confirm_reschedule` starts trying to reach the real
+      submit click onward: summary-mismatch abort, confirm button never becoming clickable,
+      confirmed-but-unverified-on-`/cases`, and confirmed-and-verified. Scoped to only that stage —
+      the earlier, lower-stakes `auto_select_slot`-only steps already got their own "slot found"
+      push before the browser opened, and aren't worth a second alert on top of the log file.
+    - `paths.RESCHEDULE_CONFIRM_COOLDOWN_FILE` is written right before the real submit click is
+      attempted (regardless of its outcome), and
+      `notifier.confirm_reschedule_cooldown_active()` (checked in `trigger_open_browser()` before
+      ever appending `--confirm-reschedule`) withholds that flag for
+      `notifier.RESCHEDULE_CONFIRM_COOLDOWN_SECONDS` (900s, not user-configurable) after. This
+      closes the gap the confirmed-but-unverified case leaves open: if the reschedule actually
+      succeeded but `wait_and_verify_booking()` merely timed out, `current_slot_date` stays stale —
+      without this cooldown, the very next poll cycle finding some other nearby slot could
+      immediately attempt *another* real confirm click before a human has had any chance to see the
+      push from the point above and step in. During the cooldown, `auto_select_slot` alone still
+      runs normally (just without `--confirm-reschedule`) — only the actual submit step is held
+      back.
   - A `--no-auto-click` flag skips both clicks and just leaves the logged-in `/cases` tab open —
     used by `app.py`'s "Open browser" toolbar button (`trigger_open_browser(auto_click=False)`) so
     a manual troubleshooting click doesn't also kick off the reschedule flow; the automatic

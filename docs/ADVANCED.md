@@ -246,6 +246,23 @@ succeed (the page didn't update in time, wording differs, etc.), `config.json` i
 you're told to check the site and update "Date of your current booked slot" in Settings yourself if
 it did go through.
 
+**How you find out what happened.** This whole flow is auto-triggered by a detached background
+process, so none of it prints to a terminal you're watching. Two things surface it instead:
+
+- Everything gets logged to `~/.local/state/info-kierowca-notifier/reschedule.log` (plain
+  append-only text — separate from the main `notifier.log`).
+- A phone push (via your existing `ntfy_topic`) fires for anything from the point it starts trying
+  to click the final confirm button onward: couldn't verify the summary matched, couldn't click
+  confirm, confirmed but couldn't verify it landed, or confirmed and verified. The earlier
+  slot-selection steps don't get a second push — you already got one when the slot was first found.
+
+**A short cooldown after every confirm attempt.** Once it's tried the final confirm click — whether
+or not that click, or the verification after it, actually succeeded — it won't try again for 15
+minutes. This matters specifically for the "confirmed but couldn't verify" case: if the reservation
+actually went through but the check just timed out, `current_slot_date` stays on the old date, and
+without this cooldown the very next check finding some other nearby slot could immediately submit
+*another* real reservation change before you've had a chance to see the push above and step in.
+
 ## Pausing / resuming
 
 **`app.py`:** click the headline on the dashboard — it toggles pause/resume (hover it and a

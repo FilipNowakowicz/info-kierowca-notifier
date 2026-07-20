@@ -15,13 +15,17 @@ info-kierowca.pl itself — see cdp_client.py's docstring for the
 debug-port security note. The one write this file can make is conditional:
 with --confirm-reschedule and a confirmed booking change verified on
 /cases afterward, it updates config.json's current_slot_date to match (see
-update_current_slot_date()) — otherwise it writes nothing.
+update_current_slot_date()) — otherwise it writes nothing except its own
+progress to RESCHEDULE_LOG_FILE (see push_ntfy()'s docstring for why this
+file also duplicates a slice of notifier.py's own notification logic
+instead of importing it).
 """
 import argparse
 import json
 import os
 import subprocess
 import time
+import urllib.request
 import uuid
 from datetime import datetime
 
@@ -29,7 +33,13 @@ import auto_refresh_session
 import cdp_client
 from auto_refresh_session import find_chrome
 
-from paths import CONFIG_FILE, STATE_DIR  # noqa: E402
+from paths import CONFIG_FILE, RESCHEDULE_CONFIRM_COOLDOWN_FILE, STATE_DIR  # noqa: E402
+
+# Duplicated from notifier.py rather than imported — notifier.py imports this
+# module at the top level (OPEN_BROWSER_PORT = open_logged_in_browser.DEFAULT_PORT),
+# so importing notifier back here would be circular.
+NTFY_URL = "https://ntfy.sh"
+NTFY_TIMEOUT = 15
 
 PROFILE_DIR = STATE_DIR / "chrome-reschedule-profile"
 
@@ -292,6 +302,50 @@ def wait_and_verify_booking(host, port, date_str, time_str, exam_label, timeout=
     return False
 
 
+def read_config():
+    """Best-effort read of config.json — {} on any failure (missing file,
+    bad JSON), so callers needing just one optional value (e.g. ntfy_topic)
+    can treat a missing/unreadable config the same as an empty one, rather
+    than every caller needing its own try/except. NOT used by
+    update_current_slot_date() below — that read must raise on failure so
+    its own except block can skip the write instead of silently clobbering
+    config.json with a near-empty dict.
+    """
+    try:
+        return json.loads(CONFIG_FILE.read_text())
+    except Exception:
+        return {}
+
+
+def push_ntfy(topic, title, message, priority="default"):
+    """POST a plain notification to ntfy.sh — duplicated from
+    notifier.push_ntfy() rather than imported, same circular-import reason
+    as NTFY_URL/NTFY_TIMEOUT above. No tags param: this project deliberately
+    dropped emoji tags from pushes elsewhere (see git history), so this
+    stays consistent with that. Best-effort — a failure here is printed
+    (now captured in RESCHEDULE_LOG_FILE rather than lost to /dev/null, see
+    trigger_open_browser()) rather than raised, same as every other outcome
+    in this file.
+
+    Used only for the handful of outcomes in try_select_target_slot() tied
+    to auto_confirm_reschedule actually attempting or completing the final
+    submit click — not for the earlier, lower-stakes auto_select_slot
+    steps, which already got their own "slot found" push before the
+    browser ever opened and whose own failures are logged but not worth a
+    second, separate alert.
+    """
+    if not topic:
+        return
+    url = f"{NTFY_URL}/{topic}"
+    headers = {"Title": title, "Priority": priority}
+    req = urllib.request.Request(url, data=message.encode("utf-8"), headers=headers, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=NTFY_TIMEOUT):
+            pass
+    except Exception as e:
+        print(f"Couldn't send push notification ({e!r}).")
+
+
 def update_current_slot_date(new_date_iso):
     """Best-effort: after wait_and_verify_booking() confirms the reschedule
     actually went through, update config.json's current_slot_date to the
@@ -391,6 +445,21 @@ def try_select_target_slot(host, port, target_slot_json, confirm=False):
     re-triggering auto_confirm_reschedule on a slot we already booked
     into. Skipped (config left untouched) if that verification doesn't
     succeed within its timeout.
+
+    Two more things happen once confirm=True, both added 2026-07-20 as a
+    direct follow-up to a code review that flagged this whole flow's
+    outcomes as otherwise invisible when auto-triggered (stdout used to go
+    to DEVNULL — see trigger_open_browser()'s own docstring, now fixed at
+    that end) and re-triggerable while a prior attempt's outcome was still
+    unknown: (1) right before the real submit click is attempted,
+    RESCHEDULE_CONFIRM_COOLDOWN_FILE is written, which
+    notifier.confirm_reschedule_cooldown_active() checks before ever
+    passing --confirm-reschedule again; (2) a push notification
+    (push_ntfy(), reusing config's existing ntfy_topic) fires for every
+    outcome from that point on — summary mismatch, confirm button
+    unclickable, confirmed-but-unverified, or confirmed-and-verified —
+    since none of those are things that should only be discoverable by
+    someone happening to be watching the Chrome window.
     """
     try:
         target = json.loads(target_slot_json)
@@ -426,17 +495,46 @@ def try_select_target_slot(host, port, target_slot_json, confirm=False):
             "has been automated or verified."
         )
         return
+    # Only fetched once we're actually in the auto-confirm path: pushes below are
+    # reserved for outcomes tied to attempting/completing the real submit click,
+    # not the earlier, lower-stakes auto_select_slot-only steps above, which
+    # already got their own "slot found" push before the browser ever opened.
+    topic = read_config().get("ntfy_topic")
     if not wait_and_verify_summary(host, port, date_str, time_str, exam_label):
         print(
             "Summary screen didn't show the expected date/time/exam type — NOT clicking "
             f"'{CONFIRM_SUMMARY_TEXT}' automatically. Review it yourself before confirming."
         )
+        push_ntfy(
+            topic,
+            "info-kierowca: reschedule needs review",
+            f"Reached the summary screen but it didn't match the intended {exam_label} at "
+            f"{date_str}, {time_str} — did NOT auto-confirm. Check the browser window.",
+            priority="urgent",
+        )
         return
     print("Summary screen matches the intended slot.")
+    # Written right before attempting the real submit click, regardless of its
+    # outcome — see notifier.confirm_reschedule_cooldown_active(), which this
+    # gates: a confirm attempt whose own result is uncertain (verification
+    # below can time out even on a real success) must not let the very next
+    # poll cycle immediately attempt another one on some other nearby slot.
+    try:
+        RESCHEDULE_CONFIRM_COOLDOWN_FILE.parent.mkdir(parents=True, exist_ok=True)
+        RESCHEDULE_CONFIRM_COOLDOWN_FILE.write_text(datetime.now().isoformat())
+    except Exception:
+        pass  # best-effort, same tolerance as the read side treating a missing file as "no cooldown"
     if not wait_and_click_enabled(host, port, CONFIRM_SUMMARY_TEXT):
         print(
             f"Couldn't click '{CONFIRM_SUMMARY_TEXT}' automatically — confirm it yourself "
             "if the summary looks right."
+        )
+        push_ntfy(
+            topic,
+            "info-kierowca: couldn't auto-confirm",
+            f"On the summary screen for {exam_label} at {date_str}, {time_str} but couldn't click "
+            "the final confirm button automatically. Check the browser window.",
+            priority="urgent",
         )
         return
     print(
@@ -449,15 +547,35 @@ def try_select_target_slot(host, port, target_slot_json, confirm=False):
         cdp_client.navigate(host, port, DEFAULT_URL)
     except Exception as e:
         print(f"Couldn't reload /cases to verify the booking ({e!r}) — check it yourself.")
+        push_ntfy(
+            topic,
+            "info-kierowca: reschedule submitted, unverified",
+            f"Confirmed {exam_label} at {date_str}, {time_str} but couldn't reload /cases to "
+            "verify it. Check the site — current_slot_date was NOT updated automatically.",
+            priority="urgent",
+        )
         return
     if wait_and_verify_booking(host, port, date_str, time_str, exam_label):
         print(f"Confirmed on /cases: {exam_label} at {date_str}, {time_str} shows as Potwierdzona.")
         update_current_slot_date(dt.date().isoformat())
+        push_ntfy(
+            topic,
+            "info-kierowca: reschedule confirmed",
+            f"Booked {exam_label} at {date_str}, {time_str}. current_slot_date updated.",
+            priority="default",
+        )
     else:
         print(
             "Couldn't confirm the new booking on /cases automatically — check the site and, "
             "if it did go through, update 'Date of your current booked slot' in Settings "
             "yourself."
+        )
+        push_ntfy(
+            topic,
+            "info-kierowca: reschedule submitted, unverified",
+            f"Clicked confirm for {exam_label} at {date_str}, {time_str} but couldn't verify it "
+            "landed on /cases. Check the site — current_slot_date was NOT updated automatically.",
+            priority="urgent",
         )
 
 

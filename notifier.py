@@ -28,6 +28,8 @@ from paths import (  # noqa: F401  (re-exported: other modules read these off no
     CONFIG_FILE,
     LOG_FILE,
     PAUSE_FILE,
+    RESCHEDULE_CONFIRM_COOLDOWN_FILE,
+    RESCHEDULE_LOG_FILE,
     SESSION_FILE,
     STATE_DIR,
     STATUS_FILE,
@@ -400,6 +402,32 @@ def auto_refresh_in_progress():
 OPEN_BROWSER_SCRIPT = Path(__file__).parent / "open_logged_in_browser.py"
 OPEN_BROWSER_PORT = open_logged_in_browser.DEFAULT_PORT
 
+# How long after an attempted final-confirm click (see
+# open_logged_in_browser.try_select_target_slot(), which writes
+# RESCHEDULE_CONFIRM_COOLDOWN_FILE right before that click) trigger_open_browser()
+# holds off passing --confirm-reschedule again. Added 2026-07-20: without it, a
+# confirm attempt whose own post-click verification timed out (so
+# current_slot_date never got updated) could have a very next poll cycle attempt
+# another confirm on some other nearby slot — a real reservation change,
+# possibly to a worse date, before there's been any chance for a human to
+# notice and step in. Not user-configurable, same as AUTO_REFRESH_LOCK having
+# no timeout of its own — this is a safety margin, not a tunable.
+RESCHEDULE_CONFIRM_COOLDOWN_SECONDS = 900
+
+
+def confirm_reschedule_cooldown_active():
+    """Whether a --confirm-reschedule attempt happened recently enough that
+    trigger_open_browser() should hold off passing that flag again. Missing or
+    unparseable RESCHEDULE_CONFIRM_COOLDOWN_FILE just means no recent attempt
+    is known — not a hard stop, so a fresh install/state dir behaves as if the
+    cooldown already elapsed.
+    """
+    try:
+        last = datetime.fromisoformat(RESCHEDULE_CONFIRM_COOLDOWN_FILE.read_text().strip())
+    except (FileNotFoundError, ValueError):
+        return False
+    return (datetime.now() - last).total_seconds() < RESCHEDULE_CONFIRM_COOLDOWN_SECONDS
+
 
 def trigger_open_browser(logger, config, auto_click=True, target_hit=None):
     """Best-effort: launch open_logged_in_browser.py so a pre-authenticated
@@ -446,6 +474,20 @@ def trigger_open_browser(logger, config, auto_click=True, target_hit=None):
     --target-slot/--confirm-reschedule at all) whenever off, so a config
     predating this feature behaves identically to before.
 
+    --confirm-reschedule is further gated by confirm_reschedule_cooldown_active()
+    (see its own docstring) — even with auto_confirm_reschedule on, it's
+    withheld (falling back to --target-slot alone, same as auto_select_slot
+    without auto_confirm_reschedule) if a confirm attempt was made too
+    recently, regardless of whether that attempt's own outcome is known.
+
+    The launched subprocess's stdout/stderr go to RESCHEDULE_LOG_FILE
+    (append mode, added 2026-07-20) rather than DEVNULL — this is a
+    detached, fire-and-forget launch with no other way for its outcome to
+    reach anyone, and open_logged_in_browser.py's own print()s are the only
+    record of what an auto-triggered run actually did, especially the
+    "couldn't verify automatically — check yourself" messages past the
+    confirm click.
+
     Returns a short status string: "disabled", "no_chromium_browser",
     "already_running", "launched", or "launch_failed". No force option here
     (unlike trigger_auto_refresh) — forcing would mean launching a second
@@ -475,11 +517,16 @@ def trigger_open_browser(logger, config, auto_click=True, target_hit=None):
     elif target_hit is not None and config.get("auto_select_slot", False):
         cmd += ["--target-slot", json.dumps(target_hit)]
         if config.get("auto_confirm_reschedule", False):
-            cmd.append("--confirm-reschedule")
+            if confirm_reschedule_cooldown_active():
+                logger.info("outcome=confirm_reschedule_skipped detail=cooldown_active")
+            else:
+                cmd.append("--confirm-reschedule")
     try:
-        subprocess.Popen(
-            cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True
-        )
+        RESCHEDULE_LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with open(RESCHEDULE_LOG_FILE, "a") as logf:
+            logf.write(f"\n--- {datetime.now().isoformat()} launching: {cmd!r} ---\n")
+            logf.flush()
+            subprocess.Popen(cmd, stdout=logf, stderr=subprocess.STDOUT, start_new_session=True)
         logger.info("outcome=open_browser_launched")
         return "launched"
     except Exception as e:
