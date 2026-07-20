@@ -4,9 +4,11 @@ A slot checker for [info-kierowca.pl](https://info-kierowca.pl), the Polish driv
 portal. It watches for open exam slots and alerts you — on a dashboard and your phone — the moment
 one appears. Checking is always read-only. Optionally, if you already have a paid booking and want
 to move it earlier, it can also open a browser that's already logged in and click through to the
-reschedule date picker for you — but picking the new date and every confirm step after that is
-always a click you make yourself; nothing gets rebooked automatically. See
-[How it works](#how-it-works) below.
+reschedule date picker for you. By default, picking the new date and every confirm step after that
+is still a click you make yourself; nothing gets rebooked automatically. Two experimental,
+off-by-default toggles in Settings → Automation go further and can pick the matching slot and
+submit the reservation change with no clicks from you at all — see
+[How it works](#how-it-works) and [docs/ADVANCED.md](docs/ADVANCED.md) before turning those on.
 
 ![Dashboard showing a found slot](docs/dashboard.png)
 
@@ -36,10 +38,12 @@ If you turn on the reschedule assist (on by default, toggle with `auto_open_brow
 slot also opens a Chrome window already logged in with your session, and clicks through to the
 "change date" screen for your existing booking. By default it stops there, on an empty date-range
 picker with nothing submitted — picking the new date and confirming is always done by you, by hand.
-(There are two experimental, off-by-default flags that go further: one pre-selects the matching
-slot and reaches the summary screen, the other — requiring the first — also confirms it, actually
-submitting the reservation change. See ADVANCED.) See [docs/ADVANCED.md](docs/ADVANCED.md) for
-exactly what it clicks and why.
+Settings → Automation has two more toggles for this, both off by default: one pre-selects the
+matching slot and reaches the summary screen, the other — requiring the first, and its own
+confirm dialog before it'll switch on — also confirms it, actually submitting the reservation
+change with no click from you at all. See [docs/ADVANCED.md](docs/ADVANCED.md) for exactly what
+each one clicks and why, and confirm the slot-selection step works reliably before ever turning
+on the second.
 
 Your login session lasts about an hour before info-kierowca.pl forces a fresh QR scan — that's a
 site-side limit, not something this tool can extend. When it happens, a Chrome window opens
