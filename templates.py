@@ -605,20 +605,6 @@ WIZARD_PAGE = """<!doctype html>
         <div class="pill" data-val="Practice" role="button" tabindex="0">Practical</div>
       </div>
 
-      <div class="freq-head" style="margin-top:1rem;">
-        <label for="time_from_slider">Preferred time of day</label>
-        <span class="freq-value" id="time-window-label">All day</span>
-      </div>
-      <div class="dual-range" id="time-window-slider">
-        <div class="dual-range-track"></div>
-        <div class="dual-range-fill" id="time-window-fill"></div>
-        <input type="range" id="time_from_slider" min="0" max="24" step="1" value="0">
-        <input type="range" id="time_to_slider" min="0" max="24" step="1" value="24">
-      </div>
-      <input type="hidden" id="earliest_slot_hour" value="0">
-      <input type="hidden" id="latest_slot_hour" value="24">
-      <div class="hint" style="margin-top:-0.15rem;">A slot outside this window won't trigger an alert or open the reschedule browser. Checking and the dashboard still show everything found.</div>
-
       <div class="divider"></div>
 
       <label>WORD centers to watch (__CENTER_COUNT__ nationwide)</label>
@@ -638,6 +624,20 @@ WIZARD_PAGE = """<!doctype html>
         <input type="hidden" id="current_slot_date">
         <div class="calendar" id="calendar"></div>
       </div>
+
+      <div class="freq-head" style="margin-top:1rem;">
+        <label for="time_from_slider">Preferred time of day</label>
+        <span class="freq-value" id="time-window-label">All day</span>
+      </div>
+      <div class="dual-range" id="time-window-slider">
+        <div class="dual-range-track"></div>
+        <div class="dual-range-fill" id="time-window-fill"></div>
+        <input type="range" id="time_from_slider" min="0" max="24" step="1" value="0">
+        <input type="range" id="time_to_slider" min="0" max="24" step="1" value="24">
+      </div>
+      <input type="hidden" id="earliest_slot_hour" value="0">
+      <input type="hidden" id="latest_slot_hour" value="24">
+      <div class="hint" style="margin-top:-0.15rem;">A slot outside this window won't trigger an alert or open the reschedule browser. Checking and the dashboard still show everything found.</div>
 
       <div class="divider"></div>
 
