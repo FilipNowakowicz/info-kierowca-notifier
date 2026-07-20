@@ -635,6 +635,23 @@ def fetch_pkk_profiles(session):
         return []
 
 
+def _handle_auth_expired(logger, dash_status, config, status, stage):
+    """Shared response to an auth-failure status in either run_check() stage:
+    log it, fire the critical 'session expired' notification, mark the
+    dashboard status, and kick off an auto-relogin. Only the log's stage label
+    and the status message differ per stage; which status codes count as an
+    auth failure stays each stage's own decision (see the call sites — refresh
+    also treats 404, both fold in 500)."""
+    logger.info("outcome=auth_expired status=%s stage=%s", status, stage)
+    notify(
+        "info-kierowca: session expired",
+        "Log back in via browser and update session.json",
+        "critical",
+    )
+    update_status(dash_status, "auth_expired", f"Session expired during {stage}")
+    trigger_auto_refresh(logger, config)
+
+
 def run_check(logger, dash_status):
     """Note: pausing/resuming itself is applied instantly by app.py's
     /pause and /resume handlers (they write dash_status/status.json
@@ -706,14 +723,7 @@ def run_check(logger, dash_status):
         # "Session expired" and never called trigger_auto_refresh(), leaving
         # the user to notice and relogin by hand instead of Chrome popping
         # open on its own.
-        logger.info("outcome=auth_expired status=%s stage=refresh", status)
-        notify(
-            "info-kierowca: session expired",
-            "Log back in via browser and update session.json",
-            "critical",
-        )
-        update_status(dash_status, "auth_expired", "Session expired during refresh")
-        trigger_auto_refresh(logger, config)
+        _handle_auth_expired(logger, dash_status, config, status, "refresh")
         return
     else:
         # Other 5xx: a transient upstream error is not an expired session,
@@ -744,14 +754,7 @@ def run_check(logger, dash_status):
     # from the search endpoint has in practice always turned out to be the
     # same underlying cookie expiry. See docs/ADVANCED.md's auto-relogin note.
     if status in (401, 403, 500):
-        logger.info("outcome=auth_expired status=%s stage=search", status)
-        notify(
-            "info-kierowca: session expired",
-            "Log back in via browser and update session.json",
-            "critical",
-        )
-        update_status(dash_status, "auth_expired", "Session expired during search")
-        trigger_auto_refresh(logger, config)
+        _handle_auth_expired(logger, dash_status, config, status, "search")
         return
     if status != 200:
         # 5xx included: transient upstream errors are not an expired session.
