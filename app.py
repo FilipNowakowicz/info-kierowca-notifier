@@ -182,6 +182,14 @@ def build_config(payload):
             f"{notifier.MAX_POLL_INTERVAL_SECONDS} seconds"
         )
 
+    try:
+        earliest_slot_hour = int(payload.get("earliest_slot_hour", 0))
+        latest_slot_hour = int(payload.get("latest_slot_hour", 24))
+    except (TypeError, ValueError):
+        raise ValueError("Preferred time window must be numbers")
+    if not (0 <= earliest_slot_hour < latest_slot_hour <= 24):
+        raise ValueError("Preferred time window must be a valid range between 00:00 and 24:00")
+
     current_slot_date = require_str("current_slot_date", "Current slot date")
     # Must be ISO: notifier.is_urgent() feeds this straight to
     # datetime.fromisoformat() on every check that finds a slot. An
@@ -201,6 +209,8 @@ def build_config(payload):
         "ntfy_topic": ntfy_topic,
         "current_slot_date": current_slot_date,
         "poll_interval_seconds": poll_interval_seconds,
+        "earliest_slot_hour": earliest_slot_hour,
+        "latest_slot_hour": latest_slot_hour,
         "phone_alerts": bool(payload.get("phone_alerts", True)),
         "phone_alerts_relogin": bool(payload.get("phone_alerts_relogin", True)),
         "auto_refresh_chrome": bool(payload.get("auto_refresh_chrome", True)),

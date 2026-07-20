@@ -46,6 +46,13 @@ dependencies (stdlib only).
     `POLL_JITTER_FRACTION` (15%) extra delay — never subtracted, so the effective cadence never
     beats what's configured — expressed as a fraction of the interval so the randomness scales with
     whatever's picked.
+  - `run_check()`'s hit-building loop (added 2026-07-20) also filters on hour-of-day:
+    `config["earliest_slot_hour"]`/`["latest_slot_hour"]` (wizard's dual-handle time slider, 0-24,
+    upper bound exclusive against `dt.hour`) are checked alongside the existing `wanted_types`/
+    `watch_ids`/`max_date` filters, so a slot outside the preferred window never becomes a hit at
+    all — no push, no `trigger_open_browser()`, nothing in `status.json`'s history either. Both
+    keys default to `0`/`24` (the full day) via `config.get(...)` when absent, so a config
+    predating this feature filters nothing, same as always.
   - `loop()` computes the exact post-jitter wait once per cycle and writes it forward as
     `dash_status["next_check_at"]` (an absolute timestamp) before sleeping — this is what both
     dashboards' next-check countdown reads instead of re-deriving an estimate from the base
@@ -154,6 +161,23 @@ dependencies (stdlib only).
     `notifier.MIN_POLL_INTERVAL_SECONDS`/`MAX_POLL_INTERVAL_SECONDS` — `build_config()` validates
     the submitted value against those independently, not the array, so a mismatch would only
     surface as the slider offering a step the server then rejects.
+  - "Preferred time of day" (in "Exam & centers", added 2026-07-20) is two overlapping native
+    `input[type=range]` elements (`#time_from_slider`/`#time_to_slider`, hour granularity, 0-24)
+    rather than one custom-built widget — each input's own track is hidden via CSS
+    (`.dual-range input[type=range] { background: none; pointer-events: none; }`) with
+    `pointer-events: auto` restored on just its thumb pseudo-element, the standard trick for two
+    independently-draggable handles on one track without a pointer-capture library; a
+    `.dual-range-fill` div drawn between them (`updateTimeWindow()`, positioned by percentage)
+    supplies the "selected range" highlight that a single slider's track background normally would.
+    `updateTimeWindow()` also enforces a minimum 1-hour gap — whichever handle just fired `input`
+    wins and pushes the other one ahead of/behind it, so they can never cross or collapse to a
+    zero-width (and so unmatchable-by-design) window. The hidden `#earliest_slot_hour`/
+    `#latest_slot_hour` fields hold the actual submitted values; `setTimeWindow()` (mirroring
+    `setPollIntervalSeconds()`) prefills both from `EXISTING_CONFIG`, defaulting to the full day
+    (`0`/`24`) when absent. `build_config()` validates `0 <= earliest < latest <= 24` server-side
+    independently of the slider, same pattern as the check-frequency slider above. Feeds
+    `notifier.py`'s hit filter — see its own bullet above — this file only decides what gets
+    submitted, not what it does downstream.
   - First run is login-first, so the wizard can prefill the PKK number/category instead of asking
     blind: `GET /` serves `LOGIN_PAGE` (not the wizard) whenever neither `config.json` nor
     `session.json` exists yet. Its "Log in with mObywatel" button hits `POST /login-start`

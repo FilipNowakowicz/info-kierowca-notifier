@@ -6,6 +6,8 @@
   "ntfy_topic": "YOUR_RANDOM_NTFY_TOPIC_HERE",
   "current_slot_date": "2026-08-14",
   "poll_interval_seconds": 60,
+  "earliest_slot_hour": 0,
+  "latest_slot_hour": 24,
   "phone_alerts": true,
   "phone_alerts_relogin": true,
   "auto_refresh_chrome": true,
