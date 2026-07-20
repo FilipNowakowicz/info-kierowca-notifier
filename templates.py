@@ -509,13 +509,25 @@ WIZARD_PAGE = """<!doctype html>
   #ntfy-field { transition: opacity 0.15s; }
   #ntfy-field.disabled { opacity: 0.4; pointer-events: none; }
 
-  /* preferred time-of-day dual-handle slider */
+  /* preferred time-of-day dual-handle slider. The two overlaid range inputs'
+     thumbs use -webkit-appearance/appearance: none (see the shared
+     input[type=range]::-webkit-slider-thumb/::-moz-range-thumb rule above),
+     which makes each browser position the thumb's *center* linearly across
+     the full 0%-100% width of the input's own box — unlike a themed native
+     thumb, which browsers keep fully inside the track automatically. With
+     the thumb 16px wide, that puts half of it (8px) outside the box at
+     both the 0 and 24 extremes. The track, fill, and inputs are all inset
+     by that same 8px (half the thumb width) via explicit left/right offsets
+     — not container padding, which absolutely positioned children ignore
+     (their containing block is the padding *edge*, i.e. as if the padding
+     weren't there) — so the thumbs land flush with the track ends instead
+     of overhanging past them. */
   .dual-range { position: relative; height: 26px; margin: 0.5rem 0 0.4rem; }
-  .dual-range-track { position: absolute; top: 11px; left: 0; right: 0; height: 4px;
+  .dual-range-track { position: absolute; top: 11px; left: 8px; right: 8px; height: 4px;
     border-radius: 999px; background: #3d3d3d; }
   .dual-range-fill { position: absolute; top: 11px; height: 4px; border-radius: 999px;
     background: var(--accent); }
-  .dual-range input[type=range] { position: absolute; top: 0; left: 0; width: 100%;
+  .dual-range input[type=range] { position: absolute; top: 0; left: 8px; width: calc(100% - 16px);
     margin: 0; background: none; pointer-events: none; }
   .dual-range input[type=range]::-webkit-slider-runnable-track { background: none; }
   .dual-range input[type=range]::-moz-range-track { background: none; }
@@ -967,10 +979,13 @@ function updateTimeWindow(movedSlider) {
   }
   timeFromHidden.value = from;
   timeToHidden.value = to;
-  const fromPct = (from / 24) * 100;
-  const toPct = (to / 24) * 100;
-  timeWindowFill.style.left = fromPct + '%';
-  timeWindowFill.style.width = (toPct - fromPct) + '%';
+  // Mirrors the CSS thumb inset above (8px each side, out of the track's
+  // full width) so the fill bar's edges land under the actual thumb
+  // centers rather than the raw 0%-100% hour fraction.
+  const fromFrac = from / 24;
+  const toFrac = to / 24;
+  timeWindowFill.style.left = `calc(8px + (100% - 16px) * ${fromFrac})`;
+  timeWindowFill.style.width = `calc((100% - 16px) * ${toFrac - fromFrac})`;
   timeWindowLabel.textContent =
     (from === 0 && to === 24) ? 'All day' : `${fmtHour(from)} – ${fmtHour(to)}`;
 }
