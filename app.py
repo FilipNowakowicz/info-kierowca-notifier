@@ -216,6 +216,18 @@ def build_config(payload):
         "auto_refresh_chrome": bool(payload.get("auto_refresh_chrome", True)),
         "auto_open_browser": bool(payload.get("auto_open_browser", True)),
     }
+    # Both experimental, off-by-default — see notifier.trigger_open_browser()/
+    # open_logged_in_browser.py. auto_confirm_reschedule is meaningless without
+    # auto_select_slot (trigger_open_browser() only ever passes
+    # --confirm-reschedule alongside --target-slot), so it's enforced here too
+    # rather than trusting the wizard's own JS-side dependent-toggle dimming —
+    # a payload built by hand or by stale JS shouldn't be able to persist that
+    # combination.
+    auto_select_slot = bool(payload.get("auto_select_slot", False))
+    config["auto_select_slot"] = auto_select_slot
+    config["auto_confirm_reschedule"] = auto_select_slot and bool(
+        payload.get("auto_confirm_reschedule", False)
+    )
     return config
 
 

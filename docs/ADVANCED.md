@@ -203,8 +203,8 @@ a booking you already hold; it doesn't create one.
 
 ### Experimental: auto-selecting the matching slot and reaching the summary screen
 
-Add `"auto_select_slot": true` to `config.json` by hand (there's no Settings toggle for this yet)
-to go further: after landing on the empty date-range picker, it also expands the date group that
+Turn on "Auto-select the matching slot" in Settings → Automation (or add `"auto_select_slot": true`
+to `config.json` by hand) to go further: after landing on the empty date-range picker, it also expands the date group that
 matches the slot notifier.py just found, clicks the radio button for that exact exam type + time,
 and then clicks "Przejdź do podsumowania" (go to summary) to land on the summary/review screen. It
 deliberately never touches the "Data rozpoczęcia" field — every slot notifier finds is already
@@ -222,10 +222,14 @@ select the right row and reach the summary screen yourself. Off by default for e
 
 The summary screen (the "Potwierdź wybrany egzamin" modal — exam type, category, date/time, and
 price, with no separate payment step) has its own confirm button, "Potwierdź i przejdź dalej".
-Add `"auto_confirm_reschedule": true` to `config.json` **in addition to** `"auto_select_slot":
-true`, and it clicks that too — actually submitting the reservation date change. This flag alone,
-without `auto_select_slot`, does nothing: without it, the flow never reaches the summary screen to
-confirm on.
+Turn on "Auto-confirm the reservation change" in Settings → Automation — it asks you to confirm
+once in a browser dialog before it takes effect, and only appears there once "Auto-select the
+matching slot" is already on — **in addition to** that toggle. (Or set both
+`"auto_select_slot": true` and `"auto_confirm_reschedule": true` in `config.json` by hand.) It
+clicks that button too — actually submitting the reservation date change. `auto_confirm_reschedule`
+alone, without `auto_select_slot`, does nothing: without it, the flow never reaches the summary
+screen to confirm on — the wizard enforces this by dimming/disabling the toggle, and `app.py`
+enforces it again server-side regardless of what a saved `config.json` says.
 
 Before that click, it re-checks the summary screen's own text actually shows the date, time, and
 exam type you intended — a safety check against the slot-selection step having matched the wrong

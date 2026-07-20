@@ -136,7 +136,8 @@ dependencies (stdlib only).
     real clicks from you; no reservation/booking call happens in this file. Reuses `find_chrome()`
     from `auto_refresh_session.py` rather than duplicating it.
   - `--target-slot` (added 2026-07-20) is the one opt-in exception, gated behind config's
-    experimental, default-off `auto_select_slot` flag (no wizard toggle — hand-edit `config.json`)
+    experimental, default-off `auto_select_slot` flag (Settings → Automation toggle added
+    2026-07-21, off by default — hand-editing `config.json` still works too)
     — `trigger_open_browser()` only appends it when that flag is on, so an unset config behaves
     exactly as before. Given the fastest hit_dict notifier.py's own search already found
     (word/exam_type/datetime/places — the same object the push notification is built from),
@@ -272,6 +273,20 @@ dependencies (stdlib only).
     independently of the slider, same pattern as the check-frequency slider above. Feeds
     `notifier.py`'s hit filter — see its own bullet above — this file only decides what gets
     submitted, not what it does downstream.
+  - "Automation" also gained two toggles (added 2026-07-21) for the experimental
+    `auto_select_slot`/`auto_confirm_reschedule` flags documented on `open_logged_in_browser.py`
+    above — both default off in the markup itself (no `on` class), matching the flags' own
+    config-file default. `auto_confirm_reschedule`'s toggle only does anything once
+    `auto_select_slot`'s is also on: `applyAutoConfirmDim()` dims its row and force-clears it via
+    `setSwitch()` whenever the dependency is off, mirroring `applyNtfyDim()`'s existing
+    dependent-field pattern — same idea, second instance. It's also the one switch on this page not
+    wired through the shared `wireSwitch()`: turning it on runs a `confirm()` gate first (only on
+    the on-transition, not off), since unlike every other toggle here this one lets the app submit
+    a real, unreviewable reservation change — a stray click shouldn't be able to arm that silently.
+    `build_config()` re-derives `auto_confirm_reschedule` as `auto_select_slot AND` the submitted
+    value rather than trusting the JS-side dimming, so a hand-built POST body (or a config file
+    edited while the two were briefly out of sync client-side) can't persist the meaningless
+    confirm-without-select combination either.
   - First run is login-first, so the wizard can prefill the PKK number/category instead of asking
     blind: `GET /` serves `LOGIN_PAGE` (not the wizard) whenever neither `config.json` nor
     `session.json` exists yet. Its "Log in with mObywatel" button hits `POST /login-start`
@@ -505,8 +520,9 @@ isolation, set `auto_refresh_chrome: false` in the sandboxed `config.json` first
   at the date-range picker: it clicks only "Zmień termin" and "Zmień termin rezerwacji" and lands on
   the empty "Wybierz datę początkową dla nowego terminu" screen with nothing selected. As of
   2026-07-20, picking the new date is implemented too, but only as an experimental, default-off
-  opt-in (`auto_select_slot` in `config.json`, no wizard toggle, unverified against the live site —
-  see `open_logged_in_browser.py` bullet above); with it on, it also clicks "Przejdź do
+  opt-in (`auto_select_slot`, toggleable in Settings → Automation as of 2026-07-21 — see below —
+  or by hand in `config.json`; unverified against the live site — see `open_logged_in_browser.py`
+  bullet above); with it on, it also clicks "Przejdź do
   podsumowania" and lands on the "Potwierdź wybrany egzamin" summary modal.
   **`auto_confirm_reschedule`** — a second, separate flag, also added 2026-07-20 by explicit user
   request after they screenshotted that exact modal (exam type/category/date-time/price, no

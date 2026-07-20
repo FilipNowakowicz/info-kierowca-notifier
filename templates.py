@@ -508,6 +508,8 @@ WIZARD_PAGE = """<!doctype html>
   }
   #ntfy-field { transition: opacity 0.15s; }
   #ntfy-field.disabled { opacity: 0.4; pointer-events: none; }
+  #auto-confirm-row { transition: opacity 0.15s; }
+  #auto-confirm-row.disabled { opacity: 0.4; pointer-events: none; }
 
   /* preferred time-of-day dual-handle slider. The two overlaid range inputs'
      thumbs use -webkit-appearance/appearance: none (see the shared
@@ -708,6 +710,23 @@ WIZARD_PAGE = """<!doctype html>
         </div>
         <div class="switch on" id="auto_open_browser" role="switch" aria-checked="true" tabindex="0"></div>
       </div>
+
+      <div class="divider"></div>
+
+      <div class="toggle-row">
+        <div class="toggle-text">
+          <div class="tt-title">Experimental: auto-select the matching slot</div>
+          <div class="tt-sub">Unverified against the live site. Also expands the matching date group and picks the exact exam type/time on the change-date screen, then goes to the summary/review screen. Still stops there — nothing is submitted.</div>
+        </div>
+        <div class="switch" id="auto_select_slot" role="switch" aria-checked="false" tabindex="0"></div>
+      </div>
+      <div class="toggle-row" id="auto-confirm-row">
+        <div class="toggle-text">
+          <div class="tt-title" style="color:#d98c8c;">Experimental: auto-confirm the reservation change</div>
+          <div class="tt-sub">Requires the toggle above. Submits the actual date change with no review step — the one action in this project that can't be undone by closing the browser. Only turn this on once you've watched auto-select pick the right slot reliably.</div>
+        </div>
+        <div class="switch" id="auto_confirm_reschedule" role="switch" aria-checked="false" tabindex="0"></div>
+      </div>
     </fieldset>
 
     <button type="submit" id="submit-btn">Save and log in</button>
@@ -903,6 +922,37 @@ wireSwitch(phoneAlertsSwitch, applyNtfyDim);
 wireSwitch(phoneAlertsReloginSwitch, applyNtfyDim);
 wireSwitch(document.getElementById('auto_refresh_chrome'));
 wireSwitch(document.getElementById('auto_open_browser'));
+
+// auto_confirm_reschedule requires auto_select_slot — dim/disable it (and
+// force it off) whenever auto_select_slot is off, same dependent-field
+// pattern as applyNtfyDim() above. It also gets its own click handler
+// instead of a plain wireSwitch(), since turning it ON needs a confirm()
+// gate first: unlike every other toggle on this page, this one lets the app
+// submit a real reservation change with no human review step, so a misclick
+// shouldn't be able to enable it silently.
+const autoSelectSlotSwitch = document.getElementById('auto_select_slot');
+const autoConfirmSwitch = document.getElementById('auto_confirm_reschedule');
+const autoConfirmRow = document.getElementById('auto-confirm-row');
+function applyAutoConfirmDim() {
+  const enabled = autoSelectSlotSwitch.classList.contains('on');
+  autoConfirmRow.classList.toggle('disabled', !enabled);
+  if (!enabled) setSwitch(autoConfirmSwitch, false);
+}
+wireSwitch(autoSelectSlotSwitch, applyAutoConfirmDim);
+function toggleAutoConfirm() {
+  if (!autoSelectSlotSwitch.classList.contains('on')) return;  // covers keyboard activation while dimmed
+  const turningOn = !autoConfirmSwitch.classList.contains('on');
+  if (turningOn && !confirm(
+    "This lets the app automatically click through and submit a real reservation date change "
+    + "the moment it finds a matching slot — no review step, and it can't be undone by closing "
+    + "the browser. Are you sure?"
+  )) return;
+  setSwitch(autoConfirmSwitch, turningOn);
+}
+autoConfirmSwitch.addEventListener('click', toggleAutoConfirm);
+autoConfirmSwitch.addEventListener('keydown', (e) => {
+  if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); toggleAutoConfirm(); }
+});
 
 // ---- check-frequency slider ----
 // Non-linear steps (finer near the low end, coarser near the high end) so the
@@ -1194,6 +1244,9 @@ if (EXISTING_CONFIG) {
   setSwitch(phoneAlertsReloginSwitch, EXISTING_CONFIG.phone_alerts_relogin !== false);
   setSwitch(document.getElementById('auto_refresh_chrome'), EXISTING_CONFIG.auto_refresh_chrome !== false);
   setSwitch(document.getElementById('auto_open_browser'), EXISTING_CONFIG.auto_open_browser !== false);
+  setSwitch(autoSelectSlotSwitch, EXISTING_CONFIG.auto_select_slot === true);
+  setSwitch(autoConfirmSwitch, EXISTING_CONFIG.auto_confirm_reschedule === true);
+  applyAutoConfirmDim();
   applyNtfyDim();
 
   // Nothing to reset on a fresh /setup with no saved config yet.
@@ -1276,6 +1329,8 @@ document.getElementById('form').addEventListener('submit', async (e) => {
       phone_alerts_relogin: switchOn('phone-alerts-relogin'),
       auto_refresh_chrome: switchOn('auto_refresh_chrome'),
       auto_open_browser: switchOn('auto_open_browser'),
+      auto_select_slot: switchOn('auto_select_slot'),
+      auto_confirm_reschedule: switchOn('auto_confirm_reschedule'),
       ntfy_topic: ntfyInput.value,
     };
 
