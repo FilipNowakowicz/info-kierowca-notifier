@@ -200,16 +200,26 @@ def short_word(name):
 
 
 def is_urgent(fastest_dt, config):
-    """Whether fastest_dt is on or before the date of the user's current slot.
+    """Whether fastest_dt is strictly before the date of the user's current
+    slot.
 
-    Inclusive: a slot on the same day still counts, since that's a same-day
-    time change rather than an earlier date.
+    Exclusive as of 2026-07-20, by explicit user request (previously
+    inclusive — a slot on the same day as current_slot_date used to count
+    too, as a same-day time change). Matters most alongside
+    auto_confirm_reschedule (see trigger_open_browser()): once that updates
+    current_slot_date to a newly-booked date on a successful reschedule,
+    inclusive same-day matching could immediately re-trigger on a different
+    time slot that same day, chasing minor same-day changes instead of
+    settling. Reversible in one line if this turns out to be the wrong
+    call — the dashboard/history still show every hit found regardless of
+    urgency; this only changes what counts as a phone push / auto-browser
+    trigger.
     """
     current_slot_date = config["current_slot_date"]
     cutoff = datetime.fromisoformat(current_slot_date).replace(
-        hour=23, minute=59, second=59
+        hour=0, minute=0, second=0, microsecond=0
     )
-    return fastest_dt <= cutoff
+    return fastest_dt < cutoff
 
 
 def update_status(status, outcome, message="", current_hits=None, urgent=False):

@@ -72,7 +72,7 @@ claim still holds either way).
    | `profile_number` | Your PKK profile number |
    | `exam_types` | Which exam(s) to watch: `["Theoretical"]`, `["Practice"]`, or both `["Theoretical", "Practice"]` |
    | `ntfy_topic` | Your [ntfy.sh](https://ntfy.sh) topic for phone push (pick a long random string — anyone who knows it can read your notifications) |
-   | `current_slot_date` | Date (`"YYYY-MM-DD"`) of your current booked slot. A found slot beats this (turns the dashboard red, and — when `phone_alerts` is on — sends a phone push) if it's on an earlier date, or the same date at a different time. |
+   | `current_slot_date` | Date (`"YYYY-MM-DD"`) of your current booked slot. A found slot beats this (turns the dashboard red, and — when `phone_alerts` is on — sends a phone push) only if it's on a strictly earlier date; a different time on the same date doesn't count on its own (as of 2026-07-20 — see `notifier.is_urgent()`). |
    | `phone_alerts` *(optional, default `true`)* | Whether a slot that beats your booked date sends a phone push at all. Set to `false` to just watch the dashboard silently; the dashboard's red/gray colouring and `auto_open_browser` still work. |
    | `phone_alerts_relogin` *(optional, default `true`)* | Whether an `auth_expired` outcome (session expired, Chrome reopening for a fresh QR scan) also sends a phone push. Independent of `phone_alerts` above — that one only covers slots that beat your booked date. Set to `false` to only get the desktop notification when relogin is needed. |
    | `auto_refresh_chrome` *(optional, default `true`)* | Whether an `auth_expired` outcome should automatically launch `auto_refresh_session.py` (see below). Set to `false` to fall back to a manual relogin. |
@@ -237,6 +237,14 @@ reschedule flow can be undone just by closing the Chrome window; this one can't 
 change to an already-paid exam booking. It's unverified against the live DOM (written from a
 screenshot, like the slot-selection step above) and off by default for exactly that reason. Don't
 turn it on until you've confirmed the slot-selection step alone works correctly and reliably first.
+
+After clicking confirm, it also reloads `/cases` and checks whether the booking now actually shows
+your slot with a confirmed status. If — and only if — that check succeeds, it updates
+`current_slot_date` in `config.json` to the new date for you, so the notifier immediately knows
+about its own success instead of comparing future checks against the old date. If the check doesn't
+succeed (the page didn't update in time, wording differs, etc.), `config.json` is left untouched and
+you're told to check the site and update "Date of your current booked slot" in Settings yourself if
+it did go through.
 
 ## Pausing / resuming
 

@@ -9,13 +9,17 @@ Run by hand:
 
 Uses a dedicated throwaway profile (separate from your regular browsing and
 from auto_refresh_session.py's own profile) so it never fights over a
-profile lock. Reads only from session.json and writes nothing; nothing but
-the two info-kierowca.pl session cookies is sent anywhere, and only to
+profile lock. Reads only from session.json; nothing but the two
+info-kierowca.pl session cookies is sent anywhere, and only to
 info-kierowca.pl itself — see cdp_client.py's docstring for the
-debug-port security note.
+debug-port security note. The one write this file can make is conditional:
+with --confirm-reschedule and a confirmed booking change verified on
+/cases afterward, it updates config.json's current_slot_date to match (see
+update_current_slot_date()) — otherwise it writes nothing.
 """
 import argparse
 import json
+import os
 import subprocess
 import time
 import uuid
@@ -25,7 +29,7 @@ import auto_refresh_session
 import cdp_client
 from auto_refresh_session import find_chrome
 
-from paths import STATE_DIR  # noqa: E402
+from paths import CONFIG_FILE, STATE_DIR  # noqa: E402
 
 PROFILE_DIR = STATE_DIR / "chrome-reschedule-profile"
 
@@ -250,6 +254,83 @@ def wait_and_verify_summary(host, port, date_str, time_str, exam_label, timeout=
     return False
 
 
+def wait_and_verify_booking(host, port, date_str, time_str, exam_label, timeout=20):
+    """Run after CONFIRM_SUMMARY_TEXT is clicked, on the /cases bookings list
+    (the caller navigates there first — CONFIRM_SUMMARY_TEXT's own "i
+    przejdź dalej" wording implies at least one more screen, unscouted, so
+    this deliberately doesn't try to read anything off of it) — does a
+    booking now show up as our intended slot, actually confirmed?
+
+    Same whole-page-text approach and same false-negative-over-false-
+    positive bias as wait_and_verify_summary(), plus a 'Potwierdzona'
+    (confirmed) status check: /cases lists both active and past/cancelled
+    bookings (see screenshots — an "Anulowana" card sits right next to the
+    "Potwierdzona" one), so matching the date/time and exam type alone
+    isn't enough to be sure this is the live booking rather than
+    historical entries.
+
+    This is the one signal update_current_slot_date() is allowed to act
+    on — the confirm click itself succeeding only means the button was
+    clickable and got clicked, not that the backend accepted the change.
+    """
+    expected_datetime = f"{date_str}, {time_str}"
+    js = """
+(function(expectedDateTime, examLabel) {
+  var text = document.body.innerText || document.body.textContent || '';
+  return text.indexOf(expectedDateTime) !== -1 && text.indexOf(examLabel) !== -1 &&
+         text.indexOf('Potwierdzona') !== -1;
+})(%s, %s)
+""" % (json.dumps(expected_datetime), json.dumps(exam_label))
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            if cdp_client.evaluate_in_page(host, port, js):
+                return True
+        except Exception:
+            pass
+        time.sleep(0.5)
+    return False
+
+
+def update_current_slot_date(new_date_iso):
+    """Best-effort: after wait_and_verify_booking() confirms the reschedule
+    actually went through, update config.json's current_slot_date to the
+    newly-booked date — so notifier.is_urgent()'s very next comparison
+    reflects the change immediately. Without this, current_slot_date would
+    stay on the old (later) date until the user updated Settings by hand,
+    and every check in between could treat the slot we just booked into —
+    or anything else on the same stale side of the old cutoff — as still
+    urgent, potentially re-triggering auto_confirm_reschedule on a booking
+    that's already been moved.
+
+    Reimplements notifier.save_json()'s atomic-write/chmod pattern rather
+    than importing notifier: notifier.py imports this module at module
+    level (OPEN_BROWSER_PORT = open_logged_in_browser.DEFAULT_PORT), so
+    importing notifier back here would be circular.
+
+    Deliberately only ever overwrites this one key, not the whole config —
+    this runs in a detached subprocess launched well after notifier.py read
+    its own config for this cycle, so the file on disk may have picked up
+    unrelated Settings changes (e.g. a poll-interval edit) since; a
+    read-modify-write of just current_slot_date preserves those instead of
+    clobbering them with whatever this process's own inputs were built
+    from.
+    """
+    try:
+        config = json.loads(CONFIG_FILE.read_text())
+        config["current_slot_date"] = new_date_iso
+        tmp = CONFIG_FILE.with_name(f"{CONFIG_FILE.name}.{os.getpid()}.tmp")
+        tmp.write_text(json.dumps(config, indent=2))
+        tmp.replace(CONFIG_FILE)
+        CONFIG_FILE.chmod(0o600)
+        print(f"Updated current_slot_date to {new_date_iso} in config.json.")
+    except Exception as e:
+        print(
+            f"Booking confirmed, but couldn't update current_slot_date automatically ({e!r}) "
+            "— update 'Date of your current booked slot' in Settings yourself."
+        )
+
+
 def wait_and_click(host, port, text, timeout=20):
     """Poll for an element containing `text` and click it once it renders —
     content on this SPA loads asynchronously after navigation/a previous
@@ -300,6 +381,16 @@ def try_select_target_slot(host, port, target_slot_json, confirm=False):
     actual reservation change — the one action in this file that can't be
     undone by closing the tab. A verification mismatch, or the button never
     becoming clickable, stops short of that click every time.
+
+    After that click, also by explicit user request as of 2026-07-20:
+    navigates to /cases and, if wait_and_verify_booking() confirms the
+    booking now actually shows our slot as "Potwierdzona", updates
+    config.json's current_slot_date to match
+    (update_current_slot_date()) — so notifier.is_urgent()'s next
+    comparison reflects the change immediately instead of possibly
+    re-triggering auto_confirm_reschedule on a slot we already booked
+    into. Skipped (config left untouched) if that verification doesn't
+    succeed within its timeout.
     """
     try:
         target = json.loads(target_slot_json)
@@ -342,16 +433,31 @@ def try_select_target_slot(host, port, target_slot_json, confirm=False):
         )
         return
     print("Summary screen matches the intended slot.")
-    if wait_and_click_enabled(host, port, CONFIRM_SUMMARY_TEXT):
-        print(
-            f"Clicked '{CONFIRM_SUMMARY_TEXT}' — the reservation change has been submitted. "
-            "Nothing past this screen is automated or known — check the site for whatever "
-            "comes next."
-        )
-    else:
+    if not wait_and_click_enabled(host, port, CONFIRM_SUMMARY_TEXT):
         print(
             f"Couldn't click '{CONFIRM_SUMMARY_TEXT}' automatically — confirm it yourself "
             "if the summary looks right."
+        )
+        return
+    print(
+        f"Clicked '{CONFIRM_SUMMARY_TEXT}' — the reservation change has been submitted. "
+        "Nothing past this screen is automated or known — check the site for whatever "
+        "comes next."
+    )
+    time.sleep(2)  # give the backend a moment to process before we go check /cases
+    try:
+        cdp_client.navigate(host, port, DEFAULT_URL)
+    except Exception as e:
+        print(f"Couldn't reload /cases to verify the booking ({e!r}) — check it yourself.")
+        return
+    if wait_and_verify_booking(host, port, date_str, time_str, exam_label):
+        print(f"Confirmed on /cases: {exam_label} at {date_str}, {time_str} shows as Potwierdzona.")
+        update_current_slot_date(dt.date().isoformat())
+    else:
+        print(
+            "Couldn't confirm the new booking on /cases automatically — check the site and, "
+            "if it did go through, update 'Date of your current booked slot' in Settings "
+            "yourself."
         )
 
 

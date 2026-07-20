@@ -593,7 +593,7 @@ WIZARD_PAGE = """<!doctype html>
 
     <fieldset>
       <legend>Alerts</legend>
-      <label for="current_slot_date_display">Date of your current booked slot — a found slot beats this (an earlier date, or a different time the same day) and triggers the alerts below</label>
+      <label for="current_slot_date_display">Date of your current booked slot — a found slot on an earlier date beats this and triggers the alerts below</label>
       <div class="datepick" id="datepick">
         <input type="text" class="datepick-input" id="current_slot_date_display" placeholder="Select a date" readonly required>
         <input type="hidden" id="current_slot_date">

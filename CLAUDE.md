@@ -23,6 +23,13 @@ dependencies (stdlib only).
     Reset account, while the poll thread keeps ticking under the login screen) are both
     deliberately silent — no notification, no red state — so an outage or the login screen doesn't
     fire a critical popup every tick.
+  - `is_urgent()` (what gates a phone push, the dashboard's red state, and `trigger_open_browser()`)
+    compares a found slot's datetime against `config["current_slot_date"]` **exclusively** as of
+    2026-07-20, by explicit user request: only a strictly earlier date counts, not a different time
+    on the same date (previously inclusive — see the function's own docstring for why same-day
+    matching got dropped, tied to `auto_confirm_reschedule` below). The dashboard/`status.json`
+    history still list every hit found regardless — this only changes what counts as urgent enough
+    to alert/act on.
   - The search endpoint (`MultipleCentersExams`) rejects any `organizationId` list whose length
     isn't exactly 5 (`400 Validation error: "Exactly 5 exam centers must be provided..."` —
     confirmed live 2026-07-18). `build_search_organization_ids()` pads `config["organization_ids"]`
@@ -161,6 +168,22 @@ dependencies (stdlib only).
     exists), not a live DOM inspection like the rest of this file's click helpers — confirm it
     actually finds/clicks/verifies the right thing before ever enabling `auto_confirm_reschedule`
     for real.
+  - After `CONFIRM_SUMMARY_TEXT` is clicked, also by explicit user request as of 2026-07-20 (the
+    button's own "i przejdź dalej" wording implies at least one more screen, so this deliberately
+    doesn't try to read anything off of whatever page that click lands on): waits a couple seconds,
+    navigates to `/cases`, and `wait_and_verify_booking()` checks whether a booking now shows there
+    as our exact slot with a "Potwierdzona" (confirmed) status — not just date/time/exam-type match,
+    since `/cases` also lists past/cancelled entries side by side (an "Anulowana" card right next to
+    a "Potwierdzona" one, per screenshots) that could otherwise false-positive. The confirm click
+    succeeding only means the button was clickable and got clicked, not that the backend accepted
+    the change — this is the actual signal `update_current_slot_date()` is allowed to act on. On a
+    match, it does a minimal, config.json-scoped read-modify-write (`current_slot_date` only, not
+    the whole file — see its own docstring for why: this runs in a detached subprocess well after
+    `notifier.py`'s own config read for the cycle that triggered it, so the file may have picked up
+    unrelated Settings edits since) so `notifier.is_urgent()`'s very next comparison reflects the
+    change immediately — see that function's own bullet above for why this matters alongside the
+    exclusive-urgency change. On no match within timeout, config is left untouched and the user is
+    told to check/update it by hand — this never guesses at a new date.
   - A `--no-auto-click` flag skips both clicks and just leaves the logged-in `/cases` tab open —
     used by `app.py`'s "Open browser" toolbar button (`trigger_open_browser(auto_click=False)`) so
     a manual troubleshooting click doesn't also kick off the reschedule flow; the automatic
