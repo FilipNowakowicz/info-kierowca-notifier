@@ -274,6 +274,25 @@ AUTO_REFRESH_SCRIPT = Path(__file__).parent / "auto_refresh_session.py"
 AUTO_REFRESH_LOCK = auto_refresh_session.LOCK_FILE
 
 
+# Outcome vocabulary returned by trigger_auto_refresh() and
+# trigger_open_browser(). Named constants — rather than bare string literals
+# re-spelled in app.py's login handlers — so the producer and every consumer
+# key off one source; a renamed or added outcome is then a grep away instead of
+# a silent fall-through to a generic message. TRIGGER_OUTCOMES is the full set.
+TRIGGER_DISABLED = "disabled"
+TRIGGER_NO_BROWSER = "no_chromium_browser"
+TRIGGER_ALREADY_RUNNING = "already_running"
+TRIGGER_LAUNCHED = "launched"
+TRIGGER_LAUNCH_FAILED = "launch_failed"
+TRIGGER_OUTCOMES = (
+    TRIGGER_DISABLED,
+    TRIGGER_NO_BROWSER,
+    TRIGGER_ALREADY_RUNNING,
+    TRIGGER_LAUNCHED,
+    TRIGGER_LAUNCH_FAILED,
+)
+
+
 def trigger_auto_refresh(logger, config, force=False, notify_phone=True):
     """Best-effort: launch auto_refresh_session.py to relogin via Chrome+QR.
 
@@ -313,17 +332,17 @@ def trigger_auto_refresh(logger, config, force=False, notify_phone=True):
     "already_running", "launched", or "launch_failed".
     """
     if not config.get("auto_refresh_chrome", True):
-        return "disabled"
+        return TRIGGER_DISABLED
     if not auto_refresh_session.chrome_available():
         logger.info("outcome=auto_refresh_no_browser detail=no_chromium_found")
-        return "no_chromium_browser"
+        return TRIGGER_NO_BROWSER
     if AUTO_REFRESH_LOCK.exists():
         try:
             pid = int(AUTO_REFRESH_LOCK.read_text().strip())
             os.kill(pid, 0)
             if not force:
                 logger.info("outcome=auto_refresh_skipped detail=already_running pid=%s", pid)
-                return "already_running"
+                return TRIGGER_ALREADY_RUNNING
             logger.info("outcome=auto_refresh_force_restart detail=killing_stale pid=%s", pid)
             try:
                 os.kill(pid, signal.SIGTERM)
@@ -352,7 +371,7 @@ def trigger_auto_refresh(logger, config, force=False, notify_phone=True):
         cmd = [sys.executable, "--internal-auto-refresh"]
     else:
         if not AUTO_REFRESH_SCRIPT.exists():
-            return "launch_failed"
+            return TRIGGER_LAUNCH_FAILED
         python = sys.executable
         if shutil.which("systemd-run"):
             cmd = [
@@ -370,10 +389,10 @@ def trigger_auto_refresh(logger, config, force=False, notify_phone=True):
             cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True
         )
         logger.info("outcome=auto_refresh_launched")
-        return "launched"
+        return TRIGGER_LAUNCHED
     except Exception as e:
         logger.info("outcome=auto_refresh_launch_failed detail=%r", str(e))
-        return "launch_failed"
+        return TRIGGER_LAUNCH_FAILED
 
 
 def auto_refresh_in_progress():
@@ -492,21 +511,21 @@ def trigger_open_browser(logger, config, auto_click=True, target_hit=None):
     outcome a caller wants.
     """
     if not config.get("auto_open_browser", True):
-        return "disabled"
+        return TRIGGER_DISABLED
     if not auto_refresh_session.chrome_available():
         logger.info("outcome=open_browser_no_browser detail=no_chromium_found")
-        return "no_chromium_browser"
+        return TRIGGER_NO_BROWSER
     try:
         urllib.request.urlopen(f"http://127.0.0.1:{OPEN_BROWSER_PORT}/json/version", timeout=1)
         logger.info("outcome=open_browser_skipped detail=already_running")
-        return "already_running"
+        return TRIGGER_ALREADY_RUNNING
     except Exception:
         pass  # nothing listening on that port -> safe to launch
     if getattr(sys, "frozen", False):
         cmd = [sys.executable, "--internal-open-browser"]
     else:
         if not OPEN_BROWSER_SCRIPT.exists():
-            return "launch_failed"
+            return TRIGGER_LAUNCH_FAILED
         cmd = [sys.executable, str(OPEN_BROWSER_SCRIPT)]
     if not auto_click:
         cmd.append("--no-auto-click")
@@ -524,10 +543,10 @@ def trigger_open_browser(logger, config, auto_click=True, target_hit=None):
             logf.flush()
             subprocess.Popen(cmd, stdout=logf, stderr=subprocess.STDOUT, start_new_session=True)
         logger.info("outcome=open_browser_launched")
-        return "launched"
+        return TRIGGER_LAUNCHED
     except Exception as e:
         logger.info("outcome=open_browser_launch_failed detail=%r", str(e))
-        return "launch_failed"
+        return TRIGGER_LAUNCH_FAILED
 
 
 def cookie_header(session):

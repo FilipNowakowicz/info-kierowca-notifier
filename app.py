@@ -313,6 +313,15 @@ class AppHandler(http.server.BaseHTTPRequestHandler):
             self._send_json(400, {"ok": False, "error": "Invalid request."})
             return None
 
+    def _reply_outcome(self, outcome, messages, default="Done."):
+        """Send the standard {ok, action, message} reply for a trigger_*
+        outcome. `messages` is keyed on notifier's TRIGGER_* constants."""
+        self._send_json(200, {"ok": True, "action": outcome, "message": messages.get(outcome, default)})
+
+    @staticmethod
+    def _load_config_or_empty():
+        return notifier.load_json(notifier.CONFIG_FILE) if notifier.CONFIG_FILE.exists() else {}
+
     def do_GET(self):
         if self.path in ("/", "/index.html"):
             if notifier.CONFIG_FILE.exists():
@@ -388,15 +397,15 @@ class AppHandler(http.server.BaseHTTPRequestHandler):
         the automatic urgent-slot-hit trigger it must NOT click through to
         the date-picker — it should just land on the site, logged in.
         """
-        config = notifier.load_json(notifier.CONFIG_FILE) if notifier.CONFIG_FILE.exists() else {}
+        config = self._load_config_or_empty()
         if check_session_valid():
             outcome = notifier.trigger_open_browser(AppHandler.logger, config, auto_click=False)
             messages = {
-                "launched": "Session looks valid — opening a logged-in browser tab.",
-                "already_running": "A logged-in browser tab is already open.",
-                "disabled": "Session looks valid, but auto_open_browser is turned off in Settings.",
-                "launch_failed": "Session looks valid, but the browser failed to launch — check the log.",
-                "no_chromium_browser": "Session looks valid, but no Chrome, Edge, or other "
+                notifier.TRIGGER_LAUNCHED: "Session looks valid — opening a logged-in browser tab.",
+                notifier.TRIGGER_ALREADY_RUNNING: "A logged-in browser tab is already open.",
+                notifier.TRIGGER_DISABLED: "Session looks valid, but auto_open_browser is turned off in Settings.",
+                notifier.TRIGGER_LAUNCH_FAILED: "Session looks valid, but the browser failed to launch — check the log.",
+                notifier.TRIGGER_NO_BROWSER: "Session looks valid, but no Chrome, Edge, or other "
                     "Chromium-based browser was found on this machine — install one to continue.",
             }
         else:
@@ -404,13 +413,13 @@ class AppHandler(http.server.BaseHTTPRequestHandler):
                 AppHandler.logger, config, force=True, notify_phone=False
             )
             messages = {
-                "launched": "Session looks expired — opening Chrome for a fresh QR login.",
-                "disabled": "Session looks expired, but auto_refresh_chrome is turned off in Settings.",
-                "launch_failed": "Session looks expired, but Chrome failed to launch — check the log.",
-                "no_chromium_browser": "Session looks expired, but no Chrome, Edge, or other "
+                notifier.TRIGGER_LAUNCHED: "Session looks expired — opening Chrome for a fresh QR login.",
+                notifier.TRIGGER_DISABLED: "Session looks expired, but auto_refresh_chrome is turned off in Settings.",
+                notifier.TRIGGER_LAUNCH_FAILED: "Session looks expired, but Chrome failed to launch — check the log.",
+                notifier.TRIGGER_NO_BROWSER: "Session looks expired, but no Chrome, Edge, or other "
                     "Chromium-based browser was found on this machine — install one to continue.",
             }
-        self._send_json(200, {"ok": True, "action": outcome, "message": messages.get(outcome, "Done.")})
+        self._reply_outcome(outcome, messages)
 
     def _handle_relogin_now(self):
         """Backing handler for the small refresh icon next to the dashboard's
@@ -419,7 +428,7 @@ class AppHandler(http.server.BaseHTTPRequestHandler):
         still passes refresh - the whole point is resetting the ~hour
         estimate on demand, not recovering from a dead one.
         """
-        config = notifier.load_json(notifier.CONFIG_FILE) if notifier.CONFIG_FILE.exists() else {}
+        config = self._load_config_or_empty()
         prior_captured_at = None
         if notifier.SESSION_FILE.exists():
             try:
@@ -427,20 +436,20 @@ class AppHandler(http.server.BaseHTTPRequestHandler):
             except Exception:
                 pass
         outcome = notifier.trigger_auto_refresh(AppHandler.logger, config, force=True, notify_phone=False)
-        if outcome == "launched":
+        if outcome == notifier.TRIGGER_LAUNCHED:
             threading.Thread(
                 target=_wait_for_relogin_and_wake,
                 args=(prior_captured_at, AppHandler.wake_event),
                 daemon=True,
             ).start()
         messages = {
-            "launched": "Opening Chrome for a fresh QR login.",
-            "disabled": "auto_refresh_chrome is turned off in Settings.",
-            "launch_failed": "Chrome failed to launch — check the log.",
-            "no_chromium_browser": "No Chrome, Edge, or other Chromium-based browser was found "
+            notifier.TRIGGER_LAUNCHED: "Opening Chrome for a fresh QR login.",
+            notifier.TRIGGER_DISABLED: "auto_refresh_chrome is turned off in Settings.",
+            notifier.TRIGGER_LAUNCH_FAILED: "Chrome failed to launch — check the log.",
+            notifier.TRIGGER_NO_BROWSER: "No Chrome, Edge, or other Chromium-based browser was found "
                 "on this machine — install one to continue.",
         }
-        self._send_json(200, {"ok": True, "action": outcome, "message": messages.get(outcome, "Done.")})
+        self._reply_outcome(outcome, messages)
 
     def _handle_login_start(self):
         """Backs the login screen's button: launches Chrome for the QR scan
@@ -453,11 +462,11 @@ class AppHandler(http.server.BaseHTTPRequestHandler):
             AppHandler.logger, {}, force=True, notify_phone=False
         )
         messages = {
-            "no_chromium_browser": "No Chrome, Edge, or other Chromium-based browser was found "
+            notifier.TRIGGER_NO_BROWSER: "No Chrome, Edge, or other Chromium-based browser was found "
                 "on this machine. Install one and try again.",
-            "launch_failed": "Could not open Chrome — try the manual option below.",
+            notifier.TRIGGER_LAUNCH_FAILED: "Could not open Chrome — try the manual option below.",
         }
-        self._send_json(200, {"ok": True, "action": outcome, "message": messages.get(outcome)})
+        self._reply_outcome(outcome, messages, default=None)
 
     def _handle_setup(self):
         payload = self._read_json_body()
