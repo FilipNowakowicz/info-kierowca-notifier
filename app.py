@@ -20,12 +20,12 @@ import time
 import urllib.request
 import webbrowser
 from datetime import datetime
-from pathlib import Path
 
 import auto_refresh_session
 import dashboard_server
 import notifier
 import open_logged_in_browser
+from paths import CATEGORIES_FILE, WORD_CENTERS_FILE
 from templates import LOGIN_PAGE, TOOLBAR_HTML, WIZARD_PAGE
 
 HOST = dashboard_server.HOST
@@ -38,8 +38,7 @@ INTERVAL = notifier.DEFAULT_POLL_INTERVAL_SECONDS
 # from the site's own (session-gated) dictionary endpoint — see
 # fetch_word_centers.py, which regenerates this file. Baked in rather than
 # fetched live because the wizard has to work before the user has ever
-# logged in, and that endpoint needs a session.
-WORD_CENTERS_FILE = Path(__file__).parent / "word_centers.json"
+# logged in, and that endpoint needs a session. Location owned by paths.py.
 
 
 def load_word_centers():
@@ -56,7 +55,7 @@ WORD_CENTERS = load_word_centers()
 # wizard's dropdown so a user picks "B — car" instead of the bare numeric id
 # the API wants. Seeded with the confirmed B=5; refresh/extend with
 # fetch_categories.py (session-gated, same reason as word_centers.json).
-CATEGORIES_FILE = Path(__file__).parent / "categories.json"
+# Location owned by paths.py.
 
 
 def load_categories():
@@ -298,6 +297,17 @@ class AppHandler(http.server.BaseHTTPRequestHandler):
     def _send_json(self, code, obj):
         self._send(code, json.dumps(obj).encode("utf-8"), "application/json")
 
+    def _read_json_body(self):
+        """Parse the request body as JSON. On bad JSON, send a 400 and return
+        None so the caller can just `if payload is None: return`."""
+        length = int(self.headers.get("Content-Length", 0) or 0)
+        raw = self.rfile.read(length) if length else b"{}"
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            self._send_json(400, {"ok": False, "error": "Invalid request."})
+            return None
+
     def do_GET(self):
         if self.path in ("/", "/index.html"):
             if notifier.CONFIG_FILE.exists():
@@ -445,12 +455,8 @@ class AppHandler(http.server.BaseHTTPRequestHandler):
         self._send_json(200, {"ok": True, "action": outcome, "message": messages.get(outcome)})
 
     def _handle_setup(self):
-        length = int(self.headers.get("Content-Length", 0) or 0)
-        raw = self.rfile.read(length) if length else b"{}"
-        try:
-            payload = json.loads(raw)
-        except json.JSONDecodeError:
-            self._send_json(400, {"ok": False, "error": "Invalid request."})
+        payload = self._read_json_body()
+        if payload is None:
             return
         try:
             config = build_config(payload)
@@ -481,12 +487,8 @@ class AppHandler(http.server.BaseHTTPRequestHandler):
         works before the form has ever been saved, same as the readonly
         ntfy_topic field itself is populated client-side before any save.
         """
-        length = int(self.headers.get("Content-Length", 0) or 0)
-        raw = self.rfile.read(length) if length else b"{}"
-        try:
-            payload = json.loads(raw)
-        except json.JSONDecodeError:
-            self._send_json(400, {"ok": False, "error": "Invalid request."})
+        payload = self._read_json_body()
+        if payload is None:
             return
         topic = (payload.get("topic") or "").strip()
         if not topic:

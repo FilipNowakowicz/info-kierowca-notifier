@@ -6,6 +6,7 @@ Never books or reserves anything. Reads two endpoints only:
   - POST /bknd/exam/api/v1/Schedules/user/MultipleCentersExams (read slot data)
 """
 import argparse
+import functools
 import json
 import logging
 import logging.handlers
@@ -76,6 +77,12 @@ SESSION_ESTIMATED_LIFETIME_SECONDS = 3600
 POLL_JITTER_FRACTION = 0.15
 
 
+# Cached: word_centers.json is static data shipped with the code, never
+# changes at runtime, yet build_search_organization_ids() reads it every poll
+# cycle to pick filler ids whenever fewer than 5 centers are watched (the
+# common case). Callers copy the list via a comprehension before shuffling, so
+# the cached list itself is never mutated.
+@functools.lru_cache(maxsize=1)
 def load_word_center_ids():
     try:
         with open(WORD_CENTERS_FILE, encoding="utf-8") as f:
@@ -669,7 +676,7 @@ def run_check(logger, dash_status):
     )
 
     # 1. Keep the session alive.
-    status, body, headers = do_request(REFRESH_URL, session, method="GET")
+    status, body, _headers = do_request(REFRESH_URL, session, method="GET")
     if status == 204:
         save_json(SESSION_FILE, session)
         logger.info("outcome=refresh_ok status=%s", status)
@@ -716,7 +723,7 @@ def run_check(logger, dash_status):
         "profileNumber": config["profile_number"],
         "profileType": "Pkk",
     }
-    status, body, headers = do_request(SEARCH_URL, session, method="POST", json_body=payload)
+    status, body, _headers = do_request(SEARCH_URL, session, method="POST", json_body=payload)
 
     if status is None:
         # Never reached the server — see the matching branch in the refresh
@@ -902,7 +909,7 @@ def main():
     parser.add_argument(
         "--interval",
         type=int,
-        default=60,
+        default=DEFAULT_POLL_INTERVAL_SECONDS,
         help=(
             "Seconds between checks in --loop mode (default: 60). Only used "
             "as a fallback when config.json has no poll_interval_seconds "

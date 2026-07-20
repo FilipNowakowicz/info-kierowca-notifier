@@ -166,11 +166,13 @@ def select_slot_js(exam_label, time_str):
 """ % (json.dumps(exam_label), json.dumps(time_str))
 
 
-def wait_and_select_slot(host, port, exam_label, time_str, timeout=20):
-    """Same polling shape as wait_and_click(), for select_slot_js() instead —
-    the matching slot row may not be in the DOM yet right after the date
-    group is expanded."""
-    js = select_slot_js(exam_label, time_str)
+def _poll_until_truthy(host, port, js, timeout=20):
+    """Evaluate `js` in the page every 0.5s until it returns truthy or
+    `timeout`s elapse. Shared body of every wait_*/wait_and_click below: this
+    SPA renders content asynchronously after navigation or a prior click, so a
+    selector often isn't in the DOM on the first frame. Exceptions are
+    swallowed and retried (the page may be mid-navigation/render); returns True
+    on the first truthy result, False if it never comes."""
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         try:
@@ -180,6 +182,13 @@ def wait_and_select_slot(host, port, exam_label, time_str, timeout=20):
             pass
         time.sleep(0.5)
     return False
+
+
+def wait_and_select_slot(host, port, exam_label, time_str, timeout=20):
+    """Same polling shape as wait_and_click(), for select_slot_js() instead —
+    the matching slot row may not be in the DOM yet right after the date
+    group is expanded."""
+    return _poll_until_truthy(host, port, select_slot_js(exam_label, time_str), timeout)
 
 
 def click_enabled_button_js(text):
@@ -218,16 +227,7 @@ def wait_and_click_enabled(host, port, text, timeout=20):
     """Same polling shape as wait_and_click(), for click_enabled_button_js()
     instead — the target button needs a moment to go from disabled to
     enabled after whatever step precedes it completes."""
-    js = click_enabled_button_js(text)
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        try:
-            if cdp_client.evaluate_in_page(host, port, js):
-                return True
-        except Exception:
-            pass
-        time.sleep(0.5)
-    return False
+    return _poll_until_truthy(host, port, click_enabled_button_js(text), timeout)
 
 
 def wait_and_verify_summary(host, port, date_str, time_str, exam_label, timeout=10):
@@ -253,15 +253,7 @@ def wait_and_verify_summary(host, port, date_str, time_str, exam_label, timeout=
   return text.indexOf(expectedDateTime) !== -1 && text.indexOf(examLabel) !== -1;
 })(%s, %s)
 """ % (json.dumps(expected_datetime), json.dumps(exam_label))
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        try:
-            if cdp_client.evaluate_in_page(host, port, js):
-                return True
-        except Exception:
-            pass
-        time.sleep(0.5)
-    return False
+    return _poll_until_truthy(host, port, js, timeout)
 
 
 def wait_and_verify_booking(host, port, date_str, time_str, exam_label, timeout=20):
@@ -291,15 +283,7 @@ def wait_and_verify_booking(host, port, date_str, time_str, exam_label, timeout=
          text.indexOf('Potwierdzona') !== -1;
 })(%s, %s)
 """ % (json.dumps(expected_datetime), json.dumps(exam_label))
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        try:
-            if cdp_client.evaluate_in_page(host, port, js):
-                return True
-        except Exception:
-            pass
-        time.sleep(0.5)
-    return False
+    return _poll_until_truthy(host, port, js, timeout)
 
 
 def read_config():
@@ -393,16 +377,7 @@ def wait_and_click(host, port, text, timeout=20):
     open, etc.) — you can still click it yourself, same fallback as the
     login auto-click.
     """
-    js = click_text_js(text)
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        try:
-            if cdp_client.evaluate_in_page(host, port, js):
-                return True
-        except Exception:
-            pass  # page may be mid-navigation/render — just retry
-        time.sleep(0.5)
-    return False
+    return _poll_until_truthy(host, port, click_text_js(text), timeout)
 
 
 def try_select_target_slot(host, port, target_slot_json, confirm=False):
