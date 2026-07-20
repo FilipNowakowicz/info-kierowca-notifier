@@ -34,11 +34,12 @@ strictly read-only: no booking, no reserving, nothing beyond checking availabili
 
 If you turn on the reschedule assist (on by default, toggle with `auto_open_browser`), a matching
 slot also opens a Chrome window already logged in with your session, and clicks through to the
-"change date" screen for your existing booking. It stops there, on an empty date-range picker with
-nothing submitted — picking the new date and confirming is always done by you, by hand. (There's an
-experimental, off-by-default flag that also pre-selects the matching slot and carries through to
-the summary screen, still stopping before confirming anything — see ADVANCED.) See
-[docs/ADVANCED.md](docs/ADVANCED.md) for exactly what it clicks and why.
+"change date" screen for your existing booking. By default it stops there, on an empty date-range
+picker with nothing submitted — picking the new date and confirming is always done by you, by hand.
+(There are two experimental, off-by-default flags that go further: one pre-selects the matching
+slot and reaches the summary screen, the other — requiring the first — also confirms it, actually
+submitting the reservation change. See ADVANCED.) See [docs/ADVANCED.md](docs/ADVANCED.md) for
+exactly what it clicks and why.
 
 Your login session lasts about an hour before info-kierowca.pl forces a fresh QR scan — that's a
 site-side limit, not something this tool can extend. When it happens, a Chrome window opens

@@ -68,13 +68,21 @@ def consent_cookie():
 # any final confirm past that stays a real click from you. The only
 # optional exception is --target-slot (see try_select_target_slot()),
 # itself off unless config's experimental auto_select_slot flag is set —
-# and even then it stops at landing on the summary/review screen (selects
-# the matching slot, then clicks "Przejdź do podsumowania"): whatever that
-# screen's own confirm step looks like is unscouted and stays a real click
-# from you, by explicit user request as of 2026-07-20.
+# it selects the matching slot and clicks "Przejdź do podsumowania", landing
+# on the "Potwierdź wybrany egzamin" summary modal. A second, separate flag
+# (--confirm-reschedule / config's auto_confirm_reschedule, by explicit user
+# request as of 2026-07-20, screenshot-confirmed to show the exam type,
+# category, date/time, and price with no separate payment step) goes one
+# click further and clicks CONFIRM_SUMMARY_TEXT — the one action in this
+# whole file that actually submits the reservation change. It requires
+# auto_select_slot to also be on, and try_select_target_slot() verifies the
+# summary modal's own text matches the intended slot before ever clicking
+# it. This is the single highest-stakes click in this project: unlike
+# everything before it, it can't be undone by just closing the tab.
 CHANGE_DATE_TEXT = "Zmień termin"
 CONFIRM_CHANGE_DATE_TEXT = "Zmień termin rezerwacji"
 SUMMARY_BUTTON_TEXT = "Przejdź do podsumowania"
+CONFIRM_SUMMARY_TEXT = "Potwierdź i przejdź dalej"
 
 
 def click_text_js(text):
@@ -160,16 +168,21 @@ def wait_and_select_slot(host, port, exam_label, time_str, timeout=20):
     return False
 
 
-def click_summary_button_js():
-    # Deliberately its own function rather than reusing click_text_js():
-    # SUMMARY_BUTTON_TEXT starts out present but disabled (see screenshots —
-    # greyed out until a slot radio is selected), and a plain el.click() on
-    # a disabled button is a silent no-op in most browsers rather than an
-    # error. click_text_js() has no notion of "disabled", so a caller
-    # couldn't tell a real click from one that did nothing; this checks
+def click_enabled_button_js(text):
+    # Deliberately its own function rather than reusing click_text_js(), and
+    # shared between SUMMARY_BUTTON_TEXT and CONFIRM_SUMMARY_TEXT: both
+    # start out present but disabled until the step before them completes
+    # (see screenshots — greyed out), and a plain el.click() on a disabled
+    # button is a silent no-op in most browsers rather than an error.
+    # click_text_js() has no notion of "disabled", so a caller couldn't tell
+    # a real click from one that did nothing; this checks
     # el.disabled/aria-disabled explicitly and only reports success (and
-    # only clicks) once it's actually enabled, so the polling wait loop
-    # below keeps retrying meanwhile instead of falsely reporting done.
+    # only clicks) once the button is actually enabled, so the polling wait
+    # loop below keeps retrying meanwhile instead of falsely reporting done.
+    # Exact text match rather than click_text_js()'s substring match — both
+    # button labels are short, specific, and known exactly from screenshots,
+    # and an exact match is the safer choice given what CONFIRM_SUMMARY_TEXT
+    # actually does.
     return auto_refresh_session.CLICKABLE_HELPERS_JS + """
 (function(text) {
   var all = document.querySelectorAll('button, [role="button"]');
@@ -184,14 +197,48 @@ def click_summary_button_js():
   }
   return false;
 })(%s)
-""" % json.dumps(SUMMARY_BUTTON_TEXT)
+""" % json.dumps(text)
 
 
-def wait_and_click_summary(host, port, timeout=20):
-    """Same polling shape as wait_and_click(), for click_summary_button_js()
-    instead — the button needs a moment to go from disabled to enabled
-    after the slot radio click lands."""
-    js = click_summary_button_js()
+def wait_and_click_enabled(host, port, text, timeout=20):
+    """Same polling shape as wait_and_click(), for click_enabled_button_js()
+    instead — the target button needs a moment to go from disabled to
+    enabled after whatever step precedes it completes."""
+    js = click_enabled_button_js(text)
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            if cdp_client.evaluate_in_page(host, port, js):
+                return True
+        except Exception:
+            pass
+        time.sleep(0.5)
+    return False
+
+
+def wait_and_verify_summary(host, port, date_str, time_str, exam_label, timeout=10):
+    """Safety check run before CONFIRM_SUMMARY_TEXT is ever clicked: does the
+    summary modal's own visible text actually contain the date, time, and
+    exam type we intended to select? This is the one guard against
+    select_slot_js() having matched the wrong radio row before a real
+    reservation change gets submitted — unlike every earlier step in this
+    flow, that click can't be undone by just closing the tab.
+
+    Checks document.body's whole visible text rather than a specific
+    "Data i godzina" row element, since no live-verified selector for the
+    modal exists (screenshot-only, like the rest of this feature) — a false
+    positive from unrelated matching text elsewhere on the page is possible
+    in theory, but a false negative (missing a real mismatch) is not, which
+    is the direction that matters here: this errs toward not confirming
+    rather than confirming wrongly.
+    """
+    expected_datetime = f"{date_str}, {time_str}"
+    js = """
+(function(expectedDateTime, examLabel) {
+  var text = document.body.innerText || document.body.textContent || '';
+  return text.indexOf(expectedDateTime) !== -1 && text.indexOf(examLabel) !== -1;
+})(%s, %s)
+""" % (json.dumps(expected_datetime), json.dumps(exam_label))
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         try:
@@ -223,7 +270,7 @@ def wait_and_click(host, port, text, timeout=20):
     return False
 
 
-def try_select_target_slot(host, port, target_slot_json):
+def try_select_target_slot(host, port, target_slot_json, confirm=False):
     """Best-effort continuation of the auto-click-through, gated behind
     --target-slot (itself only ever passed when config's experimental
     auto_select_slot flag is on — see notifier.trigger_open_browser()).
@@ -236,13 +283,23 @@ def try_select_target_slot(host, port, target_slot_json):
     the field only matters for pushing the window further out than that.
 
     Expands the date group matching the target's date, selects the radio
-    button matching its exam type + time, then — by explicit user request
-    as of 2026-07-20 — clicks "Przejdź do podsumowania" (go to summary) to
-    land on the summary/review screen. Stops unconditionally there: nothing
-    past that click is automated, since that screen's own confirm step has
-    never been scouted. If the slot can't be found (already taken by
-    someone else, or a DOM this hasn't been verified against) it stops even
-    earlier and leaves you to pick it by hand — this never guesses.
+    button matching its exam type + time, then clicks "Przejdź do
+    podsumowania" (go to summary) to land on the "Potwierdź wybrany
+    egzamin" summary modal. If any of that fails (slot already taken by
+    someone else, or a DOM this hasn't been verified against), it stops
+    immediately and leaves you to pick it by hand — this never guesses.
+
+    confirm=False (the default) stops there, same as before 2026-07-20.
+
+    confirm=True — only ever set when config's separate, also-experimental
+    auto_confirm_reschedule flag is on, by explicit user request as of
+    2026-07-20 — goes one click further: verifies the summary modal's own
+    text actually shows the intended date/time/exam type
+    (wait_and_verify_summary()), and only if that matches, clicks
+    CONFIRM_SUMMARY_TEXT ("Potwierdź i przejdź dalej"). That submits the
+    actual reservation change — the one action in this file that can't be
+    undone by closing the tab. A verification mismatch, or the button never
+    becoming clickable, stops short of that click every time.
     """
     try:
         target = json.loads(target_slot_json)
@@ -258,22 +315,43 @@ def try_select_target_slot(host, port, target_slot_json):
         print(f"Couldn't find the '{date_str}' date group automatically — pick the slot yourself.")
         return
     print(f"Expanded '{date_str}'.")
-    if wait_and_select_slot(host, port, exam_label, time_str):
-        print(f"Selected {exam_label} at {time_str}.")
-        if wait_and_click_summary(host, port):
-            print(
-                f"Clicked '{SUMMARY_BUTTON_TEXT}' — review the summary screen and confirm "
-                "yourself from here. Nothing past this has been automated or verified."
-            )
-        else:
-            print(
-                f"Selected the slot but couldn't click '{SUMMARY_BUTTON_TEXT}' automatically "
-                "— click it yourself."
-            )
-    else:
+    if not wait_and_select_slot(host, port, exam_label, time_str):
         print(
             f"Couldn't find a matching {exam_label} row at {time_str} "
             "(may already be taken) — pick the slot yourself."
+        )
+        return
+    print(f"Selected {exam_label} at {time_str}.")
+    if not wait_and_click_enabled(host, port, SUMMARY_BUTTON_TEXT):
+        print(
+            f"Selected the slot but couldn't click '{SUMMARY_BUTTON_TEXT}' automatically "
+            "— click it yourself."
+        )
+        return
+    print(f"Clicked '{SUMMARY_BUTTON_TEXT}'.")
+    if not confirm:
+        print(
+            "Review the summary screen and confirm yourself from here. Nothing past this "
+            "has been automated or verified."
+        )
+        return
+    if not wait_and_verify_summary(host, port, date_str, time_str, exam_label):
+        print(
+            "Summary screen didn't show the expected date/time/exam type — NOT clicking "
+            f"'{CONFIRM_SUMMARY_TEXT}' automatically. Review it yourself before confirming."
+        )
+        return
+    print("Summary screen matches the intended slot.")
+    if wait_and_click_enabled(host, port, CONFIRM_SUMMARY_TEXT):
+        print(
+            f"Clicked '{CONFIRM_SUMMARY_TEXT}' — the reservation change has been submitted. "
+            "Nothing past this screen is automated or known — check the site for whatever "
+            "comes next."
+        )
+    else:
+        print(
+            f"Couldn't click '{CONFIRM_SUMMARY_TEXT}' automatically — confirm it yourself "
+            "if the summary looks right."
         )
 
 
@@ -293,8 +371,18 @@ def main():
             "JSON hit dict (word/exam_type/datetime/places, matching notifier.py's hit_dicts) "
             "to also select on the date-range picker and carry through to the summary screen "
             "after the Zmień termin click-through. Experimental/unverified — see "
-            "try_select_target_slot()'s docstring. Never clicks past landing on that summary "
-            "screen: its own confirm step stays a manual click."
+            "try_select_target_slot()'s docstring. By default stops on landing on that summary "
+            "screen; add --confirm-reschedule to go one click further."
+        ),
+    )
+    parser.add_argument(
+        "--confirm-reschedule", action="store_true",
+        help=(
+            "Only takes effect together with --target-slot: after landing on the summary "
+            "screen, verify it matches the intended slot and click "
+            f"'{CONFIRM_SUMMARY_TEXT}' — submitting the actual reservation change. "
+            "Experimental/unverified. This is the one click in this entire project that "
+            "can't be undone by closing the tab."
         ),
     )
     args = parser.parse_args()
@@ -344,7 +432,9 @@ def main():
         if wait_and_click("127.0.0.1", args.port, CONFIRM_CHANGE_DATE_TEXT):
             print(f"Clicked '{CONFIRM_CHANGE_DATE_TEXT}'.")
             if args.target_slot:
-                try_select_target_slot("127.0.0.1", args.port, args.target_slot)
+                try_select_target_slot(
+                    "127.0.0.1", args.port, args.target_slot, confirm=args.confirm_reschedule
+                )
             else:
                 print("Pick the new date and confirm yourself from here.")
         else:

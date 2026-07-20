@@ -418,11 +418,23 @@ def trigger_open_browser(logger, config, auto_click=True, target_hit=None):
     through as --target-slot JSON so open_logged_in_browser.py can also try
     to expand that date's slot group, select the matching time radio
     button, and click through to the summary/review screen, past the plain
-    date-picker screen. Still never confirms anything on that screen —
-    UNVERIFIED against the live site as of 2026-07-20; see
-    open_logged_in_browser.py's own docstrings for exactly what it does and
-    does not click. Omitted (no --target-slot at all) whenever the flag is
-    off, so a config predating this feature behaves identically to before.
+    date-picker screen.
+
+    A second, separate, also default-off flag — config's
+    "auto_confirm_reschedule" — additionally passes --confirm-reschedule,
+    which (only once auto_select_slot has already landed on the summary
+    screen, and only after open_logged_in_browser.py itself re-verifies
+    that screen matches the intended slot) clicks through the final
+    "Potwierdź i przejdź dalej" confirm button — actually submitting the
+    reservation change. auto_confirm_reschedule alone, without
+    auto_select_slot, does nothing (no --target-slot means
+    open_logged_in_browser.py never reaches that screen to confirm on).
+    UNVERIFIED against the live site as of 2026-07-20, by explicit user
+    request that same day — see open_logged_in_browser.py's own docstrings
+    for exactly what it does and does not click, and the verification step
+    that gates the final click. Both flags are omitted entirely (no
+    --target-slot/--confirm-reschedule at all) whenever off, so a config
+    predating this feature behaves identically to before.
 
     Returns a short status string: "disabled", "no_chromium_browser",
     "already_running", "launched", or "launch_failed". No force option here
@@ -452,6 +464,8 @@ def trigger_open_browser(logger, config, auto_click=True, target_hit=None):
         cmd.append("--no-auto-click")
     elif target_hit is not None and config.get("auto_select_slot", False):
         cmd += ["--target-slot", json.dumps(target_hit)]
+        if config.get("auto_confirm_reschedule", False):
+            cmd.append("--confirm-reschedule")
     try:
         subprocess.Popen(
             cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True

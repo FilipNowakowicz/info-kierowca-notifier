@@ -130,19 +130,37 @@ dependencies (stdlib only).
     dostępne terminy" list and clicks the radio button matching its exam type + time
     (`select_slot_js()`/`EXAM_TYPE_LABELS_PL`). Deliberately does not drive the "Data rozpoczęcia"
     date field — every hit notifier.py finds is already within the ~31-day window that list shows
-    without it (confirmed live 2026-07-20). By explicit user request as of 2026-07-20 it then also
-    clicks `SUMMARY_BUTTON_TEXT` ("Przejdź do podsumowania") via `wait_and_click_summary()` once
-    the selection has enabled it — `click_summary_button_js()` checks `disabled`/`aria-disabled`
-    itself rather than reusing `click_text_js()`, since a plain `.click()` on a still-disabled
-    button is a silent no-op in most browsers and the poll loop needs to tell that apart from an
-    actual click to keep retrying. Stops unconditionally on landing on that summary screen: nothing
-    past it is automated on either a successful or failed match — a slot someone else just took, a
-    DOM this hasn't been verified against, or whatever that screen's own confirm step looks like
-    (never scouted) must not submit anything on its own. **UNVERIFIED as of 2026-07-20** —
-    `select_slot_js()`/`click_summary_button_js()` were written from screenshots (walks up to 6
-    ancestor levels from each radio input looking for text containing both the exam label and time,
-    not a live DOM inspection like the rest of this file's click helpers), so confirm it actually
-    finds/clicks the right row and button before relying on it.
+    without it (confirmed live 2026-07-20). It then also clicks `SUMMARY_BUTTON_TEXT` ("Przejdź do
+    podsumowania") via `wait_and_click_enabled()` once the selection has enabled it —
+    `click_enabled_button_js()` checks `disabled`/`aria-disabled` itself rather than reusing
+    `click_text_js()`, since a plain `.click()` on a still-disabled button is a silent no-op in
+    most browsers and the poll loop needs to tell that apart from an actual click to keep retrying;
+    it's shared between `SUMMARY_BUTTON_TEXT` and `CONFIRM_SUMMARY_TEXT` below. With
+    `auto_select_slot` alone (`auto_confirm_reschedule` off), it stops unconditionally on landing on
+    that "Potwierdź wybrany egzamin" summary modal — nothing past it is automated on either a
+    successful or failed match, since a slot someone else just took or a DOM this hasn't been
+    verified against must not submit anything on its own.
+  - `--confirm-reschedule` (added 2026-07-20, by explicit user request that same day after
+    screenshotting the summary modal) is a second, separate opt-in — gated behind config's own
+    also-experimental, default-off `auto_confirm_reschedule` flag, and only ever appended alongside
+    `--target-slot` (`auto_confirm_reschedule` alone does nothing, since without `auto_select_slot`
+    the flow never reaches this screen). It goes one click further than `auto_select_slot` alone:
+    `wait_and_verify_summary()` first re-checks the summary modal's own visible text actually
+    contains the target's date/time/exam-type (a safety check against `select_slot_js()` having
+    matched the wrong radio row, biased to false-negative — i.e. err toward *not* confirming — over
+    false-positive, since a mismatch here can't be caught any later), and only then clicks
+    `CONFIRM_SUMMARY_TEXT` ("Potwierdź i przejdź dalej") via the same `wait_and_click_enabled()`.
+    This is the single highest-stakes click in this entire project — the summary modal shows exam
+    type/category/date-time/price with no separate payment step (screenshot-confirmed 2026-07-20),
+    but unlike every click before it in this file, it actually submits the reservation change and
+    can't be undone by just closing the tab. **UNVERIFIED as of 2026-07-20** — `select_slot_js()`/
+    `click_enabled_button_js()`/`wait_and_verify_summary()` were all written from screenshots (the
+    radio-matching walks up to 6 ancestor levels from each radio input looking for text containing
+    both the exam label and time; the verification check scans `document.body`'s whole visible text
+    for the expected date/time/exam-type substrings, since no live-verified selector for the modal
+    exists), not a live DOM inspection like the rest of this file's click helpers — confirm it
+    actually finds/clicks/verifies the right thing before ever enabling `auto_confirm_reschedule`
+    for real.
   - A `--no-auto-click` flag skips both clicks and just leaves the logged-in `/cases` tab open —
     used by `app.py`'s "Open browser" toolbar button (`trigger_open_browser(auto_click=False)`) so
     a manual troubleshooting click doesn't also kick off the reschedule flow; the automatic
@@ -405,20 +423,23 @@ isolation, set `auto_refresh_chrome: false` in the sandboxed `config.json` first
 
 - Polling/checking stays strictly read-only. The one deliberate exception is
   `open_logged_in_browser.py`'s reschedule assist. As of 2026-07-17, by explicit user request, the
-  policy ceiling was raised to allow fuller automation in future (picking the new date, and
-  eventually the summary/confirm steps). By default the build still stops at the date-range picker:
-  it clicks only "Zmień termin" and "Zmień termin rezerwacji" and lands on the empty "Wybierz datę
-  początkową dla nowego terminu" screen with nothing selected. As of 2026-07-20, picking the new
-  date is implemented too, but only as an experimental, default-off opt-in (`auto_select_slot` in
-  `config.json`, no wizard toggle, unverified against the live site — see `open_logged_in_browser.py`
-  bullet above). As of 2026-07-20 (same explicit request), with the flag on it also clicks "Przejdź
-  do podsumowania" (go to summary) and lands on the summary/review screen — but stops there
-  unconditionally: whatever that screen's own confirm step looks like has never been scouted, and
-  it stays a real click from the user; no code here submits a reservation change. This matches what
-  the README and `docs/ADVANCED.md` tell users. When you extend automation past landing on the
-  summary screen, move all three docs (here, README, ADVANCED) together, and get the same kind of
-  explicit sign-off again first, since past that point mistakes act on a real, already-paid exam
-  booking.
+  policy ceiling was raised to allow fuller automation in future. By default the build still stops
+  at the date-range picker: it clicks only "Zmień termin" and "Zmień termin rezerwacji" and lands on
+  the empty "Wybierz datę początkową dla nowego terminu" screen with nothing selected. As of
+  2026-07-20, picking the new date is implemented too, but only as an experimental, default-off
+  opt-in (`auto_select_slot` in `config.json`, no wizard toggle, unverified against the live site —
+  see `open_logged_in_browser.py` bullet above); with it on, it also clicks "Przejdź do
+  podsumowania" and lands on the "Potwierdź wybrany egzamin" summary modal.
+  **`auto_confirm_reschedule`** — a second, separate flag, also added 2026-07-20 by explicit user
+  request after they screenshotted that exact modal (exam type/category/date-time/price, no
+  separate payment step) — goes past it: it re-verifies the modal matches the intended slot, then
+  clicks "Potwierdź i przejdź dalej", actually submitting the reservation change. That is the
+  ceiling as of 2026-07-20 — no code here goes past that confirm click; whatever screen follows it
+  has never been scouted and stays real clicks from the user. This matches what the README and
+  `docs/ADVANCED.md` tell users. When you extend automation past that confirm click, move all three
+  docs (here, README, ADVANCED) together, and get the same kind of explicit sign-off again first —
+  past that point mistakes act on a real, already-paid exam booking, same as this step already does,
+  so treat any further extension with at least this much caution.
 - Don't lower `notifier.MIN_POLL_INTERVAL_SECONDS` (15s, itself already lowered once from 60s by
   explicit user request on 2026-07-19) further without being asked again; the interval is
   user-adjustable within `[MIN_POLL_INTERVAL_SECONDS, MAX_POLL_INTERVAL_SECONDS]`

@@ -210,15 +210,33 @@ and then clicks "Przejdź do podsumowania" (go to summary) to land on the summar
 deliberately never touches the "Data rozpoczęcia" field — every slot notifier finds is already
 within the ~31-day window the picker shows without changing it.
 
-It stops there, unconditionally, on the summary/review screen: nothing past that click is
-automated, whether or not a matching slot was found (someone else may have taken it in the few
-seconds since the check that triggered this). Whatever that screen's own confirm step looks like
-has never been scouted — reviewing it and confirming yourself, if you want to, is still always on
-you.
+With just this flag on, it stops there, unconditionally, on the summary/review screen: nothing past
+that click is automated, whether or not a matching slot was found (someone else may have taken it
+in the few seconds since the check that triggered this).
 
 **This is unverified.** It was written from screenshots of the picker, not confirmed against the
 live DOM the way the rest of this flow was, so treat it as experimental until you've watched it
 select the right row and reach the summary screen yourself. Off by default for exactly that reason.
+
+### Experimental: auto-confirming the reservation change
+
+The summary screen (the "Potwierdź wybrany egzamin" modal — exam type, category, date/time, and
+price, with no separate payment step) has its own confirm button, "Potwierdź i przejdź dalej".
+Add `"auto_confirm_reschedule": true` to `config.json` **in addition to** `"auto_select_slot":
+true`, and it clicks that too — actually submitting the reservation date change. This flag alone,
+without `auto_select_slot`, does nothing: without it, the flow never reaches the summary screen to
+confirm on.
+
+Before that click, it re-checks the summary screen's own text actually shows the date, time, and
+exam type you intended — a safety check against the slot-selection step having matched the wrong
+row. If that check fails, or the confirm button never becomes clickable, it stops and leaves the
+screen for you to finish by hand instead of guessing.
+
+**This is the single highest-stakes automated action in this project.** Every earlier step in the
+reschedule flow can be undone just by closing the Chrome window; this one can't — it submits a real
+change to an already-paid exam booking. It's unverified against the live DOM (written from a
+screenshot, like the slot-selection step above) and off by default for exactly that reason. Don't
+turn it on until you've confirmed the slot-selection step alone works correctly and reliably first.
 
 ## Pausing / resuming
 
