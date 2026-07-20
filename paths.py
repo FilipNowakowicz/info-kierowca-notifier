@@ -44,3 +44,28 @@ RESCHEDULE_CONFIRM_COOLDOWN_FILE = STATE_DIR / "reschedule-confirm-cooldown"
 # Static data shipped alongside the code (and bundled into the frozen build).
 WORD_CENTERS_FILE = Path(__file__).parent / "word_centers.json"
 CATEGORIES_FILE = Path(__file__).parent / "categories.json"
+
+
+def empty_status():
+    """The "nothing has happened yet" status shape, shared by
+    notifier.load_status() (its fallback when status.json is missing/
+    unreadable) and dashboard_server.EMPTY_STATUS (the JSON served before the
+    first check). Lives here — the one module both already import — so the two
+    dashboards can't drift out of step, as they did once before (the dashboard
+    copy had grown "urgent"/"paused" keys the notifier default lacked).
+
+    A fresh dict (with fresh lists) each call on purpose: load_status()'s
+    result is mutated in place by the poll loop, so a shared constant would let
+    one caller's edits leak into the other's default.
+    """
+    return {
+        "last_check": None,
+        "outcome": None,
+        "message": "",
+        "urgent": False,
+        "current_hits": [],
+        "history": [],
+        "paused": False,
+        "next_check_at": None,
+        "session_expires_estimate": None,
+    }

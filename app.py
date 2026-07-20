@@ -70,6 +70,11 @@ CATEGORIES = load_categories()
 
 EXAM_TYPE_CHOICES = ("Theoretical", "Practice")
 
+# The dashboard page with the interactive toolbar spliced in. Both halves are
+# constant strings, so this is computed once at import rather than re-scanned
+# and rebuilt on every "/" request.
+DASHBOARD_PAGE = dashboard_server.PAGE.replace("</body>", TOOLBAR_HTML + "</body>")
+
 
 def already_running():
     """True if something is already answering our status endpoint on PORT."""
@@ -311,7 +316,7 @@ class AppHandler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path in ("/", "/index.html"):
             if notifier.CONFIG_FILE.exists():
-                self._send(200, dashboard_server.PAGE.replace("</body>", TOOLBAR_HTML + "</body>"))
+                self._send(200, DASHBOARD_PAGE)
             elif not notifier.SESSION_FILE.exists():
                 # First run, not logged in yet: get the QR login out of the
                 # way first so the wizard that follows can prefill the PKK

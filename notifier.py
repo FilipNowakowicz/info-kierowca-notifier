@@ -36,6 +36,7 @@ from paths import (  # noqa: F401  (re-exported: other modules read these off no
     STATUS_FILE,
     WORD_CENTERS_FILE,
     __version__,
+    empty_status,
 )
 
 MAX_HISTORY = 200
@@ -168,19 +169,7 @@ def load_status():
             return load_json(STATUS_FILE)
         except Exception:
             pass
-    # Keep in step with dashboard_server.EMPTY_STATUS — the two are the same
-    # "nothing has happened yet" shape, served by the two different dashboards.
-    return {
-        "last_check": None,
-        "outcome": None,
-        "message": "",
-        "urgent": False,
-        "current_hits": [],
-        "history": [],
-        "paused": False,
-        "next_check_at": None,
-        "session_expires_estimate": None,
-    }
+    return empty_status()
 
 
 def save_status(status):

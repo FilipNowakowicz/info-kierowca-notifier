@@ -8,27 +8,15 @@ import http.server
 import json
 import socketserver
 
-from paths import STATUS_FILE
+from paths import STATUS_FILE, empty_status
 
 HOST = "127.0.0.1"
 PORT = 8787
 
-# Derived rather than hand-written: this used to be a literal byte string that
-# had already drifted from the real default shape (it grew "urgent"/"paused"
-# keys the notifier's own default dict never had).
-EMPTY_STATUS = json.dumps(
-    {
-        "last_check": None,
-        "outcome": None,
-        "message": "",
-        "urgent": False,
-        "current_hits": [],
-        "history": [],
-        "paused": False,
-        "next_check_at": None,
-        "session_expires_estimate": None,
-    }
-).encode()
+# Derived from paths.empty_status() rather than hand-written: this used to be a
+# literal byte string that had already drifted from the real default shape (it
+# grew "urgent"/"paused" keys the notifier's own default dict never had).
+EMPTY_STATUS = json.dumps(empty_status()).encode()
 
 PAGE = """<!doctype html>
 <html lang="en">
