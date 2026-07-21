@@ -37,12 +37,11 @@ site (see the sandbox/systemd gotchas below before testing, and the frozen-build
     deliberately silent — no notification, no red state — so an outage or the login screen doesn't
     fire a critical popup every tick.
   - `is_urgent()` (what gates a phone push, the dashboard's red state, and `trigger_open_browser()`)
-    compares a found slot's datetime against `config["current_slot_date"]` **exclusively** as of
-    2026-07-20, by explicit user request: only a strictly earlier date counts, not a different time
-    on the same date (previously inclusive — see the function's own docstring for why same-day
-    matching got dropped, tied to `auto_confirm_reschedule` below). The dashboard/`status.json`
-    history still list every hit found regardless — this only changes what counts as urgent enough
-    to alert/act on.
+    compares a found slot's datetime against `config["current_slot_date"]` **exclusively**, by
+    explicit user request: only a strictly earlier date counts, not a different time on the same
+    date (see the function's own docstring for why, tied to `auto_confirm_reschedule` below). The
+    dashboard/`status.json` history still list every hit found regardless — this only changes what
+    counts as urgent enough to alert/act on.
   - The search endpoint (`MultipleCentersExams`) rejects any `organizationId` list whose length
     isn't exactly 5 (`400 Validation error: "Exactly 5 exam centers must be provided..."` —
     confirmed live 2026-07-18). `build_search_organization_ids()` pads `config["organization_ids"]`
@@ -59,14 +58,14 @@ site (see the sandbox/systemd gotchas below before testing, and the frozen-build
     PII stance. Returns `[]` on any failure, so a fetch hiccup just falls back to manual entry.
   - Poll interval is `config.json`'s `poll_interval_seconds` (set via `app.py`'s Settings),
     re-read fresh every cycle by `configured_poll_interval()` and clamped to
-    `[MIN_POLL_INTERVAL_SECONDS, MAX_POLL_INTERVAL_SECONDS]` = `[15, 1800]` — the floor was
-    explicitly lowered from the original 60s by user request on 2026-07-19. `loop()`'s `interval`
+    `[MIN_POLL_INTERVAL_SECONDS, MAX_POLL_INTERVAL_SECONDS]` = `[15, 1800]` — the 15s floor is a
+    deliberate good-citizen limit, lowered from 60s by explicit user request. `loop()`'s `interval`
     arg (from `--interval`/`app.py`'s `INTERVAL`) is only the fallback for before `config.json` has
     a `poll_interval_seconds` yet. Every wait also goes through `jittered_wait()`, which adds up to
     `POLL_JITTER_FRACTION` (15%) extra delay — never subtracted, so the effective cadence never
     beats what's configured — expressed as a fraction of the interval so the randomness scales with
     whatever's picked.
-  - `run_check()`'s hit-building loop (added 2026-07-20) also filters on hour-of-day:
+  - `run_check()`'s hit-building loop also filters on hour-of-day:
     `config["earliest_slot_hour"]`/`["latest_slot_hour"]` (wizard's dual-handle time slider, 0-24,
     upper bound exclusive against `dt.hour`) are checked alongside the existing `wanted_types`/
     `watch_ids`/`max_date` filters, so a slot outside the preferred window never becomes a hit at
@@ -148,9 +147,9 @@ site (see the sandbox/systemd gotchas below before testing, and the frozen-build
     further by default: picking the new date, the summary step, and any confirm past that stay
     real clicks from you; no reservation/booking call happens in this file. Reuses `find_chrome()`
     from `auto_refresh_session.py` rather than duplicating it.
-  - `--target-slot` (added 2026-07-20) is the one opt-in exception, gated behind config's
-    experimental, default-off `auto_select_slot` flag (Settings → Automation toggle added
-    2026-07-21, off by default — hand-editing `config.json` still works too)
+  - `--target-slot` is the one opt-in exception, gated behind config's experimental, default-off
+    `auto_select_slot` flag (Settings → Automation toggle, off by default — hand-editing
+    `config.json` still works too)
     — `trigger_open_browser()` only appends it when that flag is on, so an unset config behaves
     exactly as before. Given the fastest hit_dict notifier.py's own search already found
     (word/exam_type/datetime/places — the same object the push notification is built from),
@@ -168,8 +167,8 @@ site (see the sandbox/systemd gotchas below before testing, and the frozen-build
     that "Potwierdź wybrany egzamin" summary modal — nothing past it is automated on either a
     successful or failed match, since a slot someone else just took or a DOM this hasn't been
     verified against must not submit anything on its own.
-  - `--confirm-reschedule` (added 2026-07-20, by explicit user request that same day after
-    screenshotting the summary modal) is a second, separate opt-in — gated behind config's own
+  - `--confirm-reschedule` (added by explicit user request after screenshotting the summary
+    modal) is a second, separate opt-in — gated behind config's own
     also-experimental, default-off `auto_confirm_reschedule` flag, and only ever appended alongside
     `--target-slot` (`auto_confirm_reschedule` alone does nothing, since without `auto_select_slot`
     the flow never reaches this screen). It goes one click further than `auto_select_slot` alone:
@@ -189,7 +188,7 @@ site (see the sandbox/systemd gotchas below before testing, and the frozen-build
     exists), not a live DOM inspection like the rest of this file's click helpers — confirm it
     actually finds/clicks/verifies the right thing before ever enabling `auto_confirm_reschedule`
     for real.
-  - After `CONFIRM_SUMMARY_TEXT` is clicked, also by explicit user request as of 2026-07-20 (the
+  - After `CONFIRM_SUMMARY_TEXT` is clicked, also by explicit user request (the
     button's own "i przejdź dalej" wording implies at least one more screen, so this deliberately
     doesn't try to read anything off of whatever page that click lands on): waits a couple seconds,
     navigates to `/cases`, and `wait_and_verify_booking()` checks whether a booking now shows there
@@ -205,13 +204,12 @@ site (see the sandbox/systemd gotchas below before testing, and the frozen-build
     change immediately — see that function's own bullet above for why this matters alongside the
     exclusive-urgency change. On no match within timeout, config is left untouched and the user is
     told to check/update it by hand — this never guesses at a new date.
-  - Two follow-up fixes added 2026-07-20 after a review of the above found the auto-triggered path
-    was writing all its outcomes nowhere and could re-fire before a prior attempt's own outcome was
-    even known:
-    - `notifier.trigger_open_browser()` now launches this file with stdout/stderr going to
-      `paths.RESCHEDULE_LOG_FILE` (append mode) instead of `DEVNULL` — every `print()` in
-      `try_select_target_slot()` used to be unreachable on the actual auto-triggered path (only
-      visible when run by hand from a terminal); now it's at least inspectable after the fact.
+  - Two follow-up fixes address the auto-triggered path writing all its outcomes nowhere and being
+    able to re-fire before a prior attempt's own outcome was even known:
+    - `notifier.trigger_open_browser()` launches this file with stdout/stderr going to
+      `paths.RESCHEDULE_LOG_FILE` (append mode) instead of `DEVNULL` — otherwise every `print()` in
+      `try_select_target_slot()` is unreachable on the auto-triggered path (visible only when run by
+      hand from a terminal); the log file makes it inspectable after the fact.
       Deliberately a separate plain file, not shared with `notifier.LOG_FILE`: that one's written by
       a `RotatingFileHandler` from `notifier.py`'s own process, and a detached subprocess writing raw
       stdout into the same path could straddle a rotation and silently write into an
@@ -269,7 +267,7 @@ site (see the sandbox/systemd gotchas below before testing, and the frozen-build
     `notifier.MIN_POLL_INTERVAL_SECONDS`/`MAX_POLL_INTERVAL_SECONDS` — `build_config()` validates
     the submitted value against those independently, not the array, so a mismatch would only
     surface as the slider offering a step the server then rejects.
-  - "Preferred time of day" (in "Exam & centers", added 2026-07-20) is two overlapping native
+  - "Preferred time of day" (in "Exam & centers") is two overlapping native
     `input[type=range]` elements (`#time_from_slider`/`#time_to_slider`, hour granularity, 0-24)
     rather than one custom-built widget — each input's own track is hidden via CSS
     (`.dual-range input[type=range] { background: none; pointer-events: none; }`) with
@@ -286,7 +284,7 @@ site (see the sandbox/systemd gotchas below before testing, and the frozen-build
     independently of the slider, same pattern as the check-frequency slider above. Feeds
     `notifier.py`'s hit filter — see its own bullet above — this file only decides what gets
     submitted, not what it does downstream.
-  - "Automation" also gained two toggles (added 2026-07-21) for the experimental
+  - "Automation" also has two toggles for the experimental
     `auto_select_slot`/`auto_confirm_reschedule` flags documented on `open_logged_in_browser.py`
     above — both default off in the markup itself (no `on` class), matching the flags' own
     config-file default. `auto_confirm_reschedule`'s toggle only does anything once
@@ -381,8 +379,8 @@ site (see the sandbox/systemd gotchas below before testing, and the frozen-build
       there would mean a second Chrome fighting over the same fixed debug port an already-open one
       is using, so "already_running" is the desired outcome, not something to override.
 - `templates.py` — holds `TOOLBAR_HTML`, `LOGIN_PAGE`, and `WIZARD_PAGE`: the three big HTML/JS
-  strings `app.py` serves, moved out verbatim (2026-07-20) since they made up the bulk of that
-  file's line count (~1180 of ~1750 lines) with none of its request-handling logic. Plain string
+  strings `app.py` serves, moved out verbatim since they made up the bulk of that file's line
+  count (~1180 of ~1750 lines) with none of its request-handling logic. Plain string
   constants only — no rendering logic, no imports of its own; `app.py` still owns everything that
   touches them (`WIZARD_PAGE.replace("__CENTERS_JSON__", ...)`, splicing `TOOLBAR_HTML` into
   `dashboard_server.PAGE`, etc.), so read `app.py`'s own notes above for what each template does at
@@ -528,27 +526,27 @@ isolation, set `auto_refresh_chrome: false` in the sandboxed `config.json` first
 ## Constraints to respect when changing this code
 
 - Polling/checking stays strictly read-only. The one deliberate exception is
-  `open_logged_in_browser.py`'s reschedule assist. As of 2026-07-17, by explicit user request, the
-  policy ceiling was raised to allow fuller automation in future. By default the build still stops
+  `open_logged_in_browser.py`'s reschedule assist. By explicit user request, the policy ceiling was
+  raised to allow fuller automation in future. By default the build still stops
   at the date-range picker: it clicks only "Zmień termin" and "Zmień termin rezerwacji" and lands on
-  the empty "Wybierz datę początkową dla nowego terminu" screen with nothing selected. As of
-  2026-07-20, picking the new date is implemented too, but only as an experimental, default-off
-  opt-in (`auto_select_slot`, toggleable in Settings → Automation as of 2026-07-21 — see below —
+  the empty "Wybierz datę początkową dla nowego terminu" screen with nothing selected. Picking the
+  new date is implemented too, but only as an experimental, default-off
+  opt-in (`auto_select_slot`, toggleable in Settings → Automation — see below —
   or by hand in `config.json`; unverified against the live site — see `open_logged_in_browser.py`
   bullet above); with it on, it also clicks "Przejdź do
   podsumowania" and lands on the "Potwierdź wybrany egzamin" summary modal.
-  **`auto_confirm_reschedule`** — a second, separate flag, also added 2026-07-20 by explicit user
+  **`auto_confirm_reschedule`** — a second, separate flag, added by explicit user
   request after they screenshotted that exact modal (exam type/category/date-time/price, no
   separate payment step) — goes past it: it re-verifies the modal matches the intended slot, then
   clicks "Potwierdź i przejdź dalej", actually submitting the reservation change. That is the
-  ceiling as of 2026-07-20 — no code here goes past that confirm click; whatever screen follows it
+  ceiling — no code here goes past that confirm click; whatever screen follows it
   has never been scouted and stays real clicks from the user. This matches what the README and
   `docs/ADVANCED.md` tell users. When you extend automation past that confirm click, move all three
   docs (here, README, ADVANCED) together, and get the same kind of explicit sign-off again first —
   past that point mistakes act on a real, already-paid exam booking, same as this step already does,
   so treat any further extension with at least this much caution.
 - Don't lower `notifier.MIN_POLL_INTERVAL_SECONDS` (15s, itself already lowered once from 60s by
-  explicit user request on 2026-07-19) further without being asked again; the interval is
+  explicit user request) further without being asked again; the interval is
   user-adjustable within `[MIN_POLL_INTERVAL_SECONDS, MAX_POLL_INTERVAL_SECONDS]`
   (`poll_interval_seconds`, see `notifier.py`/`app.py` above) but the floor itself is a hard-coded
   design choice to stay a good citizen of an undocumented API, not just a UI default.

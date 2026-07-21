@@ -72,7 +72,9 @@ claim still holds either way).
    | `profile_number` | Your PKK profile number |
    | `exam_types` | Which exam(s) to watch: `["Theoretical"]`, `["Practice"]`, or both `["Theoretical", "Practice"]` |
    | `ntfy_topic` | Your [ntfy.sh](https://ntfy.sh) topic for phone push (pick a long random string — anyone who knows it can read your notifications) |
-   | `current_slot_date` | Date (`"YYYY-MM-DD"`) of your current booked slot. A found slot beats this (turns the dashboard red, and — when `phone_alerts` is on — sends a phone push) only if it's on a strictly earlier date; a different time on the same date doesn't count on its own (as of 2026-07-20 — see `notifier.is_urgent()`). |
+   | `current_slot_date` | Date (`"YYYY-MM-DD"`) of your current booked slot. A found slot beats this (turns the dashboard red, and — when `phone_alerts` is on — sends a phone push) only if it's on a strictly earlier date; a different time on the same date doesn't count on its own (see `notifier.is_urgent()`). |
+   | `poll_interval_seconds` *(optional, default `60`)* | Seconds between checks, clamped to 15–1800. Lower is more responsive but hits an undocumented API harder — 15s is a deliberate floor. Set with the dashboard Settings slider, or by hand. |
+   | `earliest_slot_hour` / `latest_slot_hour` *(optional, default `0` / `24`)* | Preferred time-of-day window in whole hours, `latest` exclusive. A slot outside `[earliest, latest)` is ignored entirely — no push, no dashboard entry, nothing in history. Defaults span the whole day. Set with the dashboard's dual-handle time slider. |
    | `phone_alerts` *(optional, default `true`)* | Whether a slot that beats your booked date sends a phone push at all. Set to `false` to just watch the dashboard silently; the dashboard's red/gray colouring and `auto_open_browser` still work. |
    | `phone_alerts_relogin` *(optional, default `true`)* | Whether an `auth_expired` outcome (session expired, Chrome reopening for a fresh QR scan) also sends a phone push. Independent of `phone_alerts` above — that one only covers slots that beat your booked date. Set to `false` to only get the desktop notification when relogin is needed. |
    | `auto_refresh_chrome` *(optional, default `true`)* | Whether an `auth_expired` outcome should automatically launch `auto_refresh_session.py` (see below). Set to `false` to fall back to a manual relogin. |
@@ -99,8 +101,9 @@ claim still holds either way).
    python notifier.py --loop
    ```
    Leave this running in a terminal, or set your OS to start it in the background for you (e.g. a
-   Windows Task Scheduler task running at log-on, or a macOS `launchd` agent). It checks every 60
-   seconds by default; use `--interval` to change that.
+   Windows Task Scheduler task running at log-on, or a macOS `launchd` agent). It checks on
+   `config.json`'s `poll_interval_seconds` (default 60s, clamped to 15–1800), re-read fresh each
+   cycle; `--interval` only sets the fallback used before that key exists.
 
    **Option C — systemd user units (Linux only, recommended if available: survives reboots and
    auto-restarts on failure):**

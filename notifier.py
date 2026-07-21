@@ -50,10 +50,9 @@ MAX_HISTORY = 200
 SEARCH_ORG_ID_COUNT = 5
 
 # Adjustable via app.py's Settings (poll_interval_seconds in config.json).
-# MIN is a deliberate, explicitly-requested-by-the-user policy loosening
-# (2026-07-19) from the original 60s floor down to 15s - still a hard floor,
-# just a lower one, not a UI default; MAX is just a sanity cap so "watching"
-# doesn't become effectively "not watching".
+# MIN is a hard floor, not a UI default — a deliberate good-citizen limit on an
+# undocumented API; don't lower it without an explicit request. MAX is a sanity
+# cap so "watching" doesn't become effectively "not watching".
 DEFAULT_POLL_INTERVAL_SECONDS = 60
 MIN_POLL_INTERVAL_SECONDS = 15
 MAX_POLL_INTERVAL_SECONDS = 1800
@@ -199,19 +198,14 @@ def short_word(name):
 
 def is_urgent(fastest_dt, config):
     """Whether fastest_dt is strictly before the date of the user's current
-    slot.
+    slot — a different time on the same day does not count as urgent.
 
-    Exclusive as of 2026-07-20, by explicit user request (previously
-    inclusive — a slot on the same day as current_slot_date used to count
-    too, as a same-day time change). Matters most alongside
-    auto_confirm_reschedule (see trigger_open_browser()): once that updates
-    current_slot_date to a newly-booked date on a successful reschedule,
-    inclusive same-day matching could immediately re-trigger on a different
-    time slot that same day, chasing minor same-day changes instead of
-    settling. Reversible in one line if this turns out to be the wrong
-    call — the dashboard/history still show every hit found regardless of
-    urgency; this only changes what counts as a phone push / auto-browser
-    trigger.
+    Strict rather than inclusive so that once auto_confirm_reschedule updates
+    current_slot_date to a newly-booked date (see trigger_open_browser()), a
+    different time slot that same day can't immediately re-trigger, chasing
+    minor same-day changes instead of settling. The dashboard/history still
+    show every hit found regardless of urgency; this only gates the phone
+    push / auto-browser trigger.
     """
     current_slot_date = config["current_slot_date"]
     cutoff = datetime.fromisoformat(current_slot_date).replace(
@@ -328,8 +322,7 @@ def trigger_auto_refresh(logger, config, force=False, notify_phone=True):
     isn't watching and needs the nudge. The desktop notification still fires
     either way — it's local and harmless.
 
-    Returns a short status string: "disabled", "no_chromium_browser",
-    "already_running", "launched", or "launch_failed".
+    Returns one of the TRIGGER_* outcome constants.
     """
     if not config.get("auto_refresh_chrome", True):
         return TRIGGER_DISABLED
@@ -420,13 +413,12 @@ OPEN_BROWSER_PORT = open_logged_in_browser.DEFAULT_PORT
 # How long after an attempted final-confirm click (see
 # open_logged_in_browser.try_select_target_slot(), which writes
 # RESCHEDULE_CONFIRM_COOLDOWN_FILE right before that click) trigger_open_browser()
-# holds off passing --confirm-reschedule again. Added 2026-07-20: without it, a
-# confirm attempt whose own post-click verification timed out (so
-# current_slot_date never got updated) could have a very next poll cycle attempt
-# another confirm on some other nearby slot — a real reservation change,
-# possibly to a worse date, before there's been any chance for a human to
-# notice and step in. Not user-configurable, same as AUTO_REFRESH_LOCK having
-# no timeout of its own — this is a safety margin, not a tunable.
+# holds off passing --confirm-reschedule again. Without it, a confirm attempt
+# whose own post-click verification timed out (so current_slot_date never got
+# updated) could let the very next poll cycle attempt another confirm on some
+# other nearby slot — a real reservation change, possibly to a worse date,
+# before any human has had a chance to notice and step in. Not user-configurable
+# — this is a safety margin, not a tunable.
 RESCHEDULE_CONFIRM_COOLDOWN_SECONDS = 900
 
 
@@ -496,15 +488,14 @@ def trigger_open_browser(logger, config, auto_click=True, target_hit=None):
     recently, regardless of whether that attempt's own outcome is known.
 
     The launched subprocess's stdout/stderr go to RESCHEDULE_LOG_FILE
-    (append mode, added 2026-07-20) rather than DEVNULL — this is a
+    (append mode) rather than DEVNULL — this is a
     detached, fire-and-forget launch with no other way for its outcome to
     reach anyone, and open_logged_in_browser.py's own print()s are the only
     record of what an auto-triggered run actually did, especially the
     "couldn't verify automatically — check yourself" messages past the
     confirm click.
 
-    Returns a short status string: "disabled", "no_chromium_browser",
-    "already_running", "launched", or "launch_failed". No force option here
+    Returns one of the TRIGGER_* outcome constants. No force option here
     (unlike trigger_auto_refresh) — forcing would mean launching a second
     Chrome on the same fixed debug port an already-open one is using, which
     is fragile rather than useful; if one's already open that's already the
@@ -569,10 +560,10 @@ def parse_set_cookies(headers, session):
     """Merge Set-Cookie headers into session["cookies"].
 
     Deletions must actually delete: a logout/invalidate response carrying
-    `__Secure-PUDOJT=; Expires=Thu, 01 Jan 1970 ...` was previously stored as
-    an empty-string cookie, which left session.json looking complete to
-    open_logged_in_browser.py's COOKIE_NAMES check — so it injected blank
-    cookies and opened a logged-*out* tab instead of reporting the problem.
+    `__Secure-PUDOJT=; Expires=Thu, 01 Jan 1970 ...` would otherwise be stored
+    as an empty-string cookie, leaving session.json looking complete to
+    open_logged_in_browser.py's COOKIE_NAMES check — which then injects blank
+    cookies and opens a logged-*out* tab instead of reporting the problem.
     """
     if headers is None:
         return
@@ -715,14 +706,10 @@ def run_check(logger, dash_status):
         update_status(dash_status, "network_error", "Can't reach info-kierowca.pl — will retry")
         return
     elif status in (401, 403, 404, 500):
-        # 500 is grouped in with the real auth failures here, same as the
-        # search stage below: confirmed live 2026-07-18 that a 500 from the
-        # refresh endpoint was also just an expired-cookie response, not a
-        # transient upstream error — but it landed in the catch-all "else"
-        # branch below, so it displayed as "Something's wrong" instead of
-        # "Session expired" and never called trigger_auto_refresh(), leaving
-        # the user to notice and relogin by hand instead of Chrome popping
-        # open on its own.
+        # 500 is grouped with the real auth failures (same as the search stage
+        # below): confirmed live 2026-07-18 that a 500 from the refresh endpoint
+        # is just an expired-cookie response, not a transient upstream error, so
+        # it must relogin rather than display as a generic "something's wrong".
         _handle_auth_expired(logger, dash_status, config, status, "refresh")
         return
     else:
