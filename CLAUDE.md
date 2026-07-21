@@ -102,8 +102,14 @@ site (see the sandbox/systemd gotchas below before testing, and the frozen-build
   out of sync with a Settings-page interval change or the actual post-jitter wait.
 - `pull_session_cookies.py` — pulls session cookies from a running Chrome via remote-debugging
   port; writes them into `session.json`. Manual: you launch Chrome and log in first.
-- `auto_refresh_session.py` — launches Chrome (or, via `find_chrome()`'s `CHROME_CANDIDATES`/
-  `EDGE_WIN_PATHS` fallback, Edge — preinstalled on Windows, unlike Chrome) in a dedicated throwaway
+- `auto_refresh_session.py` — launches Chrome (via `find_chrome()`: `CHROME_CANDIDATES` PATH names
+  first, then `CHROME_MAC_PATH`, then `CHROME_WIN_PATHS`, then `EDGE_WIN_PATHS` last as the fallback
+  for a Windows machine with no Chrome — preinstalled there, unlike Chrome). `CHROME_WIN_PATHS`
+  exists because `CHROME_CANDIDATES`' names (`google-chrome` etc.) are a Linux/Mac PATH convention
+  that a Windows Chrome install never registers under — without the explicit
+  `%LOCALAPPDATA%`/Program Files paths, `find_chrome()` fell through to Edge on every Windows
+  machine regardless of whether Chrome was actually installed (confirmed live 2026-07-21: Edge kept
+  opening on a machine with Chrome present). Launches into a dedicated throwaway
   profile at `info-kierowca.pl/login`, then auto-clicks through the gov.pl → "Aplikacja mObywatel"
   chooser via an injected DOM-mutation-observer (`AUTO_CLICK_TARGETS`/`AUTO_CLICK_OBSERVER_JS` —
   text-based, will break if the site's login UI text/labels change). The observer watches attribute
@@ -118,6 +124,13 @@ site (see the sandbox/systemd gotchas below before testing, and the frozen-build
   Auto-triggered by `notifier.py` on `auth_expired` (`trigger_auto_refresh()`); guarded by a lock
   file at `~/.local/state/info-kierowca-notifier/auto-refresh.lock` so it won't relaunch while
   one's already in flight. Disable via `auto_refresh_chrome: false` in `config.json`.
+  `trigger_auto_refresh()` launches it with stdout/stderr going to `paths.AUTO_REFRESH_LOG_FILE`
+  (append mode) rather than `DEVNULL` — same rationale, and same separate-plain-file-not-`LOG_FILE`
+  reasoning, as `trigger_open_browser()`'s `RESCHEDULE_LOG_FILE` below: a detached, auto-triggered
+  run's own `print()`s (which browser binary got picked, any exception inside `try_auto_click()`,
+  which target it clicked) were previously unreachable. `main()` reconfigures stdout/stderr to
+  line-buffered on startup so those prints actually land in the file promptly instead of sitting in
+  a full buffer for however long the QR wait takes.
 - `cdp_client.py` — shared Chrome DevTools Protocol helpers used by `pull_session_cookies.py`,
   `auto_refresh_session.py`, and `open_logged_in_browser.py` (cookie reads *and* writes via
   `Storage.getCookies`/`setCookies`, JS eval in the page, navigation, and registering a script to
@@ -422,6 +435,9 @@ site (see the sandbox/systemd gotchas below before testing, and the frozen-build
 - `~/.local/state/info-kierowca-notifier/notifier.log` — rotating log (2MB x3 backups).
 - `~/.local/state/info-kierowca-notifier/status.json` — current status + history, what the
   dashboard reads and serves at `GET /status.json`.
+- `~/.local/state/info-kierowca-notifier/auto-refresh.log` — plain append-only log of
+  `auto_refresh_session.py`'s own `print()`s when auto-triggered (see `auto_refresh_session.py`
+  above); check this first when a relogin gets stuck partway through the login click-through.
 
 ## systemd units (Linux)
 
