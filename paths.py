@@ -41,6 +41,11 @@ AUTO_REFRESH_LOCK = STATE_DIR / "auto-refresh.lock"
 RESCHEDULE_LOG_FILE = STATE_DIR / "reschedule.log"
 RESCHEDULE_CONFIRM_COOLDOWN_FILE = STATE_DIR / "reschedule-confirm-cooldown"
 
+# Same rationale as RESCHEDULE_LOG_FILE (own file, not LOG_FILE, for the same
+# rotation-race reason) — auto_refresh_session.py's stdout used to go to
+# DEVNULL, leaving no record of what an auto-triggered relogin actually did.
+AUTO_REFRESH_LOG_FILE = STATE_DIR / "auto-refresh.log"
+
 # Static data shipped alongside the code (and bundled into the frozen build).
 WORD_CENTERS_FILE = Path(__file__).parent / "word_centers.json"
 CATEGORIES_FILE = Path(__file__).parent / "categories.json"

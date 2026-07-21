@@ -56,6 +56,20 @@ CHROME_CANDIDATES = [
     "msedge", "microsoft-edge", "microsoft-edge-stable",
 ]
 CHROME_MAC_PATH = Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
+# CHROME_CANDIDATES' PATH-based names ("google-chrome" etc.) are a Linux/Mac
+# convention — a Windows Chrome install never puts chrome.exe on PATH under
+# any of those names, so without these explicit paths find_chrome() always
+# fell through to EDGE_WIN_PATHS below even on a machine with Chrome
+# installed (confirmed live: Edge opened instead of the user's own Chrome).
+# %LOCALAPPDATA% covers the common non-admin/per-user install; the two
+# Program Files paths cover a machine-wide install (matching EDGE_WIN_PATHS'
+# own x86/64 pair).
+CHROME_WIN_PATHS = [
+    Path(os.environ.get("LOCALAPPDATA", ""))
+    / "Google" / "Chrome" / "Application" / "chrome.exe",
+    Path(r"C:\Program Files\Google\Chrome\Application\chrome.exe"),
+    Path(r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe"),
+]
 EDGE_WIN_PATHS = [
     Path(r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"),
     Path(r"C:\Program Files\Microsoft\Edge\Application\msedge.exe"),
@@ -217,7 +231,13 @@ AUTO_CLICK_OBSERVER_JS = CLICK_LOGIC_JS + (
 def try_auto_click(host, port):
     try:
         return cdp_client.evaluate_in_page(host, port, AUTO_CLICK_JS)
-    except Exception:
+    except Exception as e:
+        # Swallowed by design (Chrome may be mid-navigation) but logged: a
+        # click failing here silently every 0.5s for the whole wait looks
+        # identical, from the outside, to the tile chooser just never
+        # matching — this print is what tells the two apart in
+        # AUTO_REFRESH_LOG_FILE after the fact.
+        print(f"try_auto_click error: {e!r}")
         return None
 
 
@@ -228,6 +248,9 @@ def find_chrome():
             return path
     if CHROME_MAC_PATH.exists():
         return str(CHROME_MAC_PATH)
+    for path in CHROME_WIN_PATHS:
+        if path.exists():
+            return str(path)
     for path in EDGE_WIN_PATHS:
         if path.exists():
             return str(path)
@@ -341,7 +364,9 @@ def wait_for_cookies(host, port, timeout, chrome_proc):
                 return cookies
         except Exception:
             pass  # Chrome may be mid-navigation; just retry
-        try_auto_click(host, port)
+        clicked = try_auto_click(host, port)
+        if clicked:
+            print(f"auto-clicked: {clicked!r}")
         time.sleep(0.5)
     return None
 
@@ -378,6 +403,17 @@ def main():
 
     signal.signal(signal.SIGTERM, _terminate)
 
+    # stdout/stderr are redirected to a plain file (AUTO_REFRESH_LOG_FILE) when
+    # launched via notifier.trigger_auto_refresh(), which fully-buffers by
+    # default for a non-tty — without this, prints below (including
+    # try_auto_click's failure logging) wouldn't actually land in the file
+    # until the process exits, which could be hours into an unattended wait.
+    try:
+        sys.stdout.reconfigure(line_buffering=True)
+        sys.stderr.reconfigure(line_buffering=True)
+    except AttributeError:
+        pass  # older Python without reconfigure(); harmless to skip
+
     if not acquire_lock():
         print("A refresh is already in progress (lock file present) — exiting.")
         return
@@ -385,6 +421,7 @@ def main():
     chrome_proc = None
     try:
         chrome = find_chrome()
+        print(f"using browser: {chrome}")
         PROFILE_DIR.mkdir(parents=True, exist_ok=True)
         chrome_proc = subprocess.Popen(
             [

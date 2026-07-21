@@ -26,6 +26,7 @@ from pathlib import Path
 import auto_refresh_session
 import open_logged_in_browser
 from paths import (  # noqa: F401  (re-exported: other modules read these off notifier)
+    AUTO_REFRESH_LOG_FILE,
     CONFIG_FILE,
     LOG_FILE,
     PAUSE_FILE,
@@ -378,9 +379,13 @@ def trigger_auto_refresh(logger, config, force=False, notify_phone=True):
     if not notify_phone:
         cmd.append("--no-phone-push")
     try:
-        subprocess.Popen(
-            cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True
-        )
+        AUTO_REFRESH_LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with open(AUTO_REFRESH_LOG_FILE, "a") as logf:
+            logf.write(f"\n--- {datetime.now().isoformat()} launching: {cmd!r} ---\n")
+            logf.flush()
+            subprocess.Popen(
+                cmd, stdout=logf, stderr=subprocess.STDOUT, start_new_session=True
+            )
         logger.info("outcome=auto_refresh_launched")
         return TRIGGER_LAUNCHED
     except Exception as e:
