@@ -75,6 +75,33 @@ EDGE_WIN_PATHS = [
     Path(r"C:\Program Files\Microsoft\Edge\Application\msedge.exe"),
 ]
 
+
+def _chrome_from_windows_registry():
+    """Look up Chrome's install path via the "App Paths" registry key —
+    the same mechanism Windows itself uses to resolve a bare "chrome.exe"
+    (e.g. from the Run dialog or `start chrome`). Every normal Chrome
+    installer (per-user or per-machine) writes this key regardless of which
+    drive/folder it installed to, so it's more robust than guessing fixed
+    paths like CHROME_WIN_PATHS above — those only cover the default
+    locations and silently miss anything installed elsewhere. winreg only
+    exists on Windows; the ImportError there makes this a clean no-op on
+    Linux/Mac.
+    """
+    try:
+        import winreg
+    except ImportError:
+        return None
+    key_path = r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\chrome.exe"
+    for hive in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
+        try:
+            with winreg.OpenKey(hive, key_path) as key:
+                path, _ = winreg.QueryValueEx(key, None)
+        except OSError:
+            continue
+        if path and Path(path).exists():
+            return path
+    return None
+
 # The login click-path: info-kierowca.pl -> (maybe) "Zaloguj się" -> a PWPW
 # identity-provider chooser with a "gov.pl" tile -> a login.gov.pl chooser
 # with an "Aplikacja mObywatel" tile -> QR code. Checked in this order (most
@@ -248,6 +275,9 @@ def find_chrome():
             return path
     if CHROME_MAC_PATH.exists():
         return str(CHROME_MAC_PATH)
+    registry_path = _chrome_from_windows_registry()
+    if registry_path:
+        return registry_path
     for path in CHROME_WIN_PATHS:
         if path.exists():
             return str(path)

@@ -103,13 +103,18 @@ site (see the sandbox/systemd gotchas below before testing, and the frozen-build
 - `pull_session_cookies.py` — pulls session cookies from a running Chrome via remote-debugging
   port; writes them into `session.json`. Manual: you launch Chrome and log in first.
 - `auto_refresh_session.py` — launches Chrome (via `find_chrome()`: `CHROME_CANDIDATES` PATH names
-  first, then `CHROME_MAC_PATH`, then `CHROME_WIN_PATHS`, then `EDGE_WIN_PATHS` last as the fallback
-  for a Windows machine with no Chrome — preinstalled there, unlike Chrome). `CHROME_WIN_PATHS`
-  exists because `CHROME_CANDIDATES`' names (`google-chrome` etc.) are a Linux/Mac PATH convention
-  that a Windows Chrome install never registers under — without the explicit
-  `%LOCALAPPDATA%`/Program Files paths, `find_chrome()` fell through to Edge on every Windows
-  machine regardless of whether Chrome was actually installed (confirmed live 2026-07-21: Edge kept
-  opening on a machine with Chrome present). Launches into a dedicated throwaway
+  first, then `CHROME_MAC_PATH`, then `_chrome_from_windows_registry()`, then `CHROME_WIN_PATHS`,
+  then `EDGE_WIN_PATHS` last as the fallback for a Windows machine with no Chrome — preinstalled
+  there, unlike Chrome). Both Windows-specific lookups exist because `CHROME_CANDIDATES`' names
+  (`google-chrome` etc.) are a Linux/Mac PATH convention that a Windows Chrome install never
+  registers under — without them, `find_chrome()` fell through to Edge on every Windows machine
+  regardless of whether Chrome was actually installed (confirmed live 2026-07-21: Edge kept opening
+  on a machine with Chrome present). `_chrome_from_windows_registry()` reads the standard "App
+  Paths" registry key (`HKCU`/`HKLM` ...\App Paths\chrome.exe) — the same mechanism Windows itself
+  uses to resolve a bare `chrome.exe` — and is checked before the hardcoded `CHROME_WIN_PATHS`
+  guesses since it finds Chrome regardless of which drive/folder it was installed to; the fixed
+  `%LOCALAPPDATA%`/Program Files paths stay only as a fallback for the rare install that skips that
+  registry key. Launches into a dedicated throwaway
   profile at `info-kierowca.pl/login`, then auto-clicks through the gov.pl → "Aplikacja mObywatel"
   chooser via an injected DOM-mutation-observer (`AUTO_CLICK_TARGETS`/`AUTO_CLICK_OBSERVER_JS` —
   text-based, will break if the site's login UI text/labels change). The observer watches attribute
