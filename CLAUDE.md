@@ -6,6 +6,19 @@ date-picker for your existing booking, but stops there — picking the new date 
 step past that is always a real click from you (see `open_logged_in_browser.py`). Zero third-party
 dependencies (stdlib only).
 
+## Commands
+
+```bash
+python app.py                 # zero-setup entry point: loop thread + wizard/dashboard + auto-opens browser
+python notifier.py --loop     # poller standalone, long-running (systemd oneshot omits --loop)
+python notifier.py --interval 60   # fallback interval, only until config.json has poll_interval_seconds
+pyinstaller pyinstaller.spec  # build the single-file, no-console release binary
+```
+
+No automated test suite — changes are verified by running `app.py`/`notifier.py` against the live
+site (see the sandbox/systemd gotchas below before testing, and the frozen-build re-test note under
+`app.py`). Regenerate the static snapshots with `fetch_word_centers.py` / `fetch_categories.py`.
+
 ## Files
 
 - `notifier.py` — the poller. Run standalone with `--loop`, or once per invocation (systemd

@@ -6,6 +6,7 @@ Never books or reserves anything. Reads two endpoints only:
   - POST /bknd/exam/api/v1/Schedules/user/MultipleCentersExams (read slot data)
 """
 import argparse
+import functools
 import json
 import logging
 import logging.handlers
@@ -35,6 +36,7 @@ from paths import (  # noqa: F401  (re-exported: other modules read these off no
     STATUS_FILE,
     WORD_CENTERS_FILE,
     __version__,
+    empty_status,
 )
 
 MAX_HISTORY = 200
@@ -76,6 +78,12 @@ SESSION_ESTIMATED_LIFETIME_SECONDS = 3600
 POLL_JITTER_FRACTION = 0.15
 
 
+# Cached: word_centers.json is static data shipped with the code, never
+# changes at runtime, yet build_search_organization_ids() reads it every poll
+# cycle to pick filler ids whenever fewer than 5 centers are watched (the
+# common case). Callers copy the list via a comprehension before shuffling, so
+# the cached list itself is never mutated.
+@functools.lru_cache(maxsize=1)
 def load_word_center_ids():
     try:
         with open(WORD_CENTERS_FILE, encoding="utf-8") as f:
@@ -161,19 +169,7 @@ def load_status():
             return load_json(STATUS_FILE)
         except Exception:
             pass
-    # Keep in step with dashboard_server.EMPTY_STATUS — the two are the same
-    # "nothing has happened yet" shape, served by the two different dashboards.
-    return {
-        "last_check": None,
-        "outcome": None,
-        "message": "",
-        "urgent": False,
-        "current_hits": [],
-        "history": [],
-        "paused": False,
-        "next_check_at": None,
-        "session_expires_estimate": None,
-    }
+    return empty_status()
 
 
 def save_status(status):
@@ -278,6 +274,25 @@ AUTO_REFRESH_SCRIPT = Path(__file__).parent / "auto_refresh_session.py"
 AUTO_REFRESH_LOCK = auto_refresh_session.LOCK_FILE
 
 
+# Outcome vocabulary returned by trigger_auto_refresh() and
+# trigger_open_browser(). Named constants — rather than bare string literals
+# re-spelled in app.py's login handlers — so the producer and every consumer
+# key off one source; a renamed or added outcome is then a grep away instead of
+# a silent fall-through to a generic message. TRIGGER_OUTCOMES is the full set.
+TRIGGER_DISABLED = "disabled"
+TRIGGER_NO_BROWSER = "no_chromium_browser"
+TRIGGER_ALREADY_RUNNING = "already_running"
+TRIGGER_LAUNCHED = "launched"
+TRIGGER_LAUNCH_FAILED = "launch_failed"
+TRIGGER_OUTCOMES = (
+    TRIGGER_DISABLED,
+    TRIGGER_NO_BROWSER,
+    TRIGGER_ALREADY_RUNNING,
+    TRIGGER_LAUNCHED,
+    TRIGGER_LAUNCH_FAILED,
+)
+
+
 def trigger_auto_refresh(logger, config, force=False, notify_phone=True):
     """Best-effort: launch auto_refresh_session.py to relogin via Chrome+QR.
 
@@ -317,17 +332,17 @@ def trigger_auto_refresh(logger, config, force=False, notify_phone=True):
     "already_running", "launched", or "launch_failed".
     """
     if not config.get("auto_refresh_chrome", True):
-        return "disabled"
+        return TRIGGER_DISABLED
     if not auto_refresh_session.chrome_available():
         logger.info("outcome=auto_refresh_no_browser detail=no_chromium_found")
-        return "no_chromium_browser"
+        return TRIGGER_NO_BROWSER
     if AUTO_REFRESH_LOCK.exists():
         try:
             pid = int(AUTO_REFRESH_LOCK.read_text().strip())
             os.kill(pid, 0)
             if not force:
                 logger.info("outcome=auto_refresh_skipped detail=already_running pid=%s", pid)
-                return "already_running"
+                return TRIGGER_ALREADY_RUNNING
             logger.info("outcome=auto_refresh_force_restart detail=killing_stale pid=%s", pid)
             try:
                 os.kill(pid, signal.SIGTERM)
@@ -356,7 +371,7 @@ def trigger_auto_refresh(logger, config, force=False, notify_phone=True):
         cmd = [sys.executable, "--internal-auto-refresh"]
     else:
         if not AUTO_REFRESH_SCRIPT.exists():
-            return "launch_failed"
+            return TRIGGER_LAUNCH_FAILED
         python = sys.executable
         if shutil.which("systemd-run"):
             cmd = [
@@ -374,10 +389,10 @@ def trigger_auto_refresh(logger, config, force=False, notify_phone=True):
             cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True
         )
         logger.info("outcome=auto_refresh_launched")
-        return "launched"
+        return TRIGGER_LAUNCHED
     except Exception as e:
         logger.info("outcome=auto_refresh_launch_failed detail=%r", str(e))
-        return "launch_failed"
+        return TRIGGER_LAUNCH_FAILED
 
 
 def auto_refresh_in_progress():
@@ -496,21 +511,21 @@ def trigger_open_browser(logger, config, auto_click=True, target_hit=None):
     outcome a caller wants.
     """
     if not config.get("auto_open_browser", True):
-        return "disabled"
+        return TRIGGER_DISABLED
     if not auto_refresh_session.chrome_available():
         logger.info("outcome=open_browser_no_browser detail=no_chromium_found")
-        return "no_chromium_browser"
+        return TRIGGER_NO_BROWSER
     try:
         urllib.request.urlopen(f"http://127.0.0.1:{OPEN_BROWSER_PORT}/json/version", timeout=1)
         logger.info("outcome=open_browser_skipped detail=already_running")
-        return "already_running"
+        return TRIGGER_ALREADY_RUNNING
     except Exception:
         pass  # nothing listening on that port -> safe to launch
     if getattr(sys, "frozen", False):
         cmd = [sys.executable, "--internal-open-browser"]
     else:
         if not OPEN_BROWSER_SCRIPT.exists():
-            return "launch_failed"
+            return TRIGGER_LAUNCH_FAILED
         cmd = [sys.executable, str(OPEN_BROWSER_SCRIPT)]
     if not auto_click:
         cmd.append("--no-auto-click")
@@ -528,10 +543,10 @@ def trigger_open_browser(logger, config, auto_click=True, target_hit=None):
             logf.flush()
             subprocess.Popen(cmd, stdout=logf, stderr=subprocess.STDOUT, start_new_session=True)
         logger.info("outcome=open_browser_launched")
-        return "launched"
+        return TRIGGER_LAUNCHED
     except Exception as e:
         logger.info("outcome=open_browser_launch_failed detail=%r", str(e))
-        return "launch_failed"
+        return TRIGGER_LAUNCH_FAILED
 
 
 def cookie_header(session):
@@ -620,6 +635,23 @@ def fetch_pkk_profiles(session):
         return []
 
 
+def _handle_auth_expired(logger, dash_status, config, status, stage):
+    """Shared response to an auth-failure status in either run_check() stage:
+    log it, fire the critical 'session expired' notification, mark the
+    dashboard status, and kick off an auto-relogin. Only the log's stage label
+    and the status message differ per stage; which status codes count as an
+    auth failure stays each stage's own decision (see the call sites — refresh
+    also treats 404, both fold in 500)."""
+    logger.info("outcome=auth_expired status=%s stage=%s", status, stage)
+    notify(
+        "info-kierowca: session expired",
+        "Log back in via browser and update session.json",
+        "critical",
+    )
+    update_status(dash_status, "auth_expired", f"Session expired during {stage}")
+    trigger_auto_refresh(logger, config)
+
+
 def run_check(logger, dash_status):
     """Note: pausing/resuming itself is applied instantly by app.py's
     /pause and /resume handlers (they write dash_status/status.json
@@ -669,7 +701,7 @@ def run_check(logger, dash_status):
     )
 
     # 1. Keep the session alive.
-    status, body, headers = do_request(REFRESH_URL, session, method="GET")
+    status, body, _headers = do_request(REFRESH_URL, session, method="GET")
     if status == 204:
         save_json(SESSION_FILE, session)
         logger.info("outcome=refresh_ok status=%s", status)
@@ -691,14 +723,7 @@ def run_check(logger, dash_status):
         # "Session expired" and never called trigger_auto_refresh(), leaving
         # the user to notice and relogin by hand instead of Chrome popping
         # open on its own.
-        logger.info("outcome=auth_expired status=%s stage=refresh", status)
-        notify(
-            "info-kierowca: session expired",
-            "Log back in via browser and update session.json",
-            "critical",
-        )
-        update_status(dash_status, "auth_expired", "Session expired during refresh")
-        trigger_auto_refresh(logger, config)
+        _handle_auth_expired(logger, dash_status, config, status, "refresh")
         return
     else:
         # Other 5xx: a transient upstream error is not an expired session,
@@ -716,7 +741,7 @@ def run_check(logger, dash_status):
         "profileNumber": config["profile_number"],
         "profileType": "Pkk",
     }
-    status, body, headers = do_request(SEARCH_URL, session, method="POST", json_body=payload)
+    status, body, _headers = do_request(SEARCH_URL, session, method="POST", json_body=payload)
 
     if status is None:
         # Never reached the server — see the matching branch in the refresh
@@ -729,14 +754,7 @@ def run_check(logger, dash_status):
     # from the search endpoint has in practice always turned out to be the
     # same underlying cookie expiry. See docs/ADVANCED.md's auto-relogin note.
     if status in (401, 403, 500):
-        logger.info("outcome=auth_expired status=%s stage=search", status)
-        notify(
-            "info-kierowca: session expired",
-            "Log back in via browser and update session.json",
-            "critical",
-        )
-        update_status(dash_status, "auth_expired", "Session expired during search")
-        trigger_auto_refresh(logger, config)
+        _handle_auth_expired(logger, dash_status, config, status, "search")
         return
     if status != 200:
         # 5xx included: transient upstream errors are not an expired session.
@@ -902,7 +920,7 @@ def main():
     parser.add_argument(
         "--interval",
         type=int,
-        default=60,
+        default=DEFAULT_POLL_INTERVAL_SECONDS,
         help=(
             "Seconds between checks in --loop mode (default: 60). Only used "
             "as a fallback when config.json has no poll_interval_seconds "

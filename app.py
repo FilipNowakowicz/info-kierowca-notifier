@@ -20,12 +20,12 @@ import time
 import urllib.request
 import webbrowser
 from datetime import datetime
-from pathlib import Path
 
 import auto_refresh_session
 import dashboard_server
 import notifier
 import open_logged_in_browser
+from paths import CATEGORIES_FILE, WORD_CENTERS_FILE
 from templates import LOGIN_PAGE, TOOLBAR_HTML, WIZARD_PAGE
 
 HOST = dashboard_server.HOST
@@ -38,8 +38,7 @@ INTERVAL = notifier.DEFAULT_POLL_INTERVAL_SECONDS
 # from the site's own (session-gated) dictionary endpoint — see
 # fetch_word_centers.py, which regenerates this file. Baked in rather than
 # fetched live because the wizard has to work before the user has ever
-# logged in, and that endpoint needs a session.
-WORD_CENTERS_FILE = Path(__file__).parent / "word_centers.json"
+# logged in, and that endpoint needs a session. Location owned by paths.py.
 
 
 def load_word_centers():
@@ -56,7 +55,7 @@ WORD_CENTERS = load_word_centers()
 # wizard's dropdown so a user picks "B — car" instead of the bare numeric id
 # the API wants. Seeded with the confirmed B=5; refresh/extend with
 # fetch_categories.py (session-gated, same reason as word_centers.json).
-CATEGORIES_FILE = Path(__file__).parent / "categories.json"
+# Location owned by paths.py.
 
 
 def load_categories():
@@ -70,6 +69,11 @@ def load_categories():
 CATEGORIES = load_categories()
 
 EXAM_TYPE_CHOICES = ("Theoretical", "Practice")
+
+# The dashboard page with the interactive toolbar spliced in. Both halves are
+# constant strings, so this is computed once at import rather than re-scanned
+# and rebuilt on every "/" request.
+DASHBOARD_PAGE = dashboard_server.PAGE.replace("</body>", TOOLBAR_HTML + "</body>")
 
 
 def already_running():
@@ -298,10 +302,30 @@ class AppHandler(http.server.BaseHTTPRequestHandler):
     def _send_json(self, code, obj):
         self._send(code, json.dumps(obj).encode("utf-8"), "application/json")
 
+    def _read_json_body(self):
+        """Parse the request body as JSON. On bad JSON, send a 400 and return
+        None so the caller can just `if payload is None: return`."""
+        length = int(self.headers.get("Content-Length", 0) or 0)
+        raw = self.rfile.read(length) if length else b"{}"
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            self._send_json(400, {"ok": False, "error": "Invalid request."})
+            return None
+
+    def _reply_outcome(self, outcome, messages, default="Done."):
+        """Send the standard {ok, action, message} reply for a trigger_*
+        outcome. `messages` is keyed on notifier's TRIGGER_* constants."""
+        self._send_json(200, {"ok": True, "action": outcome, "message": messages.get(outcome, default)})
+
+    @staticmethod
+    def _load_config_or_empty():
+        return notifier.load_json(notifier.CONFIG_FILE) if notifier.CONFIG_FILE.exists() else {}
+
     def do_GET(self):
         if self.path in ("/", "/index.html"):
             if notifier.CONFIG_FILE.exists():
-                self._send(200, dashboard_server.PAGE.replace("</body>", TOOLBAR_HTML + "</body>"))
+                self._send(200, DASHBOARD_PAGE)
             elif not notifier.SESSION_FILE.exists():
                 # First run, not logged in yet: get the QR login out of the
                 # way first so the wizard that follows can prefill the PKK
@@ -373,15 +397,15 @@ class AppHandler(http.server.BaseHTTPRequestHandler):
         the automatic urgent-slot-hit trigger it must NOT click through to
         the date-picker — it should just land on the site, logged in.
         """
-        config = notifier.load_json(notifier.CONFIG_FILE) if notifier.CONFIG_FILE.exists() else {}
+        config = self._load_config_or_empty()
         if check_session_valid():
             outcome = notifier.trigger_open_browser(AppHandler.logger, config, auto_click=False)
             messages = {
-                "launched": "Session looks valid — opening a logged-in browser tab.",
-                "already_running": "A logged-in browser tab is already open.",
-                "disabled": "Session looks valid, but auto_open_browser is turned off in Settings.",
-                "launch_failed": "Session looks valid, but the browser failed to launch — check the log.",
-                "no_chromium_browser": "Session looks valid, but no Chrome, Edge, or other "
+                notifier.TRIGGER_LAUNCHED: "Session looks valid — opening a logged-in browser tab.",
+                notifier.TRIGGER_ALREADY_RUNNING: "A logged-in browser tab is already open.",
+                notifier.TRIGGER_DISABLED: "Session looks valid, but auto_open_browser is turned off in Settings.",
+                notifier.TRIGGER_LAUNCH_FAILED: "Session looks valid, but the browser failed to launch — check the log.",
+                notifier.TRIGGER_NO_BROWSER: "Session looks valid, but no Chrome, Edge, or other "
                     "Chromium-based browser was found on this machine — install one to continue.",
             }
         else:
@@ -389,13 +413,13 @@ class AppHandler(http.server.BaseHTTPRequestHandler):
                 AppHandler.logger, config, force=True, notify_phone=False
             )
             messages = {
-                "launched": "Session looks expired — opening Chrome for a fresh QR login.",
-                "disabled": "Session looks expired, but auto_refresh_chrome is turned off in Settings.",
-                "launch_failed": "Session looks expired, but Chrome failed to launch — check the log.",
-                "no_chromium_browser": "Session looks expired, but no Chrome, Edge, or other "
+                notifier.TRIGGER_LAUNCHED: "Session looks expired — opening Chrome for a fresh QR login.",
+                notifier.TRIGGER_DISABLED: "Session looks expired, but auto_refresh_chrome is turned off in Settings.",
+                notifier.TRIGGER_LAUNCH_FAILED: "Session looks expired, but Chrome failed to launch — check the log.",
+                notifier.TRIGGER_NO_BROWSER: "Session looks expired, but no Chrome, Edge, or other "
                     "Chromium-based browser was found on this machine — install one to continue.",
             }
-        self._send_json(200, {"ok": True, "action": outcome, "message": messages.get(outcome, "Done.")})
+        self._reply_outcome(outcome, messages)
 
     def _handle_relogin_now(self):
         """Backing handler for the small refresh icon next to the dashboard's
@@ -404,7 +428,7 @@ class AppHandler(http.server.BaseHTTPRequestHandler):
         still passes refresh - the whole point is resetting the ~hour
         estimate on demand, not recovering from a dead one.
         """
-        config = notifier.load_json(notifier.CONFIG_FILE) if notifier.CONFIG_FILE.exists() else {}
+        config = self._load_config_or_empty()
         prior_captured_at = None
         if notifier.SESSION_FILE.exists():
             try:
@@ -412,20 +436,20 @@ class AppHandler(http.server.BaseHTTPRequestHandler):
             except Exception:
                 pass
         outcome = notifier.trigger_auto_refresh(AppHandler.logger, config, force=True, notify_phone=False)
-        if outcome == "launched":
+        if outcome == notifier.TRIGGER_LAUNCHED:
             threading.Thread(
                 target=_wait_for_relogin_and_wake,
                 args=(prior_captured_at, AppHandler.wake_event),
                 daemon=True,
             ).start()
         messages = {
-            "launched": "Opening Chrome for a fresh QR login.",
-            "disabled": "auto_refresh_chrome is turned off in Settings.",
-            "launch_failed": "Chrome failed to launch — check the log.",
-            "no_chromium_browser": "No Chrome, Edge, or other Chromium-based browser was found "
+            notifier.TRIGGER_LAUNCHED: "Opening Chrome for a fresh QR login.",
+            notifier.TRIGGER_DISABLED: "auto_refresh_chrome is turned off in Settings.",
+            notifier.TRIGGER_LAUNCH_FAILED: "Chrome failed to launch — check the log.",
+            notifier.TRIGGER_NO_BROWSER: "No Chrome, Edge, or other Chromium-based browser was found "
                 "on this machine — install one to continue.",
         }
-        self._send_json(200, {"ok": True, "action": outcome, "message": messages.get(outcome, "Done.")})
+        self._reply_outcome(outcome, messages)
 
     def _handle_login_start(self):
         """Backs the login screen's button: launches Chrome for the QR scan
@@ -438,19 +462,15 @@ class AppHandler(http.server.BaseHTTPRequestHandler):
             AppHandler.logger, {}, force=True, notify_phone=False
         )
         messages = {
-            "no_chromium_browser": "No Chrome, Edge, or other Chromium-based browser was found "
+            notifier.TRIGGER_NO_BROWSER: "No Chrome, Edge, or other Chromium-based browser was found "
                 "on this machine. Install one and try again.",
-            "launch_failed": "Could not open Chrome — try the manual option below.",
+            notifier.TRIGGER_LAUNCH_FAILED: "Could not open Chrome — try the manual option below.",
         }
-        self._send_json(200, {"ok": True, "action": outcome, "message": messages.get(outcome)})
+        self._reply_outcome(outcome, messages, default=None)
 
     def _handle_setup(self):
-        length = int(self.headers.get("Content-Length", 0) or 0)
-        raw = self.rfile.read(length) if length else b"{}"
-        try:
-            payload = json.loads(raw)
-        except json.JSONDecodeError:
-            self._send_json(400, {"ok": False, "error": "Invalid request."})
+        payload = self._read_json_body()
+        if payload is None:
             return
         try:
             config = build_config(payload)
@@ -481,12 +501,8 @@ class AppHandler(http.server.BaseHTTPRequestHandler):
         works before the form has ever been saved, same as the readonly
         ntfy_topic field itself is populated client-side before any save.
         """
-        length = int(self.headers.get("Content-Length", 0) or 0)
-        raw = self.rfile.read(length) if length else b"{}"
-        try:
-            payload = json.loads(raw)
-        except json.JSONDecodeError:
-            self._send_json(400, {"ok": False, "error": "Invalid request."})
+        payload = self._read_json_body()
+        if payload is None:
             return
         topic = (payload.get("topic") or "").strip()
         if not topic:
