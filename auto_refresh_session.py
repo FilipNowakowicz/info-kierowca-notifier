@@ -56,6 +56,14 @@ CHROME_CANDIDATES = [
     "msedge", "microsoft-edge", "microsoft-edge-stable",
 ]
 CHROME_MAC_PATH = Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
+# CHROME_MAC_PATH only covers the common system-wide install location — the
+# same class of gap CHROME_WIN_PATHS had on Windows before the registry
+# lookup below existed, and by the same reasoning it would miss Chrome
+# installed to ~/Applications (no-admin-rights install) or anywhere else.
+# _chrome_from_macos_spotlight() is checked first for exactly that reason.
+# UNVERIFIED as of 2026-07-22 — written without a live Mac to test on;
+# CHROME_MAC_PATH remains as a fallback for the common case if this doesn't
+# pan out or mdfind is unavailable/disabled.
 # CHROME_CANDIDATES' PATH-based names ("google-chrome" etc.) are a Linux/Mac
 # convention — a Windows Chrome install never puts chrome.exe on PATH under
 # any of those names, so without these explicit paths find_chrome() always
@@ -268,11 +276,43 @@ def try_auto_click(host, port):
         return None
 
 
+def _chrome_from_macos_spotlight():
+    """macOS analog of _chrome_from_windows_registry() above: `mdfind`
+    (Spotlight) looks Chrome up by bundle identifier, which finds it
+    regardless of install location — /Applications, ~/Applications, or
+    anywhere else — unlike the fixed CHROME_MAC_PATH guess. Returns None on
+    any failure (wrong OS, mdfind missing/disabled, nothing indexed) so
+    CHROME_MAC_PATH stays a working fallback for the common case.
+
+    UNVERIFIED as of 2026-07-22 — written without a live Mac to test on.
+    """
+    if sys.platform != "darwin":
+        return None
+    try:
+        out = subprocess.check_output(
+            ["mdfind", "kMDItemCFBundleIdentifier == 'com.google.Chrome'"],
+            text=True, stderr=subprocess.DEVNULL, timeout=5,
+        )
+    except Exception:
+        return None
+    for line in out.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        binary = Path(line) / "Contents" / "MacOS" / "Google Chrome"
+        if binary.exists():
+            return str(binary)
+    return None
+
+
 def find_chrome():
     for name in CHROME_CANDIDATES:
         path = shutil.which(name)
         if path:
             return path
+    macos_path = _chrome_from_macos_spotlight()
+    if macos_path:
+        return macos_path
     if CHROME_MAC_PATH.exists():
         return str(CHROME_MAC_PATH)
     registry_path = _chrome_from_windows_registry()
@@ -303,6 +343,23 @@ def chrome_available():
 
 
 def notify_desktop(summary, body, urgency="normal"):
+    """Best-effort local desktop notification — the ntfy phone push is the
+    primary alert, this is a secondary one for whoever's at the machine.
+
+    notify-send is Linux-only; osascript is macOS's always-available
+    equivalent (no third-party notifier needed, matching this project's
+    zero-dependency stance). json.dumps() quotes summary/body as AppleScript
+    string literals safely rather than interpolating them raw into the
+    -e script text. UNVERIFIED as of 2026-07-22 — written without a live Mac
+    to test on; worst case it silently no-ops there, same as before.
+    """
+    if sys.platform == "darwin":
+        script = f"display notification {json.dumps(body)} with title {json.dumps(summary)}"
+        try:
+            subprocess.run(["osascript", "-e", script], check=False)
+        except FileNotFoundError:
+            pass
+        return
     try:
         subprocess.run(
             ["notify-send", "-u", urgency, "-a", "info-kierowca-notifier", summary, body],

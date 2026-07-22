@@ -239,7 +239,17 @@ def update_status(status, outcome, message="", current_hits=None, urgent=False):
 
 
 def notify(summary, body, urgency="normal"):
-    """Desktop notification via notify-send. Linux only — no-op if it's missing."""
+    """Desktop notification. notify-send is Linux-only; osascript is macOS's
+    always-available equivalent (see auto_refresh_session.notify_desktop()'s
+    own docstring for the same fix and its UNVERIFIED caveat — no live Mac
+    to test on). No-op if neither is available (e.g. some other OS)."""
+    if sys.platform == "darwin":
+        script = f"display notification {json.dumps(body)} with title {json.dumps(summary)}"
+        try:
+            subprocess.run(["osascript", "-e", script], check=False)
+        except FileNotFoundError:
+            pass
+        return
     try:
         subprocess.run(
             ["notify-send", "-u", urgency, "-a", "info-kierowca-notifier", summary, body],
