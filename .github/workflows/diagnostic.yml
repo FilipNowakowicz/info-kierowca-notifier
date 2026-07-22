@@ -1,0 +1,26 @@
+name: Diagnostic
+
+# Builds diagnose.py (see that file's own docstring) into a standalone
+# Windows console exe on demand — this is a debugging tool, not a versioned
+# release, so it's manually triggered rather than tag-triggered like
+# release.yml, and uploaded as a workflow artifact rather than a GitHub
+# Release asset.
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install pyinstaller==6.21.0
+      # No --windowed: this needs a visible console so its progress and any
+      # crash traceback are visible live, not just in the report file.
+      - run: pyinstaller --onefile --console --name ikw-diagnostic diagnose.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ikw-diagnostic-windows
+          path: dist/ikw-diagnostic.exe
