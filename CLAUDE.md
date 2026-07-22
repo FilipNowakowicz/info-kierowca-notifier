@@ -103,18 +103,24 @@ site (see the sandbox/systemd gotchas below before testing, and the frozen-build
 - `pull_session_cookies.py` — pulls session cookies from a running Chrome via remote-debugging
   port; writes them into `session.json`. Manual: you launch Chrome and log in first.
 - `auto_refresh_session.py` — launches Chrome (via `find_chrome()`: `CHROME_CANDIDATES` PATH names
-  first, then `CHROME_MAC_PATH`, then `_chrome_from_windows_registry()`, then `CHROME_WIN_PATHS`,
-  then `EDGE_WIN_PATHS` last as the fallback for a Windows machine with no Chrome — preinstalled
-  there, unlike Chrome). Both Windows-specific lookups exist because `CHROME_CANDIDATES`' names
-  (`google-chrome` etc.) are a Linux/Mac PATH convention that a Windows Chrome install never
-  registers under — without them, `find_chrome()` fell through to Edge on every Windows machine
-  regardless of whether Chrome was actually installed (confirmed live 2026-07-21: Edge kept opening
-  on a machine with Chrome present). `_chrome_from_windows_registry()` reads the standard "App
-  Paths" registry key (`HKCU`/`HKLM` ...\App Paths\chrome.exe) — the same mechanism Windows itself
-  uses to resolve a bare `chrome.exe` — and is checked before the hardcoded `CHROME_WIN_PATHS`
-  guesses since it finds Chrome regardless of which drive/folder it was installed to; the fixed
-  `%LOCALAPPDATA%`/Program Files paths stay only as a fallback for the rare install that skips that
-  registry key. Launches into a dedicated throwaway
+  first, then `_chrome_from_macos_spotlight()`, then `CHROME_MAC_PATH`, then
+  `_chrome_from_windows_registry()`, then `CHROME_WIN_PATHS`, then `EDGE_WIN_PATHS` last as the
+  fallback for a Windows machine with no Chrome — preinstalled there, unlike Chrome). Both
+  Windows-specific lookups exist because `CHROME_CANDIDATES`' names (`google-chrome` etc.) are a
+  Linux/Mac PATH convention that a Windows Chrome install never registers under — without them,
+  `find_chrome()` fell through to Edge on every Windows machine regardless of whether Chrome was
+  actually installed (confirmed live 2026-07-21: Edge kept opening on a machine with Chrome
+  present). `_chrome_from_windows_registry()` reads the standard "App Paths" registry key
+  (`HKCU`/`HKLM` ...\App Paths\chrome.exe) — the same mechanism Windows itself uses to resolve a
+  bare `chrome.exe` — and is checked before the hardcoded `CHROME_WIN_PATHS` guesses since it finds
+  Chrome regardless of which drive/folder it was installed to; the fixed `%LOCALAPPDATA%`/Program
+  Files paths stay only as a fallback for the rare install that skips that registry key.
+  `_chrome_from_macos_spotlight()` is the same idea for macOS — `mdfind`'s bundle-identifier lookup
+  finds Chrome regardless of install location (`/Applications`, `~/Applications`, or anywhere
+  else), checked before the fixed `CHROME_MAC_PATH` guess (which only covers the common system-wide
+  install) for the same reason the Windows registry lookup is checked before `CHROME_WIN_PATHS`.
+  **UNVERIFIED as of 2026-07-22** — written without a live Mac to test on; `CHROME_MAC_PATH` stays
+  as a fallback if it doesn't pan out. Launches into a dedicated throwaway
   profile at `info-kierowca.pl/login`, then auto-clicks through the gov.pl → "Aplikacja mObywatel"
   chooser via an injected DOM-mutation-observer (`AUTO_CLICK_TARGETS`/`AUTO_CLICK_OBSERVER_JS` —
   text-based, will break if the site's login UI text/labels change). The observer watches attribute
@@ -135,7 +141,13 @@ site (see the sandbox/systemd gotchas below before testing, and the frozen-build
   run's own `print()`s (which browser binary got picked, any exception inside `try_auto_click()`,
   which target it clicked) were previously unreachable. `main()` reconfigures stdout/stderr to
   line-buffered on startup so those prints actually land in the file promptly instead of sitting in
-  a full buffer for however long the QR wait takes.
+  a full buffer for however long the QR wait takes. `notify_desktop()` (the local best-effort
+  desktop toast alongside the ntfy phone push — same function name duplicated in `notifier.py` as
+  `notify()`, for the same circular-import reason as elsewhere in this project) used `notify-send`
+  only, which is Linux-only and silently no-ops elsewhere; both now branch to `osascript` on macOS
+  (`sys.platform == "darwin"`), quoting the summary/body via `json.dumps()` as safe AppleScript
+  string literals rather than interpolating them raw. **UNVERIFIED as of 2026-07-22** — no live Mac
+  to test on; worst case it silently no-ops there exactly as before.
 - `cdp_client.py` — shared Chrome DevTools Protocol helpers used by `pull_session_cookies.py`,
   `auto_refresh_session.py`, and `open_logged_in_browser.py` (cookie reads *and* writes via
   `Storage.getCookies`/`setCookies`, JS eval in the page, navigation, and registering a script to
