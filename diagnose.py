@@ -179,7 +179,7 @@ def live_test(profile_dir, port, label, duration=20):
             f"--user-data-dir={profile_dir}",
             "--no-first-run",
             "--no-default-browser-check",
-            "--window-size=600,800",  # see auto_refresh_session.py's own comment on this value
+            "--window-size=900,850",  # see auto_refresh_session.py's own comment on this value
             "--app=about:blank",
         ],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
