@@ -460,7 +460,13 @@ def main():
                 f"--user-data-dir={PROFILE_DIR}",
                 "--no-first-run",
                 "--no-default-browser-check",
-                "--window-size=460,760",
+                # 460px wide used to clip the login page below whatever
+                # breakpoint swaps its QR image for a plain numeric backup
+                # code (confirmed live 2026-07-22: the QR itself silently
+                # never rendered at that width). 600px keeps this a narrow,
+                # phone-ish window while staying wide enough for the real
+                # QR graphic.
+                "--window-size=600,800",
                 "--app=about:blank",
             ],
             stdout=subprocess.DEVNULL,
