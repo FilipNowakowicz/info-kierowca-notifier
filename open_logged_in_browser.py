@@ -133,33 +133,38 @@ EXAM_TYPE_LABELS_PL = {
 
 
 def select_slot_js(exam_label, time_str):
-    # EXPERIMENTAL / UNVERIFIED against the live site as of 2026-07-20 —
-    # written from screenshots of the slot-picker modal, not a live DOM
-    # inspection like click_text_js's button/role="button" selector was.
-    # The modal renders one radio input per (date, time) slot row inside an
-    # expanded date group; this walks up from each radio looking for an
-    # ancestor whose text contains both the Polish exam-type label and the
-    # HH:MM time, then clicks that radio directly (not a clickable-ancestor
-    # heuristic like click_text_js's, since a radio input is always
-    # clickable regardless of how the row around it is styled). Capped at 6
-    # ancestor levels, same as __ikw_clickableAncestor, to avoid walking
-    # high enough to span into a sibling row's text.
+    # Confirmed live 2026-07-28 that the first version of this (querying
+    # `input[type="radio"]` and walking up 6 ancestor levels for matching
+    # text) failed to select a slot that was visibly present and correctly
+    # labeled — the selection circle in this modal isn't necessarily a real
+    # `<input type="radio">`, and by user confirmation the whole slot row
+    # is clickable, not just the circle. So this no longer looks for a
+    # radio element at all: it reuses the same find-the-most-specific-
+    # matching-element-then-walk-up-to-a-clickable-ancestor pattern as
+    # click_text_js/__ikw_findAndClick (already proven live for the
+    # login/Zmień termin click-throughs elsewhere in this project), except
+    # matching requires *both* the Polish exam-type label and the HH:MM
+    # time substring together, since a single row must contain both — a
+    # single-substring search like __ikw_findAndClick's could match the
+    # wrong row when multiple slots share an exam type or a time.
+    # "Most specific" (shortest matching text) is preferred so a wrapping
+    # container that happens to contain the whole date group's text isn't
+    # picked over the actual row.
     return auto_refresh_session.CLICKABLE_HELPERS_JS + """
 (function(examLabel, timeStr) {
-  var radios = document.querySelectorAll('input[type="radio"]');
-  for (var i = 0; i < radios.length; i++) {
-    var radio = radios[i];
-    var cur = radio;
-    var t = '';
-    for (var depth = 0; depth < 6 && cur; depth++) {
-      t = (cur.innerText || cur.textContent || '').trim();
-      if (t.indexOf(examLabel) !== -1 && t.indexOf(timeStr) !== -1) break;
-      cur = cur.parentElement;
+  var all = document.querySelectorAll('button, a, [role="button"], [role="radio"], input[type="radio"], li, tr, div, span');
+  var best = null;
+  for (var i = 0; i < all.length; i++) {
+    var el = all[i];
+    if (!__ikw_isVisible(el)) continue;
+    var t = (el.innerText || el.textContent || '').trim();
+    if (t && t.length < 300 && t.indexOf(examLabel) !== -1 && t.indexOf(timeStr) !== -1) {
+      if (!best || t.length <= best[1].length) best = [el, t];
     }
-    if (t.indexOf(examLabel) !== -1 && t.indexOf(timeStr) !== -1) {
-      radio.click();
-      return true;
-    }
+  }
+  if (best) {
+    __ikw_clickableAncestor(best[0]).click();
+    return true;
   }
   return false;
 })(%s, %s)

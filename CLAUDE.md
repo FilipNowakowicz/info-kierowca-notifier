@@ -210,14 +210,19 @@ site (see the sandbox/systemd gotchas below before testing, and the frozen-build
     This is the single highest-stakes click in this entire project — the summary modal shows exam
     type/category/date-time/price with no separate payment step (screenshot-confirmed 2026-07-20),
     but unlike every click before it in this file, it actually submits the reservation change and
-    can't be undone by just closing the tab. **UNVERIFIED as of 2026-07-20** — `select_slot_js()`/
-    `click_enabled_button_js()`/`wait_and_verify_summary()` were all written from screenshots (the
-    radio-matching walks up to 6 ancestor levels from each radio input looking for text containing
-    both the exam label and time; the verification check scans `document.body`'s whole visible text
-    for the expected date/time/exam-type substrings, since no live-verified selector for the modal
-    exists), not a live DOM inspection like the rest of this file's click helpers — confirm it
-    actually finds/clicks/verifies the right thing before ever enabling `auto_confirm_reschedule`
-    for real.
+    can't be undone by just closing the tab. **Confirmed live 2026-07-28 that `select_slot_js()`'s
+    original approach was wrong**: it queried `input[type="radio"]` and walked up 6 ancestor levels
+    from each match looking for text containing both the exam label and time, but the real modal's
+    slot rows aren't necessarily built on a native radio input, and the whole row rectangle is
+    clickable (not just the circle) — so it silently found nothing and left the user to pick the
+    slot by hand every time. Rewritten to reuse the same find-the-most-specific-matching-element-
+    then-walk-up-to-a-clickable-ancestor pattern as `click_text_js`/`__ikw_findAndClick` (already
+    proven live elsewhere in this project), matching on both the exam label and time substrings
+    together. This fix itself is still unverified against a real confirm-reschedule run — the
+    underlying `wait_and_verify_summary()` check (`document.body`'s whole visible text for the
+    expected date/time/exam-type substrings, no live-verified selector for the modal exists) is
+    unchanged — so confirm the full flow actually finds/clicks/verifies the right thing before ever
+    enabling `auto_confirm_reschedule` for real.
   - After `CONFIRM_SUMMARY_TEXT` is clicked, also by explicit user request (the
     button's own "i przejdź dalej" wording implies at least one more screen, so this deliberately
     doesn't try to read anything off of whatever page that click lands on): waits a couple seconds,
