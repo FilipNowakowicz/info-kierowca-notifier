@@ -201,8 +201,8 @@ keeps reappearing under a new signature won't pile up duplicate Chrome windows. 
 
 **Requires an existing confirmed booking.** The "Zmień termin" button only appears on a booking
 that's already `Potwierdzony` (confirmed) — if you don't have one, there's nothing on `/cases` for
-this to click, and it'll just report that it couldn't find the button. This flow moves the date on
-a booking you already hold; it doesn't create one.
+this to click, and it'll just report that it couldn't find the button. The app reschedules the
+booking you already hold; it cannot create a new one.
 
 ### Experimental: auto-selecting the matching slot and reaching the summary screen
 

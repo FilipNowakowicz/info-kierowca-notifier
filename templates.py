@@ -638,14 +638,14 @@ WIZARD_PAGE = """<!doctype html>
 
     <fieldset>
       <legend>Alerts</legend>
-      <p class="booking-note" id="booking-note">Before continuing, have the date of your existing booked exam ready. It is required because alerts are sent only for earlier slots.</p>
-      <label for="current_slot_date_display">Required: date of your existing booked slot</label>
+      <p class="booking-note" id="booking-note">Before continuing, you need an existing booked exam. This app changes the date of that booking; it does not create a new booking.</p>
+      <label for="current_slot_date_display">Required: date of the booking to reschedule</label>
       <div class="datepick" id="datepick">
         <input type="text" class="datepick-input" id="current_slot_date_display" placeholder="Select a date" readonly required>
         <input type="hidden" id="current_slot_date">
         <div class="calendar" id="calendar"></div>
       </div>
-      <div class="hint">This required date is the baseline for alerts: the app notifies you only about earlier slots.</div>
+      <div class="hint">Enter the date of the existing booking that you want the app to reschedule.</div>
 
       <div class="freq-head" style="margin-top:1rem;">
         <label for="time_from_slider">Preferred time of day</label>

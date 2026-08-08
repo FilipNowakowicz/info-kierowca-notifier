@@ -11,8 +11,8 @@ Program sprawdza wolne terminy w [info-kierowca.pl](https://info-kierowca.pl), p
 1. Pobierz wersję dla swojego systemu z [strony wydań](../../releases) — bez instalatora, Pythona ani dodatkowej konfiguracji.
 2. Uruchom program. Karta przeglądarki otworzy się automatycznie.
 3. Zeskanuj kod QR aplikacją mObywatel, aby się zalogować, albo pomiń ten krok i wpisz numer PKK ręcznie.
-4. Przygotuj datę obecnie zarezerwowanego egzaminu. Jest wymagana, ponieważ aplikacja używa jej jako punktu odniesienia i powiadamia tylko o wcześniejszych terminach.
-5. Potwierdź wykryty numer PKK/kategorię prawa jazdy (lub wypełnij je ręcznie), wybierz ośrodek/ośrodki egzaminacyjne, **wpisz wymaganą datę obecnej rezerwacji** i wybierz sposób powiadamiania.
+4. Potrzebujesz już zarezerwowanego egzaminu: aplikacja zmienia datę tej rezerwacji, a nie tworzy nowej. Przygotuj datę tej rezerwacji.
+5. Potwierdź wykryty numer PKK/kategorię prawa jazdy (lub wypełnij je ręcznie), wybierz ośrodek/ośrodki egzaminacyjne, **wpisz datę rezerwacji do zmiany terminu** i wybierz sposób powiadamiania.
 
 Od tej pory otwarta karta przeglądarki jest Twoim panelem; znajduje się w niej przycisk **Zakończ** do wyłączenia programu.
 
