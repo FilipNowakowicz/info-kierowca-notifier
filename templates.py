@@ -625,7 +625,7 @@ WIZARD_PAGE = """<!doctype html>
 
       <div class="divider"></div>
 
-      <label>WORD centers to watch (__CENTER_COUNT__ nationwide)</label>
+      <label for="center-search">WORD centers to watch (__CENTER_COUNT__ nationwide)</label>
       <div class="combobox">
         <input type="text" id="center-search" placeholder="Click to browse all centers, or type to filter..." autocomplete="off">
         <div id="center-dropdown"></div>
