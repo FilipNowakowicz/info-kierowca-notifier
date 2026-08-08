@@ -8,6 +8,7 @@ import http.server
 import json
 import socketserver
 
+from localization import LOCALIZATION_SCRIPT
 from paths import STATUS_FILE, empty_status
 
 HOST = "127.0.0.1"
@@ -138,6 +139,8 @@ PAGE = """<!doctype html>
 
 <script>
 let isPaused = false;
+const ui = (text) => window.ikwI18n ? window.ikwI18n.t(text) : text;
+const uiLocale = () => window.ikwI18n && window.ikwI18n.lang() === "pl" ? "pl-PL" : undefined;
 // Epoch ms of the next scheduled check, straight off status.json's own
 // next_check_at (notifier.py's loop() writes it as the *actual* resolved
 // wait, jitter included) - so the countdown counts down to the real next
@@ -147,7 +150,7 @@ let nextCheckAt = null;
 function fmtDateTime(iso) {
   if (!iso) return "";
   const d = new Date(iso);
-  return d.toLocaleString(undefined, {
+  return d.toLocaleString(uiLocale(), {
     weekday: "short", day: "2-digit", month: "short",
     year: "numeric", hour: "2-digit", minute: "2-digit"
   });
@@ -156,7 +159,7 @@ function fmtDateTime(iso) {
 function fmtShort(iso) {
   if (!iso) return "";
   const d = new Date(iso);
-  return d.toLocaleString(undefined, {
+  return d.toLocaleString(uiLocale(), {
     day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit"
   });
 }
@@ -173,7 +176,7 @@ async function poll() {
     data = await res.json();
   } catch (e) {
     document.body.className = "error";
-    document.getElementById("headline").textContent = "Dashboard lost contact with the notifier";
+    document.getElementById("headline").textContent = ui("Dashboard lost contact with the notifier");
     return;
   }
 
@@ -191,7 +194,7 @@ async function poll() {
   isPaused = !!data.paused;
   headlineIconPause.style.display = isPaused ? "none" : "";
   headlineIconPlay.style.display = isPaused ? "" : "none";
-  headlineHint.textContent = isPaused ? "Click to resume" : "Click to pause";
+  headlineHint.textContent = isPaused ? ui("Click to resume") : ui("Click to pause");
 
   if (isPaused) {
     // Checked first, ahead of outcome: pausing no longer overwrites the
@@ -206,44 +209,44 @@ async function poll() {
     // pause never shifts the headline. The hover hint plus the big
     // play-icon overlay already say the same thing.
     body.className = "none";
-    headline.textContent = "Paused";
+    headline.textContent = ui("Paused");
     subline.textContent = "";
     detail.textContent = "";
   } else if (data.outcome === "slot_found" && fastest) {
     body.className = data.urgent ? "hit-soon" : "hit-far";
     headline.textContent = fmtDateTime(fastest.datetime);
-    subline.textContent = `${fastest.word} · ${fastest.places} spots`;
+    subline.textContent = `${fastest.word} · ${fastest.places} ${ui("spots")}`;
     detail.textContent = "";
   } else if (data.outcome === "auth_expired") {
     body.className = "error";
-    headline.textContent = "Session expired";
+    headline.textContent = ui("Session expired");
     subline.textContent = "";
-    detail.textContent = "Log back in via browser and update session.json";
+    detail.textContent = ui("Log back in via browser and update session.json");
   } else if (data.outcome === "network_error") {
     // Offline is a normal, self-healing state, not an error worth alarming
     // about — styled like "no result yet" rather than red.
     body.className = "none";
-    headline.textContent = "Offline";
+    headline.textContent = ui("Offline");
     subline.textContent = "";
-    detail.textContent = data.message || "Can't reach info-kierowca.pl — will retry";
+    detail.textContent = data.message || ui("Can't reach info-kierowca.pl — will retry");
   } else if (data.outcome === "unexpected" || data.outcome === "unparseable") {
     body.className = "error";
-    headline.textContent = "Something's wrong";
+    headline.textContent = ui("Something's wrong");
     subline.textContent = "";
-    detail.textContent = data.message || "Unexpected response — check manually";
+    detail.textContent = data.message || ui("Unexpected response — check manually");
   } else if (data.outcome === "no_slot") {
     body.className = "none";
-    headline.textContent = "No slots in the next 31 days";
+    headline.textContent = ui("No slots in the next 31 days");
     subline.textContent = "";
     detail.textContent = "";
   } else {
     body.className = "none";
-    headline.textContent = "Waiting for first check…";
+    headline.textContent = ui("Waiting for first check…");
     subline.textContent = "";
     detail.textContent = "";
   }
 
-  meta.textContent = data.last_check ? `Last checked: ${fmtDateTime(data.last_check)}` : "No checks yet";
+  meta.textContent = data.last_check ? `${ui("Last checked")}: ${fmtDateTime(data.last_check)}` : ui("No checks yet");
   nextCheckAt = data.next_check_at ? new Date(data.next_check_at).getTime() : null;
 
   const sessionExpiry = document.getElementById("session-expiry");
@@ -255,8 +258,8 @@ async function poll() {
   if (data.session_expires_estimate) {
     const remainingMin = Math.round((new Date(data.session_expires_estimate).getTime() - Date.now()) / 60000);
     sessionExpiry.textContent = remainingMin > 0
-      ? `Session expires in ${remainingMin} min`
-      : "Session expired";
+      ? `${ui("Session expires in")} ${remainingMin} ${ui("min")}`
+      : ui("Session expired");
   } else {
     sessionExpiry.textContent = "";
   }
@@ -267,7 +270,7 @@ async function poll() {
     // History entries written before the schema narrowed carry the full
     // "hits" list instead of a precomputed "fastest" — read either.
     const f = entry.fastest || fastestOf(entry.hits);
-    const text = f ? `${fmtShort(f.datetime)} · ${f.word} (${f.places})` : "no slots in the next 31 days";
+    const text = f ? `${fmtShort(f.datetime)} · ${f.word} (${f.places})` : ui("no slots in the next 31 days");
     div.innerHTML = `<span class="ts">${fmtDateTime(entry.seen_at)}</span>${text}`;
     history.appendChild(div);
   });
@@ -279,11 +282,11 @@ function tickCountdown() {
   if (isPaused || nextCheckAt === null) { el.textContent = ""; return; }
   const remaining = Math.round((nextCheckAt - Date.now()) / 1000);
   if (remaining <= 0) {
-    el.textContent = "Checking any moment now…";
+    el.textContent = ui("Checking any moment now…");
   } else {
     const m = Math.floor(remaining / 60);
     const s = remaining % 60;
-    el.textContent = `Next check in ${m}:${String(s).padStart(2, "0")}`;
+    el.textContent = `${ui("Next check in")} ${m}:${String(s).padStart(2, "0")}`;
   }
 }
 
@@ -294,6 +297,8 @@ setInterval(tickCountdown, 1000);
 </body>
 </html>
 """
+
+PAGE = PAGE.replace("<head>", "<head>" + LOCALIZATION_SCRIPT, 1)
 
 
 class Handler(http.server.BaseHTTPRequestHandler):

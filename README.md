@@ -1,5 +1,7 @@
 # info-kierowca-notifier
 
+[Polski](README.pl.md) · [English](README.md)
+
 A slot checker for [info-kierowca.pl](https://info-kierowca.pl), the Polish driving exam booking
 portal. It watches for open exam slots and alerts you — on a dashboard and your phone — the moment
 one appears. Checking is always read-only. Optionally, if you already have a paid booking and want
