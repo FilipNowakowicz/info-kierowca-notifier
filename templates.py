@@ -129,10 +129,10 @@ function ikwToast(msg) {
 }
 
 document.getElementById('ikw-quit-btn').addEventListener('click', async () => {
-  if (!confirm('Quit info-kierowca-notifier? You will stop getting checked/notified until you start it again.')) return;
+  if (!confirm(ikwI18n.t('Quit info-kierowca-notifier? You will stop getting checked/notified until you start it again.'))) return;
   try { await fetch('/shutdown', {method: 'POST'}); } catch (e) {}
   document.body.innerHTML =
-    '<div style="padding:4rem;text-align:center;font-family:sans-serif;color:#eee;">Stopped. You can close this tab.</div>';
+    `<div style="padding:4rem;text-align:center;font-family:sans-serif;color:#eee;">${ikwI18n.t('Stopped. You can close this tab.')}</div>`;
 });
 
 const ikwSettingsOverlay = document.getElementById('ikw-settings-overlay');
@@ -193,9 +193,9 @@ document.getElementById('ikw-browser-btn').addEventListener('click', async () =>
   try {
     const res = await fetch('/manual-login', {method: 'POST'});
     const data = await res.json();
-    ikwToast(data.message || 'Something went wrong.');
+    ikwToast(ikwI18n.t(data.message || 'Something went wrong.'));
   } catch (e) {
-    ikwToast('Could not reach the app.');
+    ikwToast(ikwI18n.t('Could not reach the app.'));
   } finally {
     btn.disabled = false;
   }
@@ -208,14 +208,14 @@ document.getElementById('ikw-browser-btn').addEventListener('click', async () =>
 const ikwSessionRefreshBtn = document.getElementById('session-refresh-btn');
 ikwSessionRefreshBtn.style.display = 'flex';
 ikwSessionRefreshBtn.addEventListener('click', async () => {
-  if (!confirm('Open Chrome for a fresh QR login now? This replaces your current session.')) return;
+  if (!confirm(ikwI18n.t('Open Chrome for a fresh QR login now? This replaces your current session.'))) return;
   ikwSessionRefreshBtn.disabled = true;
   try {
     const res = await fetch('/relogin-now', {method: 'POST'});
     const data = await res.json();
-    ikwToast(data.message || 'Something went wrong.');
+    ikwToast(ikwI18n.t(data.message || 'Something went wrong.'));
   } catch (e) {
-    ikwToast('Could not reach the app.');
+    ikwToast(ikwI18n.t('Could not reach the app.'));
   } finally {
     ikwSessionRefreshBtn.disabled = false;
   }
@@ -246,9 +246,9 @@ async function ikwTogglePause() {
     // headline/icon immediately, instead of waiting up to 5s for its
     // own interval to fire.
     if (typeof poll === 'function') await poll();
-    ikwToast(data.paused ? 'Paused — checking will stop until you resume.' : 'Resumed checking.');
+    ikwToast(ikwI18n.t(data.paused ? 'Paused — checking will stop until you resume.' : 'Resumed checking.'));
   } catch (e) {
-    ikwToast('Could not reach the app.');
+    ikwToast(ikwI18n.t('Could not reach the app.'));
   } finally {
     ikwPauseInFlight = false;
   }
@@ -324,7 +324,7 @@ loginBtn.addEventListener('click', async () => {
     const res = await fetch('/login-start', {method: 'POST'});
     const data = await res.json();
     if (!data.ok || data.action === 'launch_failed' || data.action === 'no_chromium_browser') {
-      throw new Error(data.message || 'Could not open Chrome — try the manual option below.');
+      throw new Error(ikwI18n.t(data.message || 'Could not open Chrome — try the manual option below.'));
     }
     loginHint.classList.add('show');
     loginBtn.textContent = 'Waiting for QR scan...';
@@ -345,13 +345,13 @@ loginBtn.addEventListener('click', async () => {
         loginBtn.disabled = false;
         loginBtn.textContent = 'Log in with mObywatel';
         loginHint.classList.remove('show');
-        loginError.textContent = "Login didn't complete — the Chrome window may have been closed. Try again.";
+        loginError.textContent = ikwI18n.t("Login didn't complete — the Chrome window may have been closed. Try again.");
         loginError.classList.add('show');
       }
     }, 2000);
   } catch (e) {
     loginBtn.disabled = false;
-    loginError.textContent = e.message;
+    loginError.textContent = ikwI18n.t(e.message);
     loginError.classList.add('show');
   }
 });
@@ -398,7 +398,7 @@ WIZARD_PAGE = """<!doctype html>
      past behind it (its background used to be too faint - close to the
      page's own transparent-when-embedded background - for that separation
      to read at all). */
-  #wiz-close-btn { display: none; position: fixed; top: 1rem; right: 1rem; width: 2.2rem; height: 2.2rem;
+  #wiz-close-btn { display: none; position: absolute; top: 0.1rem; right: 0; width: 2.2rem; height: 2.2rem;
     border-radius: 999px; background: rgba(24,24,24,0.9); color: #eee; border: 1px solid rgba(255,255,255,0.18);
     box-shadow: 0 3px 12px rgba(0,0,0,0.45); font-size: 1.2rem; line-height: 1; cursor: pointer;
     align-items: center; justify-content: center; }
@@ -587,8 +587,8 @@ WIZARD_PAGE = """<!doctype html>
 </style>
 </head>
 <body>
-<button id="wiz-close-btn" type="button" title="Back to dashboard" aria-label="Back to dashboard">&times;</button>
 <div id="card">
+  <button id="wiz-close-btn" type="button" title="Back to dashboard" aria-label="Back to dashboard">&times;</button>
   <h1 id="page-title">Set up info-kierowca notifier</h1>
   <p class="lead" id="page-lead">This runs entirely on your machine — nothing but info-kierowca.pl ever sees your PKK number or session.</p>
 
@@ -958,11 +958,11 @@ wireSwitch(autoSelectSlotSwitch, applyAutoConfirmDim);
 function toggleAutoConfirm() {
   if (!autoSelectSlotSwitch.classList.contains('on')) return;  // covers keyboard activation while dimmed
   const turningOn = !autoConfirmSwitch.classList.contains('on');
-  if (turningOn && !confirm(
+  if (turningOn && !confirm(t(
     "This lets the app automatically click through and submit a real reservation date change "
     + "the moment it finds a matching slot — no review step, and it can't be undone by closing "
     + "the browser. Are you sure?"
-  )) return;
+  ))) return;
   setSwitch(autoConfirmSwitch, turningOn);
 }
 autoConfirmSwitch.addEventListener('click', toggleAutoConfirm);
@@ -1372,7 +1372,7 @@ document.getElementById('form').addEventListener('submit', async (e) => {
 
     ikwGoDashboard('ikw-settings-saved');
   } catch (err) {
-    errorEl.textContent = err.message;
+    errorEl.textContent = t(err.message);
     errorEl.classList.add('show');
   }
 });

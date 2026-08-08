@@ -37,6 +37,8 @@ LOCALIZATION_SCRIPT = r"""
     'Back to dashboard': 'Wróć do panelu', 'Show or hide PKK number': 'Pokaż lub ukryj numer PKK', 'Show or hide notification link': 'Pokaż lub ukryj link powiadomień',
     'No centers yet — search above to add one.': 'Nie wybrano jeszcze ośrodków — wyszukaj powyżej, aby dodać.', 'Remove': 'Usuń', 'No matching centers.': 'Brak pasujących ośrodków.', 'All centers added.': 'Dodano wszystkie ośrodki.',
     'Connect your account': 'Połącz konto', 'Log in with mObywatel': 'Zaloguj się przez mObywatel', 'Waiting for QR scan...': 'Oczekiwanie na skan kodu QR...', 'Skip and enter my PKK number manually': 'Pomiń i wpisz numer PKK ręcznie',
+    "Log in once via the mObywatel QR code — this is what lets the notifier check for\n  slots on your behalf. While we're at it, we'll also find your PKK number and license category\n  automatically, so you don't have to type them in.": 'Zaloguj się raz kodem QR w aplikacji mObywatel — dzięki temu program może sprawdzać terminy w Twoim imieniu. Przy okazji automatycznie znajdzie numer PKK i kategorię prawa jazdy, więc nie trzeba ich wpisywać ręcznie.',
+    "A Chrome window should open — scan the QR code in the mObywatel app. This page\n  continues on its own once you're logged in.": 'Powinno otworzyć się okno Chrome — zeskanuj kod QR w aplikacji mObywatel. Po zalogowaniu strona przejdzie dalej automatycznie.',
     'Open browser': 'Otwórz przeglądarkę', 'Quit': 'Zakończ', 'Get new session': 'Pobierz nową sesję',
     'Paused': 'Wstrzymano', 'Click to resume': 'Kliknij, aby wznowić', 'Click to pause': 'Kliknij, aby wstrzymać',
     'Dashboard lost contact with the notifier': 'Panel utracił połączenie z programem', 'spots': 'miejsc',
@@ -50,12 +52,51 @@ LOCALIZATION_SCRIPT = r"""
     'Reset failed — check the log.': 'Resetowanie nie powiodło się — sprawdź dziennik.', 'Pick at least one exam type.': 'Wybierz co najmniej jeden rodzaj egzaminu.',
     'Pick at least one WORD center.': 'Wybierz co najmniej jeden ośrodek WORD.', 'PKK number is required.': 'Numer PKK jest wymagany.',
     'Pick a license category.': 'Wybierz kategorię prawa jazdy.', 'Pick the date of your current booked slot.': 'Wybierz datę obecnie zarezerwowanego terminu.', 'Save failed.': 'Nie udało się zapisać.',
-    'Settings saved.': 'Ustawienia zapisane.',
+    'Settings saved.': 'Ustawienia zapisane.', 'Checking…': 'Sprawdzanie…',
+    'Quit info-kierowca-notifier? You will stop getting checked/notified until you start it again.': 'Zakończyć info-kierowca-notifier? Sprawdzanie i powiadomienia zostaną wstrzymane do następnego uruchomienia.',
+    'Stopped. You can close this tab.': 'Zatrzymano. Możesz zamknąć tę kartę.',
+    'Open Chrome for a fresh QR login now? This replaces your current session.': 'Otworzyć Chrome, aby ponownie zalogować się kodem QR? Zastąpi to obecną sesję.',
+    'Could not open Chrome — try the manual option below.': 'Nie udało się otworzyć Chrome — spróbuj opcji ręcznej poniżej.',
+    "Login didn't complete — the Chrome window may have been closed. Try again.": 'Logowanie nie zostało ukończone — okno Chrome mogło zostać zamknięte. Spróbuj ponownie.',
+    "This lets the app automatically click through and submit a real reservation date change the moment it finds a matching slot — no review step, and it can't be undone by closing the browser. Are you sure?": 'To pozwala programowi automatycznie przejść dalej i wysłać rzeczywistą zmianę daty rezerwacji po znalezieniu pasującego terminu — bez etapu sprawdzania i bez możliwości cofnięcia przez zamknięcie przeglądarki. Czy na pewno chcesz kontynuować?',
+    'Invalid request.': 'Nieprawidłowe żądanie.', 'Notification topic is required': 'Temat powiadomień jest wymagany',
+    'PKK number is required': 'Numer PKK jest wymagany', 'Pick at least one WORD center': 'Wybierz co najmniej jeden ośrodek WORD',
+    'WORD center IDs must be numeric IDs': 'Identyfikatory ośrodków WORD muszą być liczbami', 'Pick at least one exam type': 'Wybierz co najmniej jeden rodzaj egzaminu',
+    'Category must be a number': 'Kategoria musi być liczbą', 'Check frequency must be a number': 'Częstotliwość sprawdzania musi być liczbą',
+    'Preferred time window must be numbers': 'Preferowany przedział godzin musi zawierać liczby', 'Preferred time window must be a valid range between 00:00 and 24:00': 'Preferowany przedział godzin musi być poprawnym zakresem od 00:00 do 24:00',
+    'Current slot date is required': 'Data obecnego terminu jest wymagana', 'Current slot date must be a date like 2026-09-14': 'Data obecnego terminu musi mieć format 2026-09-14',
+    'Something went wrong.': 'Coś poszło nie tak.', 'Could not reach the app.': 'Nie można połączyć się z programem.',
+    'Paused — checking will stop until you resume.': 'Wstrzymano — sprawdzanie nie będzie działać do momentu wznowienia.', 'Resumed checking.': 'Wznowiono sprawdzanie.',
+    'Toggle pause': 'Przełącz wstrzymanie', 'No notification topic set yet.': 'Nie ustawiono jeszcze tematu powiadomień.',
+    'Session looks valid — opening a logged-in browser tab.': 'Sesja wygląda na ważną — otwieranie zalogowanej karty przeglądarki.',
+    'A logged-in browser tab is already open.': 'Zalogowana karta przeglądarki jest już otwarta.',
+    'Session looks valid, but auto_open_browser is turned off in Settings.': 'Sesja wygląda na ważną, ale auto_open_browser jest wyłączone w Ustawieniach.',
+    'Session looks valid, but the browser failed to launch — check the log.': 'Sesja wygląda na ważną, ale przeglądarka nie została uruchomiona — sprawdź dziennik.',
+    'Session looks valid, but no Chrome, Edge, or other Chromium-based browser was found on this machine — install one to continue.': 'Sesja wygląda na ważną, ale na tym komputerze nie znaleziono Chrome, Edge ani innej przeglądarki opartej na Chromium — zainstaluj ją, aby kontynuować.',
+    'Session looks expired — opening Chrome for a fresh QR login.': 'Sesja wygląda na wygasłą — otwieranie Chrome do ponownego logowania kodem QR.',
+    'Session looks expired, but auto_refresh_chrome is turned off in Settings.': 'Sesja wygląda na wygasłą, ale auto_refresh_chrome jest wyłączone w Ustawieniach.',
+    'Session looks expired, but Chrome failed to launch — check the log.': 'Sesja wygląda na wygasłą, ale Chrome nie zostało uruchomione — sprawdź dziennik.',
+    'Session looks expired, but no Chrome, Edge, or other Chromium-based browser was found on this machine — install one to continue.': 'Sesja wygląda na wygasłą, ale na tym komputerze nie znaleziono Chrome, Edge ani innej przeglądarki opartej na Chromium — zainstaluj ją, aby kontynuować.',
+    'Opening Chrome for a fresh QR login.': 'Otwieranie Chrome do ponownego logowania kodem QR.',
+    'auto_refresh_chrome is turned off in Settings.': 'auto_refresh_chrome jest wyłączone w Ustawieniach.',
+    'Chrome failed to launch — check the log.': 'Chrome nie zostało uruchomione — sprawdź dziennik.',
+    'No Chrome, Edge, or other Chromium-based browser was found on this machine — install one to continue.': 'Na tym komputerze nie znaleziono Chrome, Edge ani innej przeglądarki opartej na Chromium — zainstaluj ją, aby kontynuować.',
+    'No Chrome, Edge, or other Chromium-based browser was found on this machine. Install one and try again.': 'Na tym komputerze nie znaleziono Chrome, Edge ani innej przeglądarki opartej na Chromium. Zainstaluj ją i spróbuj ponownie.',
     'Session expired': 'Sesja wygasła', 'Offline': 'Offline', "Something's wrong": 'Coś poszło nie tak', 'No slots in the next 31 days': 'Brak terminów w ciągu najbliższych 31 dni', 'Waiting for first check…': 'Oczekiwanie na pierwsze sprawdzenie…', 'Checking any moment now…': 'Sprawdzenie nastąpi za chwilę…'
   };
   const originals = new WeakMap();
   function lang() { return localStorage.getItem(KEY) === 'pl' ? 'pl' : 'en'; }
-  function t(text) { return lang() === 'pl' ? (PL[text] || text) : text; }
+  function t(text) {
+    if (lang() !== 'pl') return text;
+    if (PL[text]) return PL[text];
+    let match = text.match(/^Pick at most (\d+) WORD centers — the site's search only accepts \1 at a time\.?$/);
+    if (match) return `Wybierz najwyżej ${match[1]} ośrodków WORD — wyszukiwarka strony przyjmuje jednocześnie tylko ${match[1]}.`;
+    match = text.match(/^Pick at most (\d+) WORD centers — the site's search only accepts that many at a time$/);
+    if (match) return `Wybierz najwyżej ${match[1]} ośrodków WORD — wyszukiwarka strony przyjmuje jednocześnie tylko tyle.`;
+    match = text.match(/^Check frequency must be between (\d+) and (\d+) seconds$/);
+    if (match) return `Częstotliwość sprawdzania musi mieścić się między ${match[1]} a ${match[2]} sekundami.`;
+    return text;
+  }
   function translateNode(node) {
     if (!originals.has(node)) originals.set(node, node.nodeValue);
     const source = originals.get(node); const trimmed = source.trim(); const translated = t(trimmed);
@@ -69,8 +110,10 @@ LOCALIZATION_SCRIPT = r"""
     }});
     const nodes = []; while (walker.nextNode()) nodes.push(walker.currentNode); nodes.forEach(translateNode);
     document.querySelectorAll('[title],[aria-label],[placeholder]').forEach(el => ['title','aria-label','placeholder'].forEach(a => {
-      if (!el.hasAttribute(a)) return; const key = '__ikw_' + a;
-      if (!el.dataset[key]) el.dataset[key] = el.getAttribute(a); el.setAttribute(a, t(el.dataset[key]));
+      if (!el.hasAttribute(a)) return;
+      const original = `data-ikw-original-${a}`;
+      if (!el.hasAttribute(original)) el.setAttribute(original, el.getAttribute(a));
+      el.setAttribute(a, t(el.getAttribute(original)));
     }));
     document.querySelectorAll('.ikw-language-switch').forEach(s => s.querySelectorAll('button').forEach(b => {
       const active = b.dataset.lang === lang(); b.classList.toggle('active', active); b.setAttribute('aria-pressed', String(active));

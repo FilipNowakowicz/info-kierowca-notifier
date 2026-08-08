@@ -228,12 +228,12 @@ async function poll() {
     body.className = "none";
     headline.textContent = ui("Offline");
     subline.textContent = "";
-    detail.textContent = data.message || ui("Can't reach info-kierowca.pl — will retry");
+    detail.textContent = data.message ? ui(data.message) : ui("Can't reach info-kierowca.pl — will retry");
   } else if (data.outcome === "unexpected" || data.outcome === "unparseable") {
     body.className = "error";
     headline.textContent = ui("Something's wrong");
     subline.textContent = "";
-    detail.textContent = data.message || ui("Unexpected response — check manually");
+    detail.textContent = data.message ? ui(data.message) : ui("Unexpected response — check manually");
   } else if (data.outcome === "no_slot") {
     body.className = "none";
     headline.textContent = ui("No slots in the next 31 days");
