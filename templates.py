@@ -293,6 +293,7 @@ LOGIN_PAGE = """<!doctype html>
   button:disabled { opacity: 0.6; cursor: default; }
   #hint { opacity: 0.65; font-size: 0.88rem; margin-top: 1.1rem; display: none; }
   #hint.show { display: block; }
+  .booking-note { margin: 0 0 1.25rem; padding: 0.75rem 0.9rem; text-align: left; border: 1px solid rgba(157,194,172,0.38); border-radius: 8px; background: rgba(106,156,124,0.12); color: #d7eadf; font-size: 0.88rem; line-height: 1.45; }
   #skip { display: block; opacity: 0.5; font-size: 0.85rem; margin-top: 1.6rem; color: #ccc; }
   #skip:hover { opacity: 0.8; }
   #error { display: none; margin-top: 1rem; background: #3a1f1f; color: #ff9d9d;
@@ -306,6 +307,7 @@ LOGIN_PAGE = """<!doctype html>
   <p class="lead">Log in once via the mObywatel QR code — this is what lets the notifier check for
   slots on your behalf. While we're at it, we'll also find your PKK number and license category
   automatically, so you don't have to type them in.</p>
+  <p class="booking-note">This tool is for improving an existing booked exam. You need a current booking and its date; it alerts you only when it finds an earlier slot.</p>
   <button id="login-btn">Log in with mObywatel</button>
   <div id="hint">A Chrome window should open — scan the QR code in the mObywatel app. This page
   continues on its own once you're logged in.</div>
@@ -405,6 +407,7 @@ WIZARD_PAGE = """<!doctype html>
   #wiz-close-btn:hover { background: rgba(36,36,36,0.95); border-color: rgba(255,255,255,0.32); }
   h1 { font-size: 1.6rem; margin-bottom: 0.2rem; }
   p.lead { opacity: 0.75; margin-top: 0; margin-bottom: 2rem; }
+  .booking-note { margin: 0 0 1.25rem; padding: 0.75rem 0.9rem; border: 1px solid rgba(157,194,172,0.38); border-radius: 8px; background: rgba(106,156,124,0.12); color: #d7eadf; font-size: 0.88rem; line-height: 1.45; }
   fieldset { border: 1px solid #383838; border-radius: 10px; margin-bottom: 1.1rem; padding: 1.1rem 1.2rem 1.25rem; }
   legend { padding: 0 0.45rem; opacity: 0.8; font-size: 0.9rem; }
   label { display: block; margin-bottom: 0.35rem; font-size: 0.92rem; opacity: 0.9; }
@@ -591,6 +594,7 @@ WIZARD_PAGE = """<!doctype html>
   <button id="wiz-close-btn" type="button" title="Back to dashboard" aria-label="Back to dashboard">&times;</button>
   <h1 id="page-title">Set up info-kierowca notifier</h1>
   <p class="lead" id="page-lead">This runs entirely on your machine — nothing but info-kierowca.pl ever sees your PKK number or session.</p>
+  <p class="booking-note" id="booking-note">This tool is for improving an existing booked exam. You need a current booking and its date; it alerts you only when it finds an earlier slot.</p>
 
   <div id="error"></div>
 
@@ -636,12 +640,13 @@ WIZARD_PAGE = """<!doctype html>
 
     <fieldset>
       <legend>Alerts</legend>
-      <label for="current_slot_date_display">Date of your current booked slot — a found slot on an earlier date beats this and triggers the alerts below</label>
+      <label for="current_slot_date_display">Required: date of your existing booked slot</label>
       <div class="datepick" id="datepick">
         <input type="text" class="datepick-input" id="current_slot_date_display" placeholder="Select a date" readonly required>
         <input type="hidden" id="current_slot_date">
         <div class="calendar" id="calendar"></div>
       </div>
+      <div class="hint">This required date is the baseline for alerts: the app notifies you only about earlier slots.</div>
 
       <div class="freq-head" style="margin-top:1rem;">
         <label for="time_from_slider">Preferred time of day</label>
