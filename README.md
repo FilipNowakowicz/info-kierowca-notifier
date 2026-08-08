@@ -2,8 +2,6 @@
 
 [Polski](README.pl.md) · [English](README.md)
 
-> **Before you start:** this tool is for moving an existing booked driving exam earlier. You need an active booking and its current date; it alerts you only about earlier slots. It is not a tool for finding a first booking.
-
 A slot checker for [info-kierowca.pl](https://info-kierowca.pl), the Polish driving exam booking
 portal. It watches for open exam slots and alerts you — on a dashboard and your phone — the moment
 one appears. Checking is always read-only. Optionally, if you already have a paid booking and want
@@ -23,7 +21,9 @@ submit the reservation change with no clicks from you at all — see
 2. Run it. A browser tab opens automatically.
 3. Scan the QR code (with the mObywatel app) to log in — or skip this and enter your PKK number
    by hand instead.
-4. Confirm the PKK number/license category it found for you (or fill them in manually if you
+4. Have the date of your existing booked exam ready. It is required because the app uses it as
+   the baseline and alerts you only about earlier slots.
+5. Confirm the PKK number/license category it found for you (or fill them in manually if you
    skipped), pick your exam center(s), **enter the required date of your current booking**, and choose how you want to be notified.
 
 That's it — from then on, that browser tab is your dashboard, with a **Quit** button whenever you

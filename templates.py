@@ -307,7 +307,6 @@ LOGIN_PAGE = """<!doctype html>
   <p class="lead">Log in once via the mObywatel QR code — this is what lets the notifier check for
   slots on your behalf. While we're at it, we'll also find your PKK number and license category
   automatically, so you don't have to type them in.</p>
-  <p class="booking-note">This tool is for improving an existing booked exam. You need a current booking and its date; it alerts you only when it finds an earlier slot.</p>
   <button id="login-btn">Log in with mObywatel</button>
   <div id="hint">A Chrome window should open — scan the QR code in the mObywatel app. This page
   continues on its own once you're logged in.</div>
@@ -594,7 +593,6 @@ WIZARD_PAGE = """<!doctype html>
   <button id="wiz-close-btn" type="button" title="Back to dashboard" aria-label="Back to dashboard">&times;</button>
   <h1 id="page-title">Set up info-kierowca notifier</h1>
   <p class="lead" id="page-lead">This runs entirely on your machine — nothing but info-kierowca.pl ever sees your PKK number or session.</p>
-  <p class="booking-note" id="booking-note">This tool is for improving an existing booked exam. You need a current booking and its date; it alerts you only when it finds an earlier slot.</p>
 
   <div id="error"></div>
 
@@ -640,6 +638,7 @@ WIZARD_PAGE = """<!doctype html>
 
     <fieldset>
       <legend>Alerts</legend>
+      <p class="booking-note" id="booking-note">Before continuing, have the date of your existing booked exam ready. It is required because alerts are sent only for earlier slots.</p>
       <label for="current_slot_date_display">Required: date of your existing booked slot</label>
       <div class="datepick" id="datepick">
         <input type="text" class="datepick-input" id="current_slot_date_display" placeholder="Select a date" readonly required>

@@ -2,8 +2,6 @@
 
 [English](README.md) · [Polski](README.pl.md)
 
-> **Zanim zaczniesz:** to narzędzie służy do przyspieszania już zarezerwowanego egzaminu na prawo jazdy. Potrzebujesz aktywnej rezerwacji i jej aktualnej daty; aplikacja powiadamia tylko o wcześniejszych terminach. Nie służy do znalezienia pierwszej rezerwacji.
-
 Program sprawdza wolne terminy w [info-kierowca.pl](https://info-kierowca.pl), polskim portalu rezerwacji egzaminów na prawo jazdy. Obserwuje dostępność i informuje o wolnym terminie w panelu oraz na telefonie. Samo sprawdzanie jest wyłącznie do odczytu. Opcjonalnie, gdy masz już opłaconą rezerwację i chcesz ją przyspieszyć, program może otworzyć zalogowaną przeglądarkę i przejść do wyboru daty zmiany terminu. Domyślnie wybór nowej daty oraz każde potwierdzenie wykonujesz samodzielnie — nic nie jest automatycznie rezerwowane. Dwa eksperymentalne, domyślnie wyłączone przełączniki w Ustawienia → Automatyzacja mogą wybrać pasujący termin i wysłać zmianę rezerwacji bez kliknięcia użytkownika. Przed ich włączeniem przeczytaj [Jak to działa](#jak-to-działa) i [docs/ADVANCED.md](docs/ADVANCED.md).
 
 ![Panel z wolnym terminem](docs/dashboard.png)
@@ -13,7 +11,8 @@ Program sprawdza wolne terminy w [info-kierowca.pl](https://info-kierowca.pl), p
 1. Pobierz wersję dla swojego systemu z [strony wydań](../../releases) — bez instalatora, Pythona ani dodatkowej konfiguracji.
 2. Uruchom program. Karta przeglądarki otworzy się automatycznie.
 3. Zeskanuj kod QR aplikacją mObywatel, aby się zalogować, albo pomiń ten krok i wpisz numer PKK ręcznie.
-4. Potwierdź wykryty numer PKK/kategorię prawa jazdy (lub wypełnij je ręcznie), wybierz ośrodek/ośrodki egzaminacyjne, **wpisz wymaganą datę obecnej rezerwacji** i wybierz sposób powiadamiania.
+4. Przygotuj datę obecnie zarezerwowanego egzaminu. Jest wymagana, ponieważ aplikacja używa jej jako punktu odniesienia i powiadamia tylko o wcześniejszych terminach.
+5. Potwierdź wykryty numer PKK/kategorię prawa jazdy (lub wypełnij je ręcznie), wybierz ośrodek/ośrodki egzaminacyjne, **wpisz wymaganą datę obecnej rezerwacji** i wybierz sposób powiadamiania.
 
 Od tej pory otwarta karta przeglądarki jest Twoim panelem; znajduje się w niej przycisk **Zakończ** do wyłączenia programu.
 
