@@ -6,6 +6,8 @@ bulk of that file's line count. app.py still owns all rendering logic
 dashboard_server.PAGE, etc.) — this module only holds the literal strings.
 """
 
+from localization import LOCALIZATION_SCRIPT
+
 TOOLBAR_HTML = """
 <style>
   /* Mouse proximity to the top edge (or focus landing inside the
@@ -127,10 +129,10 @@ function ikwToast(msg) {
 }
 
 document.getElementById('ikw-quit-btn').addEventListener('click', async () => {
-  if (!confirm('Quit info-kierowca-notifier? You will stop getting checked/notified until you start it again.')) return;
+  if (!confirm(ikwI18n.t('Quit info-kierowca-notifier? You will stop getting checked/notified until you start it again.'))) return;
   try { await fetch('/shutdown', {method: 'POST'}); } catch (e) {}
   document.body.innerHTML =
-    '<div style="padding:4rem;text-align:center;font-family:sans-serif;color:#eee;">Stopped. You can close this tab.</div>';
+    `<div style="padding:4rem;text-align:center;font-family:sans-serif;color:#eee;">${ikwI18n.t('Stopped. You can close this tab.')}</div>`;
 });
 
 const ikwSettingsOverlay = document.getElementById('ikw-settings-overlay');
@@ -168,13 +170,16 @@ window.addEventListener('message', (e) => {
   const type = e.data && e.data.type;
   if (type === 'ikw-settings-close') {
     ikwCloseSettingsModal();
+  } else if (type === 'ikw-language-changed') {
+    ikwI18n.apply();
+    if (typeof poll === 'function') poll();
   } else if (type === 'ikw-settings-saved') {
     ikwCloseSettingsModal();
     // poll() is dashboard_server.py's own function, sharing this page's
     // script scope — re-reads status.json immediately so a changed poll
     // interval/countdown shows right away instead of waiting up to 5s.
     if (typeof poll === 'function') poll();
-    ikwToast('Settings saved.');
+    ikwToast(ikwI18n.t('Settings saved.'));
   } else if (type === 'ikw-settings-reset') {
     // Reset clears config.json/session.json — a full top-level navigation
     // to the login screen, not just closing the modal.
@@ -188,9 +193,9 @@ document.getElementById('ikw-browser-btn').addEventListener('click', async () =>
   try {
     const res = await fetch('/manual-login', {method: 'POST'});
     const data = await res.json();
-    ikwToast(data.message || 'Something went wrong.');
+    ikwToast(ikwI18n.t(data.message || 'Something went wrong.'));
   } catch (e) {
-    ikwToast('Could not reach the app.');
+    ikwToast(ikwI18n.t('Could not reach the app.'));
   } finally {
     btn.disabled = false;
   }
@@ -203,14 +208,14 @@ document.getElementById('ikw-browser-btn').addEventListener('click', async () =>
 const ikwSessionRefreshBtn = document.getElementById('session-refresh-btn');
 ikwSessionRefreshBtn.style.display = 'flex';
 ikwSessionRefreshBtn.addEventListener('click', async () => {
-  if (!confirm('Open Chrome for a fresh QR login now? This replaces your current session.')) return;
+  if (!confirm(ikwI18n.t('Open Chrome for a fresh QR login now? This replaces your current session.'))) return;
   ikwSessionRefreshBtn.disabled = true;
   try {
     const res = await fetch('/relogin-now', {method: 'POST'});
     const data = await res.json();
-    ikwToast(data.message || 'Something went wrong.');
+    ikwToast(ikwI18n.t(data.message || 'Something went wrong.'));
   } catch (e) {
-    ikwToast('Could not reach the app.');
+    ikwToast(ikwI18n.t('Could not reach the app.'));
   } finally {
     ikwSessionRefreshBtn.disabled = false;
   }
@@ -241,9 +246,9 @@ async function ikwTogglePause() {
     // headline/icon immediately, instead of waiting up to 5s for its
     // own interval to fire.
     if (typeof poll === 'function') await poll();
-    ikwToast(data.paused ? 'Paused — checking will stop until you resume.' : 'Resumed checking.');
+    ikwToast(ikwI18n.t(data.paused ? 'Paused — checking will stop until you resume.' : 'Resumed checking.'));
   } catch (e) {
-    ikwToast('Could not reach the app.');
+    ikwToast(ikwI18n.t('Could not reach the app.'));
   } finally {
     ikwPauseInFlight = false;
   }
@@ -288,6 +293,7 @@ LOGIN_PAGE = """<!doctype html>
   button:disabled { opacity: 0.6; cursor: default; }
   #hint { opacity: 0.65; font-size: 0.88rem; margin-top: 1.1rem; display: none; }
   #hint.show { display: block; }
+  .booking-note { margin: 0 0 1.25rem; padding: 0.75rem 0.9rem; text-align: left; border: 1px solid rgba(157,194,172,0.38); border-radius: 8px; background: rgba(106,156,124,0.12); color: #d7eadf; font-size: 0.88rem; line-height: 1.45; }
   #skip { display: block; opacity: 0.5; font-size: 0.85rem; margin-top: 1.6rem; color: #ccc; }
   #skip:hover { opacity: 0.8; }
   #error { display: none; margin-top: 1rem; background: #3a1f1f; color: #ff9d9d;
@@ -319,7 +325,7 @@ loginBtn.addEventListener('click', async () => {
     const res = await fetch('/login-start', {method: 'POST'});
     const data = await res.json();
     if (!data.ok || data.action === 'launch_failed' || data.action === 'no_chromium_browser') {
-      throw new Error(data.message || 'Could not open Chrome — try the manual option below.');
+      throw new Error(ikwI18n.t(data.message || 'Could not open Chrome — try the manual option below.'));
     }
     loginHint.classList.add('show');
     loginBtn.textContent = 'Waiting for QR scan...';
@@ -340,13 +346,13 @@ loginBtn.addEventListener('click', async () => {
         loginBtn.disabled = false;
         loginBtn.textContent = 'Log in with mObywatel';
         loginHint.classList.remove('show');
-        loginError.textContent = "Login didn't complete — the Chrome window may have been closed. Try again.";
+        loginError.textContent = ikwI18n.t("Login didn't complete — the Chrome window may have been closed. Try again.");
         loginError.classList.add('show');
       }
     }, 2000);
   } catch (e) {
     loginBtn.disabled = false;
-    loginError.textContent = e.message;
+    loginError.textContent = ikwI18n.t(e.message);
     loginError.classList.add('show');
   }
 });
@@ -393,13 +399,14 @@ WIZARD_PAGE = """<!doctype html>
      past behind it (its background used to be too faint - close to the
      page's own transparent-when-embedded background - for that separation
      to read at all). */
-  #wiz-close-btn { display: none; position: fixed; top: 1rem; right: 1rem; width: 2.2rem; height: 2.2rem;
+  #wiz-close-btn { display: none; position: absolute; top: 0.1rem; right: 0; width: 2.2rem; height: 2.2rem;
     border-radius: 999px; background: rgba(24,24,24,0.9); color: #eee; border: 1px solid rgba(255,255,255,0.18);
     box-shadow: 0 3px 12px rgba(0,0,0,0.45); font-size: 1.2rem; line-height: 1; cursor: pointer;
     align-items: center; justify-content: center; }
   #wiz-close-btn:hover { background: rgba(36,36,36,0.95); border-color: rgba(255,255,255,0.32); }
   h1 { font-size: 1.6rem; margin-bottom: 0.2rem; }
   p.lead { opacity: 0.75; margin-top: 0; margin-bottom: 2rem; }
+  .booking-note { margin: 0 0 1.25rem; padding: 0.75rem 0.9rem; border: 1px solid rgba(157,194,172,0.38); border-radius: 8px; background: rgba(106,156,124,0.12); color: #d7eadf; font-size: 0.88rem; line-height: 1.45; }
   fieldset { border: 1px solid #383838; border-radius: 10px; margin-bottom: 1.1rem; padding: 1.1rem 1.2rem 1.25rem; }
   legend { padding: 0 0.45rem; opacity: 0.8; font-size: 0.9rem; }
   label { display: block; margin-bottom: 0.35rem; font-size: 0.92rem; opacity: 0.9; }
@@ -574,11 +581,16 @@ WIZARD_PAGE = """<!doctype html>
     padding: 0.7rem 1rem; border-radius: 8px; box-shadow: 0 10px 30px rgba(0,0,0,0.55);
     font-size: 0.9rem; white-space: pre-line; }
   #error.show { display: block; }
+  #card { position: relative; }
+  .ikw-language-switch { position: absolute; top: 0.15rem; right: 3rem; display: inline-flex; align-items: center; gap: 0.28rem; font-size: 0.78rem; }
+  .ikw-language-switch button { width: auto; margin: 0; padding: 0.22rem 0.35rem; border: 0; border-radius: 5px; background: transparent; color: #aaa; cursor: pointer; font: inherit; }
+  .ikw-language-switch button.active { background: rgba(106,156,124,0.28); color: #fff; font-weight: 700; }
+  .ikw-language-switch button:focus-visible { outline: 2px solid var(--accent-soft); outline-offset: 2px; }
 </style>
 </head>
 <body>
-<button id="wiz-close-btn" type="button" title="Back to dashboard" aria-label="Back to dashboard">&times;</button>
 <div id="card">
+  <button id="wiz-close-btn" type="button" title="Back to dashboard" aria-label="Back to dashboard">&times;</button>
   <h1 id="page-title">Set up info-kierowca notifier</h1>
   <p class="lead" id="page-lead">This runs entirely on your machine — nothing but info-kierowca.pl ever sees your PKK number or session.</p>
 
@@ -615,7 +627,7 @@ WIZARD_PAGE = """<!doctype html>
 
       <div class="divider"></div>
 
-      <label>WORD centers to watch (__CENTER_COUNT__ nationwide)</label>
+      <label for="center-search">WORD centers to watch (__CENTER_COUNT__ nationwide)</label>
       <div class="combobox">
         <input type="text" id="center-search" placeholder="Click to browse all centers, or type to filter..." autocomplete="off">
         <div id="center-dropdown"></div>
@@ -626,12 +638,14 @@ WIZARD_PAGE = """<!doctype html>
 
     <fieldset>
       <legend>Alerts</legend>
-      <label for="current_slot_date_display">Date of your current booked slot — a found slot on an earlier date beats this and triggers the alerts below</label>
+      <p class="booking-note" id="booking-note">Before continuing, you need an existing booked exam. This app changes the date of that booking; it does not create a new booking.</p>
+      <label for="current_slot_date_display">Required: date of the booking to reschedule</label>
       <div class="datepick" id="datepick">
         <input type="text" class="datepick-input" id="current_slot_date_display" placeholder="Select a date" readonly required>
         <input type="hidden" id="current_slot_date">
         <div class="calendar" id="calendar"></div>
       </div>
+      <div class="hint">Enter the date of the existing booking that you want the app to reschedule.</div>
 
       <div class="freq-head" style="margin-top:1rem;">
         <label for="time_from_slider">Preferred time of day</label>
@@ -749,6 +763,12 @@ const KNOWN_IDS = new Set(CENTERS.map(c => c.id));
 // postMessage is just the cleanest way to hand control back to the parent
 // rather than assuming direct window.parent access always stays safe.
 const IKW_EMBEDDED = window.parent !== window;
+ikwI18n.installSwitcher(document.getElementById('card'));
+const t = (text) => ikwI18n.t(text);
+const centerLabelHeading = document.querySelector('label[for="center-search"]');
+centerLabelHeading.textContent = ikwI18n.lang() === 'pl'
+  ? `Ośrodki WORD do obserwowania (${CENTERS.length} w kraju)`
+  : `WORD centers to watch (${CENTERS.length} nationwide)`;
 function ikwGoDashboard(type) {
   if (IKW_EMBEDDED) {
     window.parent.postMessage({ type }, window.location.origin);
@@ -824,7 +844,7 @@ function renderSelected() {
     selectedList.appendChild(row);
   });
   const n = selectedIds.size;
-  centerCount.innerHTML = `Watching <b>${n}</b> of ${MAX_CENTERS} centers for open slots.`;
+  centerCount.innerHTML = ikwI18n.lang() === 'pl' ? `Obserwujesz <b>${n}</b> z ${MAX_CENTERS} ośrodków pod kątem wolnych terminów.` : `Watching <b>${n}</b> of ${MAX_CENTERS} centers for open slots.`;
 }
 
 function closeDropdown() {
@@ -942,11 +962,11 @@ wireSwitch(autoSelectSlotSwitch, applyAutoConfirmDim);
 function toggleAutoConfirm() {
   if (!autoSelectSlotSwitch.classList.contains('on')) return;  // covers keyboard activation while dimmed
   const turningOn = !autoConfirmSwitch.classList.contains('on');
-  if (turningOn && !confirm(
+  if (turningOn && !confirm(t(
     "This lets the app automatically click through and submit a real reservation date change "
     + "the moment it finds a matching slot — no review step, and it can't be undone by closing "
     + "the browser. Are you sure?"
-  )) return;
+  ))) return;
   setSwitch(autoConfirmSwitch, turningOn);
 }
 autoConfirmSwitch.addEventListener('click', toggleAutoConfirm);
@@ -976,7 +996,7 @@ function fmtInterval(seconds) {
 function updatePollIntervalDisplay() {
   const seconds = POLL_INTERVAL_STEPS[Number(pollSlider.value)];
   pollIntervalHidden.value = seconds;
-  pollIntervalLabel.textContent = `Every ${fmtInterval(seconds)}`;
+  pollIntervalLabel.textContent = ikwI18n.lang() === 'pl' ? `Co ${fmtInterval(seconds)}` : `Every ${fmtInterval(seconds)}`;
 }
 
 function setPollIntervalSeconds(seconds) {
@@ -1043,7 +1063,7 @@ function updateTimeWindow(movedSlider) {
   timeWindowFill.style.left = `calc(8px + (100% - 16px) * ${fromFrac})`;
   timeWindowFill.style.width = `calc((100% - 16px) * ${toFrac - fromFrac})`;
   timeWindowLabel.textContent =
-    (from === 0 && to === 24) ? 'All day' : `${fmtHour(from)} – ${fmtHour(to)}`;
+    (from === 0 && to === 24) ? t('All day') : `${fmtHour(from)} – ${fmtHour(to)}`;
 }
 
 function setTimeWindow(fromHour, toHour) {
@@ -1069,7 +1089,7 @@ function setCategory(id) {
 }
 function setCatRestOpen(open) {
   catRest.classList.toggle('open', open);
-  catMoreBtn.textContent = open ? 'Fewer categories' : 'More categories';
+  catMoreBtn.textContent = open ? t('Fewer categories') : t('More categories');
 }
 function expandCatRest() { setCatRestOpen(true); }
 CATEGORIES.forEach((c) => {
@@ -1162,20 +1182,20 @@ const todayDate = new Date(); todayDate.setHours(0, 0, 0, 0);
 let calView = new Date(todayDate.getFullYear(), todayDate.getMonth(), 1);
 let selectedDate = null;
 function isoOf(d) { return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }
-function fmtDate(d) { return d.getDate() + ' ' + MONTHS[d.getMonth()].slice(0, 3) + ' ' + d.getFullYear(); }
+function fmtDate(d) { return d.toLocaleDateString(ikwI18n.lang() === 'pl' ? 'pl-PL' : 'en-GB', {day: 'numeric', month: 'short', year: 'numeric'}); }
 function sameDay(a, b) { return !!a && !!b && a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate(); }
 function renderCalendar() {
   calendar.innerHTML = '';
   const head = document.createElement('div'); head.className = 'cal-head';
   const prev = document.createElement('button'); prev.type = 'button'; prev.className = 'cal-nav'; prev.textContent = '‹';
-  const title = document.createElement('div'); title.className = 'cal-title'; title.textContent = MONTHS[calView.getMonth()] + ' ' + calView.getFullYear();
+  const title = document.createElement('div'); title.className = 'cal-title'; title.textContent = calView.toLocaleDateString(ikwI18n.lang() === 'pl' ? 'pl-PL' : 'en-GB', {month: 'long', year: 'numeric'});
   const next = document.createElement('button'); next.type = 'button'; next.className = 'cal-nav'; next.textContent = '›';
   prev.addEventListener('click', (e) => { e.stopPropagation(); calView = new Date(calView.getFullYear(), calView.getMonth() - 1, 1); renderCalendar(); });
   next.addEventListener('click', (e) => { e.stopPropagation(); calView = new Date(calView.getFullYear(), calView.getMonth() + 1, 1); renderCalendar(); });
   head.appendChild(prev); head.appendChild(title); head.appendChild(next);
   calendar.appendChild(head);
   const grid = document.createElement('div'); grid.className = 'cal-grid';
-  DOW.forEach((d) => { const c = document.createElement('div'); c.className = 'cal-dow'; c.textContent = d; grid.appendChild(c); });
+  (ikwI18n.lang() === 'pl' ? ['pon','wt','śr','czw','pt','sob','nd'] : DOW).forEach((d) => { const c = document.createElement('div'); c.className = 'cal-dow'; c.textContent = d; grid.appendChild(c); });
   const startOffset = (new Date(calView.getFullYear(), calView.getMonth(), 1).getDay() + 6) % 7;
   const daysInMonth = new Date(calView.getFullYear(), calView.getMonth() + 1, 0).getDate();
   const prevDays = new Date(calView.getFullYear(), calView.getMonth(), 0).getDate();
@@ -1206,10 +1226,10 @@ renderSelected();
 
 if (EXISTING_CONFIG) {
   const pageTitle = document.getElementById('page-title');
-  pageTitle.textContent = 'Settings';
+  pageTitle.textContent = t('Settings');
   pageTitle.style.marginBottom = '1.6rem'; // replaces the gap the (now-hidden) lead paragraph used to provide
   document.getElementById('page-lead').style.display = 'none';
-  document.getElementById('submit-btn').textContent = 'Save changes';
+  document.getElementById('submit-btn').textContent = t('Save changes');
 
   // Only shown once a config already exists (i.e. this is /settings, not
   // first-run /setup) — there's no dashboard to go "back" to otherwise.
@@ -1253,6 +1273,20 @@ if (EXISTING_CONFIG) {
   document.getElementById('reset-account-block').style.display = 'block';
 }
 
+window.addEventListener('ikw-language-changed', () => {
+  centerLabelHeading.textContent = ikwI18n.lang() === 'pl'
+    ? `Ośrodki WORD do obserwowania (${CENTERS.length} w kraju)`
+    : `WORD centers to watch (${CENTERS.length} nationwide)`;
+  renderSelected();
+  updatePollIntervalDisplay();
+  updateTimeWindow();
+  renderCalendar();
+  if (EXISTING_CONFIG) {
+    document.getElementById('page-title').textContent = t('Settings');
+    document.getElementById('submit-btn').textContent = t('Save changes');
+  }
+});
+
 document.getElementById('copy-ntfy').addEventListener('click', () => {
   navigator.clipboard.writeText('https://ntfy.sh/' + ntfyInput.value);
 });
@@ -1261,16 +1295,16 @@ const testPushBtn = document.getElementById('test-push-btn');
 const testPushStatus = document.getElementById('test-push-status');
 testPushBtn.addEventListener('click', async () => {
   testPushBtn.disabled = true;
-  testPushStatus.textContent = 'Sending...';
+  testPushStatus.textContent = t('Sending...');
   try {
     const res = await fetch('/test-push', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({topic: ntfyInput.value}),
     });
     const data = await res.json();
-    testPushStatus.textContent = data.ok ? 'Sent — check your phone.' : (data.error || 'Failed to send.');
+    testPushStatus.textContent = data.ok ? t('Sent — check your phone.') : (data.error || t('Failed to send.'));
   } catch (e) {
-    testPushStatus.textContent = 'Failed to send.';
+    testPushStatus.textContent = t('Failed to send.');
   } finally {
     testPushBtn.disabled = false;
   }
@@ -1278,7 +1312,7 @@ testPushBtn.addEventListener('click', async () => {
 
 const resetAccountBtn = document.getElementById('reset-account-btn');
 resetAccountBtn.addEventListener('click', async () => {
-  if (!confirm("This logs you out and clears your saved settings. You'll need to scan the QR code again. Continue?")) return;
+  if (!confirm(t("This logs you out and clears your saved settings. You'll need to scan the QR code again. Continue?"))) return;
   resetAccountBtn.disabled = true;
   try {
     await fetch('/reset-account', {method: 'POST'});
@@ -1290,7 +1324,7 @@ resetAccountBtn.addEventListener('click', async () => {
     else { window.location.href = '/'; }
   } catch (e) {
     resetAccountBtn.disabled = false;
-    alert('Reset failed — check the log.');
+    alert(t('Reset failed — check the log.'));
   }
 });
 
@@ -1301,20 +1335,20 @@ document.getElementById('form').addEventListener('submit', async (e) => {
   errorEl.classList.remove('show');
   try {
     const examTypes = selectedExamTypes();
-    if (!examTypes.length) throw new Error('Pick at least one exam type.');
+    if (!examTypes.length) throw new Error(t('Pick at least one exam type.'));
 
     const orgIds = Array.from(selectedIds);
-    if (!orgIds.length) throw new Error('Pick at least one WORD center.');
+    if (!orgIds.length) throw new Error(t('Pick at least one WORD center.'));
     if (orgIds.length > MAX_CENTERS) throw new Error(`Pick at most ${MAX_CENTERS} WORD centers — the site's search only accepts ${MAX_CENTERS} at a time.`);
 
     const profileNumber = pkkInput.value.trim();
-    if (!profileNumber) throw new Error('PKK number is required.');
+    if (!profileNumber) throw new Error(t('PKK number is required.'));
 
     const category = selectedCategory;
-    if (!category) throw new Error('Pick a license category.');
+    if (!category) throw new Error(t('Pick a license category.'));
 
     const currentSlotDate = dpValue.value;
-    if (!currentSlotDate) throw new Error('Pick the date of your current booked slot.');
+    if (!currentSlotDate) throw new Error(t('Pick the date of your current booked slot.'));
 
     const body = {
       profile_number: profileNumber,
@@ -1338,11 +1372,11 @@ document.getElementById('form').addEventListener('submit', async (e) => {
       method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)
     });
     const data = await res.json();
-    if (!res.ok || !data.ok) throw new Error(data.error || 'Save failed.');
+    if (!res.ok || !data.ok) throw new Error(data.error || t('Save failed.'));
 
     ikwGoDashboard('ikw-settings-saved');
   } catch (err) {
-    errorEl.textContent = err.message;
+    errorEl.textContent = t(err.message);
     errorEl.classList.add('show');
   }
 });
@@ -1350,3 +1384,8 @@ document.getElementById('form').addEventListener('submit', async (e) => {
 </body>
 </html>
 """
+
+# Keep the templates readable as complete HTML documents above while placing
+# the shared localization bootstrap in each page's head before it is painted.
+LOGIN_PAGE = LOGIN_PAGE.replace("<head>", "<head>" + LOCALIZATION_SCRIPT, 1)
+WIZARD_PAGE = WIZARD_PAGE.replace("<head>", "<head>" + LOCALIZATION_SCRIPT, 1)

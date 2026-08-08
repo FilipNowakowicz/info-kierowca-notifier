@@ -382,8 +382,17 @@ def trigger_auto_refresh(logger, config, force=False, notify_phone=True):
                 "systemd-run", "--user", "--collect",
                 "--unit=info-kierowca-auto-refresh",
                 "--description=info-kierowca.pl auto session refresh",
-                python, str(AUTO_REFRESH_SCRIPT),
             ]
+            # systemd-run starts a new user-service environment rather than
+            # inheriting a caller's runtime overrides.  Keep the helper in
+            # the same state home as this notifier: otherwise a preview or
+            # alternate HOME writes its lock/session under the regular user
+            # home while app.py polls the alternate location and concludes
+            # that Chrome closed before a QR scan.
+            for name in ("HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME"):
+                if value := os.environ.get(name):
+                    cmd.append(f"--setenv={name}={value}")
+            cmd.extend([python, str(AUTO_REFRESH_SCRIPT)])
         else:
             cmd = [python, str(AUTO_REFRESH_SCRIPT)]
     if not notify_phone:
