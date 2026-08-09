@@ -406,7 +406,11 @@ WIZARD_PAGE = """<!doctype html>
   #wiz-close-btn:hover { background: rgba(36,36,36,0.95); border-color: rgba(255,255,255,0.32); }
   h1 { font-size: 1.6rem; margin-bottom: 0.2rem; }
   p.lead { opacity: 0.75; margin-top: 0; margin-bottom: 2rem; }
-  .booking-note { margin: 0 0 1.25rem; padding: 0.75rem 0.9rem; border: 1px solid rgba(157,194,172,0.38); border-radius: 8px; background: rgba(106,156,124,0.12); color: #d7eadf; font-size: 0.88rem; line-height: 1.45; }
+  .booking-note { display: flex; align-items: flex-start; gap: 0.75rem; margin: 0 0 1.25rem; padding: 0.75rem 0.9rem; border: 1px solid rgba(157,194,172,0.38); border-radius: 8px; background: rgba(106,156,124,0.12); color: #d7eadf; font-size: 0.88rem; line-height: 1.45; }
+  .booking-note-text { flex: 1; }
+  .booking-note-dismiss { flex: none; padding: 0.2rem 0.45rem; border: 1px solid rgba(157,194,172,0.45); border-radius: 5px; background: transparent; color: var(--accent-soft); cursor: pointer; font: inherit; font-size: 0.8rem; white-space: nowrap; }
+  .booking-note-dismiss:hover { background: rgba(106,156,124,0.16); }
+  .booking-note-dismiss:focus-visible { outline: 2px solid var(--accent-soft); outline-offset: 2px; }
   fieldset { border: 1px solid #383838; border-radius: 10px; margin-bottom: 1.1rem; padding: 1.1rem 1.2rem 1.25rem; }
   legend { padding: 0 0.45rem; opacity: 0.8; font-size: 0.9rem; }
   label { display: block; margin-bottom: 0.35rem; font-size: 0.92rem; opacity: 0.9; }
@@ -638,7 +642,10 @@ WIZARD_PAGE = """<!doctype html>
 
     <fieldset>
       <legend>Alerts</legend>
-      <p class="booking-note" id="booking-note">Before continuing, you need an existing booked exam. This app changes the date of that booking; it does not create a new booking.</p>
+      <div class="booking-note" id="booking-note" role="note">
+        <span class="booking-note-text">Before continuing, you need an existing booked exam. This app changes the date of that booking; it does not create a new booking.</span>
+        <button type="button" class="booking-note-dismiss" id="dismiss-booking-note" aria-label="Dismiss booking prerequisite message">Got it</button>
+      </div>
       <label for="current_slot_date_display">Required: date of the booking to reschedule</label>
       <div class="datepick" id="datepick">
         <input type="text" class="datepick-input" id="current_slot_date_display" placeholder="Select a date" readonly required>
@@ -646,6 +653,15 @@ WIZARD_PAGE = """<!doctype html>
         <div class="calendar" id="calendar"></div>
       </div>
       <div class="hint">Enter the date of the existing booking that you want the app to reschedule.</div>
+
+      <label for="search_start_date_display" style="margin-top:1rem;">Earliest acceptable exam date (optional)</label>
+      <div class="datepick" id="search-start-datepick">
+        <input type="text" class="datepick-input" id="search_start_date_display" placeholder="Select a date" readonly>
+        <input type="hidden" id="search_start_date">
+        <div class="calendar" id="search-start-calendar"></div>
+      </div>
+      <div class="hint">Ignore slots before this date. Leave blank to search from today; the site searches at most 31 days ahead.</div>
+      <button type="button" class="cat-more" id="clear-search-start-date">Search from today</button>
 
       <div class="freq-head" style="margin-top:1rem;">
         <label for="time_from_slider">Preferred time of day</label>
@@ -763,8 +779,18 @@ const KNOWN_IDS = new Set(CENTERS.map(c => c.id));
 // postMessage is just the cleanest way to hand control back to the parent
 // rather than assuming direct window.parent access always stays safe.
 const IKW_EMBEDDED = window.parent !== window;
+// A browser-local acknowledgement, separate from account/config data. Reset
+// account intentionally keeps it: dismissing explanatory copy cannot make a
+// later setup or booking action less safe.
+const BOOKING_PREREQUISITE_DISMISSED_KEY = 'info-kierowca-notifier-dismissed-booking-prerequisite';
 ikwI18n.installSwitcher(document.getElementById('card'));
 const t = (text) => ikwI18n.t(text);
+const bookingNote = document.getElementById('booking-note');
+if (localStorage.getItem(BOOKING_PREREQUISITE_DISMISSED_KEY) === '1') bookingNote.hidden = true;
+document.getElementById('dismiss-booking-note').addEventListener('click', () => {
+  localStorage.setItem(BOOKING_PREREQUISITE_DISMISSED_KEY, '1');
+  bookingNote.hidden = true;
+});
 const centerLabelHeading = document.querySelector('label[for="center-search"]');
 centerLabelHeading.textContent = ikwI18n.lang() === 'pl'
   ? `Ośrodki WORD do obserwowania (${CENTERS.length} w kraju)`
@@ -1222,6 +1248,53 @@ dpInput.addEventListener('click', () => { calendar.classList.contains('open') ? 
 dpInput.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeCalendar(); });
 document.addEventListener('click', (e) => { if (!document.getElementById('datepick').contains(e.target)) closeCalendar(); });
 
+// Independent optional lower bound for eligible slots.  It deliberately uses
+// the same calendar language as the required booking date, while limiting
+// selection to the government site's known search horizon.
+const sdpInput = document.getElementById('search_start_date_display');
+const sdpValue = document.getElementById('search_start_date');
+const sdpCalendar = document.getElementById('search-start-calendar');
+const searchHorizonDate = new Date(todayDate);
+searchHorizonDate.setDate(searchHorizonDate.getDate() + 31);
+let sdpView = new Date(todayDate.getFullYear(), todayDate.getMonth(), 1);
+let selectedSearchStartDate = null;
+function renderSearchStartCalendar() {
+  sdpCalendar.innerHTML = '';
+  const head = document.createElement('div'); head.className = 'cal-head';
+  const prev = document.createElement('button'); prev.type = 'button'; prev.className = 'cal-nav'; prev.textContent = '‹';
+  const title = document.createElement('div'); title.className = 'cal-title'; title.textContent = sdpView.toLocaleDateString(ikwI18n.lang() === 'pl' ? 'pl-PL' : 'en-GB', {month: 'long', year: 'numeric'});
+  const next = document.createElement('button'); next.type = 'button'; next.className = 'cal-nav'; next.textContent = '›';
+  prev.addEventListener('click', (e) => { e.stopPropagation(); sdpView = new Date(sdpView.getFullYear(), sdpView.getMonth() - 1, 1); renderSearchStartCalendar(); });
+  next.addEventListener('click', (e) => { e.stopPropagation(); sdpView = new Date(sdpView.getFullYear(), sdpView.getMonth() + 1, 1); renderSearchStartCalendar(); });
+  head.appendChild(prev); head.appendChild(title); head.appendChild(next); sdpCalendar.appendChild(head);
+  const grid = document.createElement('div'); grid.className = 'cal-grid';
+  (ikwI18n.lang() === 'pl' ? ['pon','wt','śr','czw','pt','sob','nd'] : DOW).forEach((d) => { const c = document.createElement('div'); c.className = 'cal-dow'; c.textContent = d; grid.appendChild(c); });
+  const startOffset = (new Date(sdpView.getFullYear(), sdpView.getMonth(), 1).getDay() + 6) % 7;
+  const daysInMonth = new Date(sdpView.getFullYear(), sdpView.getMonth() + 1, 0).getDate();
+  const prevDays = new Date(sdpView.getFullYear(), sdpView.getMonth(), 0).getDate();
+  for (let i = 0; i < startOffset; i++) { const cell = document.createElement('div'); cell.className = 'cal-day muted disabled'; cell.textContent = prevDays - startOffset + 1 + i; grid.appendChild(cell); }
+  for (let d = 1; d <= daysInMonth; d++) {
+    const date = new Date(sdpView.getFullYear(), sdpView.getMonth(), d);
+    const cell = document.createElement('div'); cell.className = 'cal-day'; cell.textContent = d;
+    if (date < todayDate || date > searchHorizonDate) cell.classList.add('disabled');
+    if (sameDay(date, todayDate)) cell.classList.add('today');
+    if (sameDay(date, selectedSearchStartDate)) cell.classList.add('selected');
+    if (date >= todayDate && date <= searchHorizonDate) cell.addEventListener('click', (e) => {
+      e.stopPropagation(); selectedSearchStartDate = date; sdpValue.value = isoOf(date); sdpInput.value = fmtDate(date); closeSearchStartCalendar();
+    });
+    grid.appendChild(cell);
+  }
+  sdpCalendar.appendChild(grid);
+}
+function openSearchStartCalendar() { if (selectedSearchStartDate) sdpView = new Date(selectedSearchStartDate.getFullYear(), selectedSearchStartDate.getMonth(), 1); renderSearchStartCalendar(); sdpCalendar.classList.add('open'); }
+function closeSearchStartCalendar() { sdpCalendar.classList.remove('open'); }
+sdpInput.addEventListener('click', () => { sdpCalendar.classList.contains('open') ? closeSearchStartCalendar() : openSearchStartCalendar(); });
+sdpInput.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeSearchStartCalendar(); });
+document.addEventListener('click', (e) => { if (!document.getElementById('search-start-datepick').contains(e.target)) closeSearchStartCalendar(); });
+document.getElementById('clear-search-start-date').addEventListener('click', () => {
+  selectedSearchStartDate = null; sdpValue.value = ''; sdpInput.value = ''; closeSearchStartCalendar();
+});
+
 renderSelected();
 
 if (EXISTING_CONFIG) {
@@ -1258,6 +1331,18 @@ if (EXISTING_CONFIG) {
     }
   }
 
+  if (EXISTING_CONFIG.search_start_date) {
+    const parts = EXISTING_CONFIG.search_start_date.split('-').map(Number);
+    if (parts.length === 3 && parts.every((n) => !Number.isNaN(n))) {
+      const configuredDate = new Date(parts[0], parts[1] - 1, parts[2]);
+      if (configuredDate >= todayDate && configuredDate <= searchHorizonDate) {
+        selectedSearchStartDate = configuredDate;
+        sdpValue.value = EXISTING_CONFIG.search_start_date;
+        sdpInput.value = fmtDate(configuredDate);
+      }
+    }
+  }
+
   setPollIntervalSeconds(EXISTING_CONFIG.poll_interval_seconds || 60);
   setTimeWindow(EXISTING_CONFIG.earliest_slot_hour, EXISTING_CONFIG.latest_slot_hour);
   setSwitch(phoneAlertsSwitch, EXISTING_CONFIG.phone_alerts !== false);
@@ -1281,6 +1366,7 @@ window.addEventListener('ikw-language-changed', () => {
   updatePollIntervalDisplay();
   updateTimeWindow();
   renderCalendar();
+  renderSearchStartCalendar();
   if (EXISTING_CONFIG) {
     document.getElementById('page-title').textContent = t('Settings');
     document.getElementById('submit-btn').textContent = t('Save changes');
@@ -1356,6 +1442,7 @@ document.getElementById('form').addEventListener('submit', async (e) => {
       category: category,
       exam_types: examTypes,
       current_slot_date: currentSlotDate,
+      search_start_date: sdpValue.value,
       poll_interval_seconds: parseInt(document.getElementById('poll_interval_seconds').value, 10),
       earliest_slot_hour: parseInt(timeFromHidden.value, 10),
       latest_slot_hour: parseInt(timeToHidden.value, 10),

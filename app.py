@@ -19,7 +19,7 @@ import threading
 import time
 import urllib.request
 import webbrowser
-from datetime import datetime
+from datetime import date, datetime, timedelta
 
 import auto_refresh_session
 import dashboard_server
@@ -206,6 +206,21 @@ def build_config(payload):
     except ValueError:
         raise ValueError("Current slot date must be a date like 2026-09-14")
 
+    search_start = payload.get("search_start_date", "")
+    if search_start not in (None, ""):
+        if not isinstance(search_start, str):
+            raise ValueError("Earliest acceptable exam date must be a date like 2026-09-14")
+        try:
+            parsed_search_start = date.fromisoformat(search_start)
+        except ValueError:
+            raise ValueError("Earliest acceptable exam date must be a date like 2026-09-14")
+        today = datetime.now().date()
+        horizon = today + timedelta(days=notifier.MAX_DAYS_AHEAD)
+        if not today <= parsed_search_start <= horizon:
+            raise ValueError("Earliest acceptable exam date must be within the next 31 days")
+    else:
+        search_start = ""
+
     config = {
         "organization_ids": organization_ids,
         "category": category,
@@ -213,6 +228,7 @@ def build_config(payload):
         "exam_types": exam_types,
         "ntfy_topic": ntfy_topic,
         "current_slot_date": current_slot_date,
+        "search_start_date": search_start,
         "poll_interval_seconds": poll_interval_seconds,
         "earliest_slot_hour": earliest_slot_hour,
         "latest_slot_hour": latest_slot_hour,
