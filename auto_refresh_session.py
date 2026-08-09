@@ -58,7 +58,10 @@ DEFAULT_TIMEOUT = None
 
 class AttachedChrome:
     """Process-like owner for a pairing browser already on our dedicated port."""
-    def __init__(self, host, port): self.host, self.port = host, port
+    def __init__(self, host, port, *, monotonic=None, sleep=None):
+        self.host, self.port = host, port
+        self.monotonic = monotonic or time.monotonic
+        self.sleep = sleep or time.sleep
     def poll(self):
         try:
             cdp_client.browser_ws_url(self.host, self.port)
@@ -68,8 +71,36 @@ class AttachedChrome:
     def terminate(self):
         try: cdp_client.close_browser(self.host, self.port)
         except Exception: pass
-    def wait(self, timeout=None): return 0
+    def wait(self, timeout=None):
+        deadline = None if timeout is None else self.monotonic() + timeout
+        while self.poll() is None:
+            if deadline is not None and self.monotonic() >= deadline:
+                raise subprocess.TimeoutExpired(
+                    f"Chrome CDP endpoint {self.host}:{self.port}", timeout
+                )
+            delay = 0.1 if deadline is None else min(
+                0.1, max(0, deadline - self.monotonic())
+            )
+            self.sleep(delay)
+        return 0
     def kill(self): self.terminate()
+
+
+def ensure_private_profile_dir(path, *, platform=None, chmod=None):
+    """Create only the dedicated profile and make it owner-only on POSIX."""
+    path.mkdir(parents=True, exist_ok=True)
+    platform = sys.platform if platform is None else platform
+    if platform != "win32":
+        (chmod or os.chmod)(path, 0o700)
+    return path
+
+
+def chrome_debugging_args(port, profile_dir):
+    return [
+        "--remote-debugging-address=127.0.0.1",
+        f"--remote-debugging-port={port}",
+        f"--user-data-dir={profile_dir}",
+    ]
 
 # Edge is Chromium-based and supports the same --remote-debugging-port CDP
 # flag, so it's included as a fallback — it's preinstalled on all Windows
@@ -515,9 +546,9 @@ def open_google_messages_pairing(host="127.0.0.1", port=DEFAULT_PORT):
         cdp_client.wait_for_debug_port(host, port, timeout=0.2)
     except Exception:
         chrome = find_chrome()
-        PROFILE_DIR.mkdir(parents=True, exist_ok=True)
+        ensure_private_profile_dir(PROFILE_DIR)
         subprocess.Popen([
-            chrome, f"--remote-debugging-port={port}", f"--user-data-dir={PROFILE_DIR}",
+            chrome, *chrome_debugging_args(port, PROFILE_DIR),
             "--no-first-run", "--no-default-browser-check", "--window-size=1100,850",
             "--app=about:blank",
         ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -725,7 +756,7 @@ def main():
             username, password = load_pz_credentials(config)
         chrome = find_chrome()
         print(f"using browser: {chrome}")
-        PROFILE_DIR.mkdir(parents=True, exist_ok=True)
+        ensure_private_profile_dir(PROFILE_DIR)
         try:
             cdp_client.wait_for_debug_port("127.0.0.1", args.port, timeout=0.2)
             chrome_proc = AttachedChrome("127.0.0.1", args.port)
@@ -734,8 +765,7 @@ def main():
             chrome_proc = subprocess.Popen(
                 [
                 chrome,
-                f"--remote-debugging-port={args.port}",
-                f"--user-data-dir={PROFILE_DIR}",
+                *chrome_debugging_args(args.port, PROFILE_DIR),
                 "--no-first-run",
                 "--no-default-browser-check",
                 # Both 460px and 600px wide clipped the login page below

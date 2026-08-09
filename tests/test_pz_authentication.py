@@ -87,7 +87,7 @@ class PZAuthenticationTests(unittest.TestCase):
         self.assertIn(("otp", "87654321"), provider.browser.submitted)
         self.assertNotIn(("otp", "11111111"), provider.browser.submitted)
 
-    def test_sms_wait_uses_tight_challenge_timestamp_tolerance(self):
+    def test_sms_wait_uses_credential_submission_timestamp_and_conservative_tolerance(self):
         class RecordingSMS(FakeSMS):
             def __init__(self):
                 super().__init__()
@@ -98,7 +98,16 @@ class PZAuthenticationTests(unittest.TestCase):
 
         sms = RecordingSMS()
         self.provider(sms=sms).authenticate()
-        self.assertEqual(sms.calls[-1][1], 2)
+        self.assertEqual(
+            sms.calls[-1][1], auth_providers.PZ_SMS_ATTEMPT_TOLERANCE_SECONDS
+        )
+        self.assertEqual(sms.calls[-1][0], 1_800_001_000)
+
+    def test_unexpected_messages_origin_is_target_lost(self):
+        self.assertEqual(
+            self.reason(sms=FakeSMS(SMSResult("unexpected_messages_origin"))),
+            "messages_target_lost",
+        )
 
     def test_otp_submission_has_bounded_settlement_delay(self):
         provider = self.provider(otp_settle_delay=5)

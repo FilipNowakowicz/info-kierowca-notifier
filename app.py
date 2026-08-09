@@ -262,6 +262,75 @@ def build_config(payload):
     return config
 
 
+STALE_PZ_CREDENTIAL_WARNING = (
+    "The new Profil Zaufany account was saved, but the previous credential "
+    "could not be removed from the operating-system credential store."
+)
+RESET_CREDENTIAL_WARNING = (
+    "Local account data was reset, but the saved Profil Zaufany credential "
+    "could not be removed from the operating-system credential store."
+)
+
+
+def persist_settings_credentials(previous, config, password, *, store=None,
+                                 save_config=None, logger=None):
+    """Safely order PZ credential migration and config persistence."""
+    store = store or credential_store.SecureCredentialStore()
+    save_config = save_config or (
+        lambda value: notifier.save_json(notifier.CONFIG_FILE, value)
+    )
+    logger = logger or AppHandler.logger
+    old_username = (previous.get("pz_username") or "").strip()
+    new_username = (config.get("pz_username") or "").strip()
+    old_present = bool(previous.get("pz_credential_present") and old_username)
+    same_account = old_present and old_username == new_username
+
+    if config["login_method"] == "profil_zaufany":
+        if password:
+            store.save(new_username, password)
+            config["pz_credential_present"] = True
+        elif same_account:
+            config["pz_credential_present"] = True
+        else:
+            raise credential_store.CredentialNotFound(
+                "Profil Zaufany password is required."
+            )
+    elif old_present:
+        # Switching methods intentionally retains the PZ credential.
+        config["pz_username"] = old_username
+        config["pz_credential_present"] = True
+
+    save_config(config)
+    if (config["login_method"] == "profil_zaufany" and old_present and
+            old_username != new_username):
+        try:
+            store.delete(old_username)
+        except credential_store.CredentialStorageUnavailable:
+            logger.warning("outcome=stale_pz_credential_cleanup_failed")
+            return STALE_PZ_CREDENTIAL_WARNING
+    return None
+
+
+def reset_account_state(config, *, store=None, config_file=None,
+                        session_file=None, logger=None):
+    """Clear local account state even if OS credential cleanup is unavailable."""
+    store = store or credential_store.SecureCredentialStore()
+    config_file = config_file or notifier.CONFIG_FILE
+    session_file = session_file or notifier.SESSION_FILE
+    logger = logger or AppHandler.logger
+    warning = None
+    if config.get("pz_username"):
+        try:
+            store.delete(config["pz_username"])
+        except credential_store.CredentialStorageUnavailable:
+            warning = RESET_CREDENTIAL_WARNING
+            logger.warning("outcome=account_reset credential_cleanup=failed")
+    config_file.unlink(missing_ok=True)
+    session_file.unlink(missing_ok=True)
+    logger.info("outcome=account_reset")
+    return warning
+
+
 BOOKING_CONFIG_KEYS = {"organization_ids", "category", "profile_number", "exam_types",
                        "ntfy_topic", "current_slot_date"}
 
@@ -582,29 +651,19 @@ class AppHandler(http.server.BaseHTTPRequestHandler):
             self._send_json(400, {"ok": False, "error": str(e)})
             return
         password = payload.get("pz_password")
-        same_pz_account = (
-            previous.get("pz_username") == config.get("pz_username")
-            and bool(previous.get("pz_credential_present"))
-        )
-        if config["login_method"] == "profil_zaufany":
-            if password:
-                try:
-                    credential_store.SecureCredentialStore().save(config["pz_username"], password)
-                except credential_store.CredentialStorageUnavailable:
-                    self._send_json(503, {"ok": False, "error": "Secure credential storage is unavailable."})
-                    return
-                config["pz_credential_present"] = True
-            elif same_pz_account:
-                config["pz_credential_present"] = True
-            else:
-                self._send_json(400, {"ok": False, "error": "Profil Zaufany password is required."})
-                return
-        elif same_pz_account:
-            # Switching methods does not delete or expose the stored secret.
-            config["pz_credential_present"] = True
-        notifier.save_json(notifier.CONFIG_FILE, config)
+        try:
+            warning = persist_settings_credentials(previous, config, password)
+        except credential_store.CredentialStorageUnavailable:
+            self._send_json(503, {"ok": False, "error": "Secure credential storage is unavailable."})
+            return
+        except credential_store.CredentialNotFound as exc:
+            self._send_json(400, {"ok": False, "error": str(exc)})
+            return
         needs_login = not notifier.SESSION_FILE.exists()
-        self._send_json(200, {"ok": True, "needs_login": needs_login})
+        response = {"ok": True, "needs_login": needs_login}
+        if warning:
+            response["warning"] = warning
+        self._send_json(200, response)
         if needs_login:
             AppHandler.logger.info("outcome=setup_complete detail=triggering_login")
         # Wake the already-running poll loop rather than waiting for its
@@ -651,17 +710,11 @@ class AppHandler(http.server.BaseHTTPRequestHandler):
         having to go find and delete those files by hand to switch accounts
         or recover from a broken setup.
         """
-        config = self._load_config_or_empty()
-        if config.get("pz_username"):
-            try:
-                credential_store.SecureCredentialStore().delete(config["pz_username"])
-            except credential_store.CredentialStorageUnavailable:
-                self._send_json(503, {"ok": False, "error": "Secure credential storage is unavailable."})
-                return
-        notifier.CONFIG_FILE.unlink(missing_ok=True)
-        notifier.SESSION_FILE.unlink(missing_ok=True)
-        AppHandler.logger.info("outcome=account_reset")
-        self._send_json(200, {"ok": True})
+        warning = reset_account_state(self._load_config_or_empty())
+        response = {"ok": True}
+        if warning:
+            response["warning"] = warning
+        self._send_json(200, response)
 
     def _handle_pair_google_messages(self):
         try:
@@ -712,10 +765,9 @@ def run_tls_smoke():
 
 
 def run_keyring_smoke():
-    """Frozen-build smoke: backend discovery must work without reading credentials."""
-    import keyring
-    backend = keyring.get_keyring()
-    print(f"Keyring discovery passed ({type(backend).__module__}.{type(backend).__name__}).")
+    """Frozen-build smoke: secure backend support must be bundled and usable."""
+    detail = credential_store.require_packaged_keyring_support()
+    print(f"Secure keyring support passed ({detail}).")
 
 
 def main():

@@ -43,6 +43,12 @@ DEFAULT_TIMEOUTS = {
     PZState.WAIT_FOR_INFO_KIEROWCA_SESSION: 20,
 }
 
+# PZePUAP can timestamp an SMS shortly before the browser renders its challenge.
+# Codes already visible before credential submission are separately drained into
+# ``used_codes``, so this tolerance covers delivery/render skew without allowing
+# a previously observed code to be reused.
+PZ_SMS_ATTEMPT_TOLERANCE_SECONDS = 20
+
 
 class ProfilZaufanyProvider:
     def __init__(self, browser, sms_provider, username, password, *, monotonic=None,
@@ -151,6 +157,7 @@ class ProfilZaufanyProvider:
         # before credentials can request a new SMS.
         self._exclude_existing_sms_codes()
         self._transition(PZState.SUBMIT_CREDENTIALS)
+        credentials_submitted_at = self.wall_clock()
         self.browser.submit_credentials(self.username, self.password)
         challenge = self._wait(PZState.WAIT_FOR_SMS_CHALLENGE, self.browser.challenge_status,
                                "sms_challenge_timeout")
@@ -162,18 +169,18 @@ class ProfilZaufanyProvider:
             self._fail("profil_zaufany_inactive")
         if challenge != "sms":
             self._fail("unexpected_auth_page")
-        sms_challenge_at = self.wall_clock()
-
         stale_sms_seen = [False]
         def sms_probe():
             result = self.sms_provider.get_latest_pz_code(
-                sms_challenge_at, self.used_codes, tolerance_seconds=2
+                credentials_submitted_at, self.used_codes,
+                tolerance_seconds=PZ_SMS_ATTEMPT_TOLERANCE_SECONDS,
             )
             if result.status == "found":
                 return result
             if result.status in ("not_paired", "page_structure_unsupported"):
                 self._fail("sms_provider_unavailable")
-            if result.status in ("messages_target_lost", "messages_target_unavailable"):
+            if result.status in ("messages_target_lost", "messages_target_unavailable",
+                                 "unexpected_messages_origin"):
                 self._fail("messages_target_lost")
             if result.status == "stale_otp":
                 stale_sms_seen[0] = True
@@ -240,14 +247,26 @@ CLICK_FUNCTION = r"""
 function(labels) {
   var visible = function(e) { var r=e.getBoundingClientRect(); var s=getComputedStyle(e);
     return r.width>0 && r.height>0 && s.visibility!=='hidden' && s.display!=='none'; };
-  var candidates = Array.from(document.querySelectorAll('button,a,[role="button"]'));
-  for (var i=0;i<labels.length;i++) for (var j=0;j<candidates.length;j++) {
-    var text=(candidates[j].innerText||candidates[j].textContent||'').trim().toLowerCase();
-    if (visible(candidates[j]) && text.indexOf(labels[i].toLowerCase())>=0) {
-      candidates[j].click(); return {clicked:true};
+  var normalize = function(text) { return (text||'').replace(/\s+/g,' ').trim().toLowerCase(); };
+  var controls = [];
+  Array.from(document.querySelectorAll('button,a,[role="button"]')).forEach(function(node) {
+    var control = node;
+    while (control.parentElement &&
+           control.parentElement.matches('button,a,[role="button"]')) {
+      control = control.parentElement;
     }
+    if (visible(control) && controls.indexOf(control) < 0) controls.push(control);
+  });
+  for (var i=0;i<labels.length;i++) {
+    var label=normalize(labels[i]);
+    var exact=controls.filter(function(e){return normalize(e.innerText||e.textContent)===label;});
+    var matches=exact.length ? exact : controls.filter(function(e){
+      return normalize(e.innerText||e.textContent).indexOf(label)>=0;
+    });
+    if (matches.length===1) { matches[0].click(); return {status:'clicked'}; }
+    if (matches.length>1) return {status:'ambiguous'};
   }
-  return null;
+  return {status:'not_found'};
 }
 """
 
@@ -415,7 +434,8 @@ class CDPProfilZaufanyBrowser:
             raise AuthenticationFailure("unexpected_auth_page", PZState.SELECT_PROFIL_ZAUFANY)
         if self._call(FORM_STATUS_FUNCTION, require_pz_origin=True) == "ready":
             return "ready"
-        return self._call(CLICK_FUNCTION, [["profil zaufany"]], require_pz_origin=True)
+        result = self._call(CLICK_FUNCTION, [["profil zaufany"]], require_pz_origin=True)
+        return "clicked" if result and result.get("status") == "clicked" else None
 
     def credential_form_status(self):
         return self._call(FORM_STATUS_FUNCTION, require_pz_origin=True)

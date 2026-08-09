@@ -7,6 +7,7 @@ import unittest
 from unittest.mock import patch
 
 import auto_refresh_session
+import auth_providers
 import open_logged_in_browser
 
 
@@ -206,6 +207,64 @@ console.log(JSON.stringify({result: RESULT, clicked}));
             return_value={"clicked": False, "reason": "ambiguous_match"},
         ), patch.object(open_logged_in_browser.time, "monotonic", side_effect=[0, 21]):
             self.assertFalse(open_logged_in_browser._poll_until_truthy("host", 1, "js", timeout=20))
+
+    def _run_pz_chooser(self, specs):
+        if not shutil.which("node"):
+            self.skipTest("Node.js is required for PZ chooser behavior tests")
+        script = r"""
+const specs = SCENARIO;
+const clicked = [];
+const made = {};
+function build(index) {
+  if (made[index]) return made[index];
+  const spec = specs[index];
+  const el = made[index] = {
+    innerText: spec.text || '', textContent: spec.text || '',
+    parentElement: null,
+    matches: selector => selector.includes(spec.tag || 'button') ||
+      (spec.role === 'button' && selector.includes('[role="button"]')),
+    getBoundingClientRect: () => spec.hidden ? {width:0,height:0} : {width:10,height:10},
+    click: () => clicked.push(spec.name || String(index))
+  };
+  if (spec.parent !== undefined) el.parentElement = build(spec.parent);
+  return el;
+}
+specs.forEach((_spec, index) => build(index));
+global.getComputedStyle = el => ({visibility: el.hidden ? 'hidden' : 'visible', display:'block'});
+global.document = {querySelectorAll: () => specs.map((_spec, index) => build(index))};
+const result = (CHOOSER)(['profil zaufany']);
+console.log(JSON.stringify({result, clicked}));
+"""
+        completed = subprocess.run(
+            ["node", "-e", "const SCENARIO=" + json.dumps(specs) + ";\nconst CHOOSER=" +
+             auth_providers.CLICK_FUNCTION + ";\n" + script],
+            check=True, capture_output=True, text=True,
+        )
+        return json.loads(completed.stdout)
+
+    def test_pz_chooser_exact_match_outranks_substring(self):
+        result = self._run_pz_chooser([
+            {"tag": "button", "text": "Profil Zaufany", "name": "exact"},
+            {"tag": "button", "text": "Pomoc: Profil Zaufany", "name": "substring"},
+        ])
+        self.assertEqual(result, {"result": {"status": "clicked"}, "clicked": ["exact"]})
+
+    def test_pz_chooser_abstains_from_two_plausible_controls(self):
+        result = self._run_pz_chooser([
+            {"tag": "button", "text": "Wybierz Profil Zaufany"},
+            {"tag": "button", "text": "Zaloguj: Profil Zaufany"},
+        ])
+        self.assertEqual(result["result"]["status"], "ambiguous")
+        self.assertEqual(result["clicked"], [])
+
+    def test_pz_chooser_deduplicates_nested_controls_and_ignores_hidden(self):
+        result = self._run_pz_chooser([
+            {"tag": "button", "text": "Profil Zaufany", "name": "outer"},
+            {"tag": "span", "role": "button", "text": "Profil Zaufany", "parent": 0},
+            {"tag": "button", "text": "Profil Zaufany", "hidden": True},
+        ])
+        self.assertEqual(result["result"]["status"], "clicked")
+        self.assertEqual(result["clicked"], ["outer"])
 
 
 if __name__ == "__main__":
