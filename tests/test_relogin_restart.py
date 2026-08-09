@@ -42,7 +42,8 @@ class ReloginRestartTests(unittest.TestCase):
     def restart(self, clock=None):
         clock = clock or FakeClock()
         return notifier.restart_auto_refresh(
-            self.logger, {}, timeout=0.3, clock=clock, sleeper=clock.sleep
+            self.logger, {}, timeout=0.3, clock=clock, wall_clock=clock,
+            sleeper=clock.sleep
         )
 
     def test_normal_retry_preserves_active_login(self):
@@ -64,7 +65,9 @@ class ReloginRestartTests(unittest.TestCase):
         alive = [True]
 
         def acknowledge():
-            request_seen.append(relogin_control.restart_requested(self.request, owner))
+            request_seen.append(
+                relogin_control.restart_requested(self.request, owner, clock=clock)
+            )
             self.lock.unlink(missing_ok=True)
             alive[0] = False
 
@@ -118,6 +121,7 @@ class ReloginRestartTests(unittest.TestCase):
         self.assertEqual(outcome, notifier.TRIGGER_SHUTDOWN_FAILED)
         launch.assert_not_called()
         self.assertTrue(self.lock.exists())
+        self.assertFalse(self.request.exists())
 
     def test_live_legacy_pid_lock_is_not_used_as_kill_authority(self):
         self.lock.write_text("123", encoding="utf-8")
@@ -131,9 +135,83 @@ class ReloginRestartTests(unittest.TestCase):
     def test_helper_only_accepts_its_own_restart_token(self):
         owner = relogin_control.ReloginOwner(123, "right-token")
         other = relogin_control.ReloginOwner(456, "wrong-token")
-        relogin_control.write_restart_request(self.request, owner)
-        self.assertTrue(relogin_control.restart_requested(self.request, owner))
-        self.assertFalse(relogin_control.restart_requested(self.request, other))
+        clock = FakeClock()
+        relogin_control.write_restart_request(
+            self.request, owner, issued_at=clock(), expires_at=clock() + 10
+        )
+        self.assertTrue(relogin_control.restart_requested(self.request, owner, clock=clock))
+        self.assertFalse(relogin_control.restart_requested(self.request, other, clock=clock))
+
+    def test_expired_or_malformed_restart_request_is_rejected(self):
+        owner = relogin_control.ReloginOwner(123, "owner")
+        clock = FakeClock()
+        relogin_control.write_restart_request(
+            self.request, owner, issued_at=clock() - 1, expires_at=clock()
+        )
+        self.assertFalse(relogin_control.restart_requested(self.request, owner, clock=clock))
+        relogin_control.write_restart_request(
+            self.request, owner, issued_at=clock() + 1, expires_at=clock() + 10
+        )
+        self.assertFalse(relogin_control.restart_requested(self.request, owner, clock=clock))
+        self.request.write_text("not json", encoding="utf-8")
+        self.assertFalse(relogin_control.restart_requested(self.request, owner, clock=clock))
+
+    def test_helper_recovering_after_timeout_cannot_honor_old_request(self):
+        owner = relogin_control.ReloginOwner(123, "stuck-owner")
+        relogin_control.write_lock(self.lock, owner)
+        clock = FakeClock()
+        with patch("notifier.auto_refresh_session.chrome_available", return_value=True), patch(
+            "notifier.relogin_control.process_alive", return_value=True
+        ):
+            self.assertEqual(self.restart(clock), notifier.TRIGGER_SHUTDOWN_FAILED)
+        self.assertFalse(relogin_control.restart_requested(self.request, owner, clock=clock))
+
+    def test_replacement_launch_failure_leaves_no_actionable_request(self):
+        owner = relogin_control.ReloginOwner(123, "departing-owner")
+        relogin_control.write_lock(self.lock, owner)
+        clock = FakeClock()
+        alive = [True]
+
+        def acknowledge():
+            self.lock.unlink(missing_ok=True)
+            alive[0] = False
+
+        clock.on_sleep = acknowledge
+        with patch("notifier.auto_refresh_session.chrome_available", return_value=True), patch(
+            "notifier.relogin_control.process_alive", side_effect=lambda _pid: alive[0]
+        ), patch(
+            "notifier.trigger_auto_refresh", return_value=notifier.TRIGGER_LAUNCH_FAILED
+        ):
+            self.assertEqual(self.restart(clock), notifier.TRIGGER_LAUNCH_FAILED)
+        self.assertFalse(self.request.exists())
+
+    def test_owner_change_cancels_old_request_and_does_not_launch(self):
+        owner = relogin_control.ReloginOwner(123, "old-owner")
+        replacement = relogin_control.ReloginOwner(456, "new-owner")
+        relogin_control.write_lock(self.lock, owner)
+        clock = FakeClock()
+        clock.on_sleep = lambda: relogin_control.write_lock(self.lock, replacement)
+        with patch("notifier.auto_refresh_session.chrome_available", return_value=True), patch(
+            "notifier.relogin_control.process_alive", return_value=True
+        ), patch("notifier.trigger_auto_refresh") as launch:
+            outcome = self.restart(clock)
+        self.assertEqual(outcome, notifier.TRIGGER_SHUTDOWN_FAILED)
+        self.assertFalse(self.request.exists())
+        launch.assert_not_called()
+
+    def test_old_request_cannot_affect_new_helper(self):
+        clock = FakeClock()
+        old = relogin_control.ReloginOwner(123, "old-owner")
+        new = relogin_control.ReloginOwner(456, "new-owner")
+        relogin_control.write_restart_request(
+            self.request, old, issued_at=clock(), expires_at=clock() + 10
+        )
+        self.assertFalse(relogin_control.restart_requested(self.request, new, clock=clock))
+        with patch.object(auto_refresh_session, "LOCK_FILE", self.lock), patch.object(
+            auto_refresh_session, "RESTART_REQUEST_FILE", self.request
+        ):
+            self.assertTrue(auto_refresh_session.acquire_lock(new))
+        self.assertFalse(self.request.exists())
 
     def test_cookie_wait_honors_restart_before_browser_work(self):
         chrome = Mock()

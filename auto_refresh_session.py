@@ -540,14 +540,17 @@ def acquire_lock(owner):
                 return False  # a refresh is already in progress
             # stale lock — the owning process is gone
     LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
-    relogin_control.write_lock(LOCK_FILE, owner)
+    # Remove leftovers before publishing this owner. Once its lock is visible,
+    # the dashboard may legitimately write a request for this token.
     RESTART_REQUEST_FILE.unlink(missing_ok=True)
+    relogin_control.write_lock(LOCK_FILE, owner)
     return True
 
 
 def release_lock(owner):
-    relogin_control.clear_if_owned(LOCK_FILE, owner)
-    RESTART_REQUEST_FILE.unlink(missing_ok=True)
+    if relogin_control.read_lock(LOCK_FILE) == owner:
+        relogin_control.clear_restart_request_if_owned(RESTART_REQUEST_FILE, owner)
+        relogin_control.clear_if_owned(LOCK_FILE, owner)
 
 
 class ReloginRestartRequested(Exception):

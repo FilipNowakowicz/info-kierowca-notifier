@@ -93,6 +93,7 @@ class SearchStartDateTests(unittest.TestCase):
 
             with patch.object(notifier, "CONFIG_FILE", config_file), \
                  patch.object(notifier, "SESSION_FILE", session_file), \
+                 patch.object(notifier, "PAUSE_FILE", root / "pause"), \
                  patch.object(notifier, "do_request", side_effect=request), \
                  patch.object(notifier, "datetime", FixedDateTime), \
                  patch.object(notifier, "build_search_organization_ids", return_value=[26] * 5), \

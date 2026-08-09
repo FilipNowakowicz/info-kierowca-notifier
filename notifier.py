@@ -442,7 +442,10 @@ def trigger_auto_refresh(logger, config, force=False, notify_phone=True):
         return TRIGGER_LAUNCH_FAILED
 
 
-def restart_auto_refresh(logger, config, *, timeout=8, clock=time.monotonic, sleeper=time.sleep):
+def restart_auto_refresh(
+    logger, config, *, timeout=8, clock=time.monotonic, wall_clock=time.time,
+    sleeper=time.sleep
+):
     """Cooperatively replace a known active QR relogin helper.
 
     The active helper owns and terminates its Chrome child. This function only
@@ -471,13 +474,19 @@ def restart_auto_refresh(logger, config, *, timeout=8, clock=time.monotonic, sle
         logger.info("outcome=auto_refresh_restart_refused detail=unverifiable_legacy_lock")
         return TRIGGER_RESTART_UNAVAILABLE
 
-    relogin_control.write_restart_request(AUTO_REFRESH_RESTART_REQUEST, owner)
+    issued_at = wall_clock()
+    relogin_control.write_restart_request(
+        AUTO_REFRESH_RESTART_REQUEST, owner,
+        issued_at=issued_at, expires_at=issued_at + timeout
+    )
     deadline = clock() + timeout
     while clock() < deadline:
         lock_exists = AUTO_REFRESH_LOCK.exists()
         if lock_exists and relogin_control.read_lock(AUTO_REFRESH_LOCK) != owner:
             logger.info("outcome=auto_refresh_restart_failed detail=lock_owner_changed")
-            AUTO_REFRESH_RESTART_REQUEST.unlink(missing_ok=True)
+            relogin_control.clear_restart_request_if_owned(
+                AUTO_REFRESH_RESTART_REQUEST, owner
+            )
             return TRIGGER_SHUTDOWN_FAILED
         if not relogin_control.process_alive(owner.pid):
             if lock_exists:
@@ -486,9 +495,12 @@ def restart_auto_refresh(logger, config, *, timeout=8, clock=time.monotonic, sle
         sleeper(min(0.1, max(0, deadline - clock())))
     if AUTO_REFRESH_LOCK.exists() or relogin_control.process_alive(owner.pid):
         logger.info("outcome=auto_refresh_restart_failed detail=shutdown_timeout")
+        relogin_control.clear_restart_request_if_owned(
+            AUTO_REFRESH_RESTART_REQUEST, owner
+        )
         return TRIGGER_SHUTDOWN_FAILED
 
-    AUTO_REFRESH_RESTART_REQUEST.unlink(missing_ok=True)
+    relogin_control.clear_restart_request_if_owned(AUTO_REFRESH_RESTART_REQUEST, owner)
     outcome = trigger_auto_refresh(logger, config, force=True, notify_phone=False)
     if outcome == TRIGGER_MANUAL_RETRY_LAUNCHED:
         logger.info("outcome=auto_refresh_restart_launched")
