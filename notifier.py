@@ -25,6 +25,7 @@ from pathlib import Path
 
 import auto_refresh_session
 import open_logged_in_browser
+import tls_transport
 from paths import (  # noqa: F401  (re-exported: other modules read these off notifier)
     AUTO_REFRESH_LOG_FILE,
     CONFIG_FILE,
@@ -133,6 +134,20 @@ def setup_logger():
     )
     handler.setFormatter(logging.Formatter("%(asctime)s %(message)s"))
     logger.addHandler(handler)
+    try:
+        tls = tls_transport.diagnostics()
+        logger.info(
+            "tls backend=%s platform=%s openssl=%s app_ca_override=%s ssl_cert_file=%s ssl_cert_dir=%s bundled_ca=%s",
+            tls.backend,
+            tls.platform,
+            tls.openssl,
+            tls.app_ca_bundle_configured,
+            tls.ssl_cert_file_configured,
+            tls.ssl_cert_dir_configured,
+            tls.bundled_ca_available,
+        )
+    except tls_transport.TLSConfigurationError as exc:
+        logger.warning("outcome=tls_configuration_error detail=%s", exc)
     return logger
 
 
@@ -269,7 +284,7 @@ def push_ntfy(logger, topic, title, message, priority="default", tags=None):
         headers["Tags"] = ",".join(tags)
     req = urllib.request.Request(url, data=message.encode("utf-8"), headers=headers, method="POST")
     try:
-        with urllib.request.urlopen(req, timeout=TIMEOUT):
+        with tls_transport.urlopen(req, timeout=TIMEOUT):
             pass
     except Exception as e:
         logger.info("outcome=push_failed detail=%r", str(e))
@@ -616,14 +631,14 @@ def do_request(url, session, method="GET", json_body=None):
         headers["Content-Type"] = "application/json"
     req = urllib.request.Request(url, data=data, headers=headers, method=method)
     try:
-        with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
+        with tls_transport.urlopen(req, timeout=TIMEOUT) as resp:
             body = resp.read()
             parse_set_cookies(resp.headers, session)
             return resp.status, body, resp.headers
     except urllib.error.HTTPError as e:
         body = e.read()
         return e.code, body, e.headers
-    except urllib.error.URLError as e:
+    except (urllib.error.URLError, tls_transport.TLSConfigurationError) as e:
         return None, str(e).encode(), None
 
 

@@ -6,6 +6,7 @@ Build with: pyinstaller pyinstaller.spec
 kept as a spec file so the release workflow and any manual build use identical
 settings on every platform.)
 """
+from PyInstaller.utils.hooks import collect_data_files
 
 a = Analysis(
     ["app.py"],
@@ -15,8 +16,8 @@ a = Analysis(
     # Path(__file__).parent — PyInstaller only auto-bundles Python imports, so these
     # data files need listing explicitly or the wizard silently ends up with an empty
     # center list / a categories dropdown missing everything but the B fallback.
-    datas=[("word_centers.json", "."), ("categories.json", ".")],
-    hiddenimports=[],
+    datas=[("word_centers.json", "."), ("categories.json", ".")] + collect_data_files("certifi"),
+    hiddenimports=["truststore", "certifi"],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

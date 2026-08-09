@@ -25,6 +25,7 @@ import auto_refresh_session
 import dashboard_server
 import notifier
 import open_logged_in_browser
+import tls_transport
 from paths import CATEGORIES_FILE, WORD_CENTERS_FILE
 from templates import LOGIN_PAGE, TOOLBAR_HTML, WIZARD_PAGE
 
@@ -550,12 +551,24 @@ def run_internal_open_browser():
     open_logged_in_browser.main()
 
 
+def run_tls_smoke():
+    """Minimal frozen-build check: make one verified HTTPS request and exit."""
+    req = urllib.request.Request("https://example.com/", headers={"User-Agent": "ikw-tls-smoke"})
+    with tls_transport.urlopen(req, timeout=15) as response:
+        if response.status != 200:
+            raise RuntimeError(f"TLS smoke request returned HTTP {response.status}")
+    print(f"Verified HTTPS smoke passed ({tls_transport.trust_backend()}).")
+
+
 def main():
     if "--internal-auto-refresh" in sys.argv:
         run_internal_auto_refresh()
         return
     if "--internal-open-browser" in sys.argv:
         run_internal_open_browser()
+        return
+    if "--internal-tls-smoke" in sys.argv:
+        run_tls_smoke()
         return
 
     if already_running():
