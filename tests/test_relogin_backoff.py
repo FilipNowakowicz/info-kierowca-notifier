@@ -152,11 +152,11 @@ class TriggerAutoRefreshBackoffTests(unittest.TestCase):
     def test_manual_retry_never_terminates_live_relogin(self):
         self.lock_path.write_text("123", encoding="utf-8")
         with patch("notifier.auto_refresh_session.chrome_available", return_value=True), patch(
-            "notifier.os.kill", return_value=None
+            "notifier.relogin_control.process_alive", return_value=True
         ) as kill, patch("notifier.subprocess.Popen") as popen:
             outcome = notifier.trigger_auto_refresh(self.logger, {}, force=True)
         self.assertEqual(outcome, notifier.TRIGGER_ALREADY_RUNNING)
-        kill.assert_called_once_with(123, 0)
+        kill.assert_called_once_with(123)
         popen.assert_not_called()
         self.assertTrue(self.lock_path.exists())
 
@@ -166,7 +166,7 @@ class TriggerAutoRefreshBackoffTests(unittest.TestCase):
         with patch("notifier.auto_refresh_session.chrome_available", return_value=True), patch.object(
             notifier, "AUTO_REFRESH_SCRIPT", Path(__file__)
         ), patch("notifier.shutil.which", return_value=None), patch(
-            "notifier.os.kill", side_effect=ProcessLookupError
+            "notifier.relogin_control.process_alive", return_value=False
         ), patch("notifier.subprocess.Popen", return_value=process):
             outcome = notifier.trigger_auto_refresh(self.logger, {}, force=True)
         self.assertEqual(outcome, notifier.TRIGGER_MANUAL_RETRY_LAUNCHED)
