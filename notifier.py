@@ -74,6 +74,13 @@ MAX_POLL_INTERVAL_SECONDS = 1800
 # API and not enforced by this code.
 SESSION_ESTIMATED_LIFETIME_SECONDS = 3600
 
+# Profil Zaufany can refresh without user interaction, so start shortly before
+# the observed absolute session ceiling instead of waiting for the API to reject
+# the old cookies. Five minutes leaves room for the normal 60s and 120s retry
+# cooldowns when failures are detected quickly. mObywatel deliberately remains
+# expiry-driven because an early refresh would ask the user to scan a QR code.
+PZ_PROACTIVE_RELOGIN_LEAD_SECONDS = 5 * 60
+
 # Applied on top of the configured interval, never subtracted - so the
 # effective cadence never goes below what the user picked (or the floor
 # above). Expressed as a fraction of the interval rather than a flat number
@@ -760,6 +767,20 @@ def _handle_auth_expired(logger, dash_status, config, status, stage):
     trigger_auto_refresh(logger, config)
 
 
+def should_proactively_relogin(config, captured_at, *, now=None):
+    """Whether a PZ session is inside its pre-expiry automatic-login window."""
+    if (config.get("login_method", "mobywatel") != "profil_zaufany"
+            or not config.get("auto_refresh_chrome", True)
+            or isinstance(captured_at, bool)
+            or not isinstance(captured_at, (int, float))):
+        return False
+    if now is None:
+        now = time.time()
+    expires_at = captured_at + SESSION_ESTIMATED_LIFETIME_SECONDS
+    remaining = expires_at - now
+    return 0 < remaining <= PZ_PROACTIVE_RELOGIN_LEAD_SECONDS
+
+
 def run_check(logger, dash_status):
     """Note: pausing/resuming itself is applied instantly by app.py's
     /pause and /resume handlers (they write dash_status/status.json
@@ -814,6 +835,14 @@ def run_check(logger, dash_status):
         if captured_at
         else None
     )
+
+    # Do this before the ordinary refresh/search calls: those calls can still
+    # use the current valid session while the detached PZ login obtains its
+    # replacement. Subsequent poll cycles are safely gated by the helper lock
+    # and persisted retry backoff in trigger_auto_refresh().
+    if should_proactively_relogin(config, captured_at):
+        logger.info("outcome=proactive_relogin detail=session_expiring_soon")
+        trigger_auto_refresh(logger, config)
 
     # 1. Keep the session alive.
     status, body, _headers = do_request(REFRESH_URL, session, method="GET")

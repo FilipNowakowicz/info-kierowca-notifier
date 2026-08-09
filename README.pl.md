@@ -44,10 +44,11 @@ Program sprawdza te same dwa endpointy, których używa strona info-kierowca.pl 
 Jeśli włączysz pomoc przy zmianie terminu (domyślnie włączona, przełącznik `auto_open_browser`), pasujący termin otworzy także zalogowane okno Chrome na ekranie „zmień termin” istniejącej rezerwacji. Domyślnie program zatrzymuje się tam, na pustym wyborze zakresu dat, bez wysyłania danych — nową datę wybierasz i potwierdzasz ręcznie. W Ustawienia → Automatyzacja są dwa kolejne przełączniki, oba domyślnie wyłączone: pierwszy wybiera pasujący termin i przechodzi do podsumowania, drugi — wymagający pierwszego i własnego okna potwierdzenia przed włączeniem — również go potwierdza, faktycznie wysyłając zmianę rezerwacji bez kliknięcia użytkownika. Dokładny opis kliknięć i uzasadnienie znajdują się w [docs/ADVANCED.md](docs/ADVANCED.md). Nigdy nie włączaj drugiej opcji, zanim nie sprawdzisz, że wybór terminu działa niezawodnie.
 
 Sesja info-kierowca.pl nadal wygasa po około godzinie. Po skonfigurowaniu Profilu Zaufanego
-aplikacja otwiera dedykowany profil Chrome, podaje bezpiecznie zapisane dane logowania, odczytuje
-nowy kod weryfikacyjny PZePUAP ze sparowanej karty Google Messages Web i automatycznie przywraca
-sesję. Przy wybranym mObywatelu otwiera zamiast tego ekran kodu QR i czeka na jego zeskanowanie.
-Wymagania, zachowanie awaryjne i rozwiązywanie problemów opisano w sekcji
+aplikacja rozpoczyna jej odnawianie pięć minut przed szacowanym wygaśnięciem: otwiera dedykowany
+profil Chrome, podaje bezpiecznie zapisane dane logowania, odczytuje nowy kod weryfikacyjny
+PZePUAP ze sparowanej karty Google Messages Web i automatycznie przywraca sesję. Przy wybranym
+mObywatelu czeka do faktycznego wygaśnięcia sesji, a następnie otwiera ekran kodu QR i czeka na
+jego zeskanowanie. Wymagania, zachowanie awaryjne i rozwiązywanie problemów opisano w sekcji
 [automatyczne ponowne logowanie](docs/ADVANCED.md#auto-relogin-on-session-expiry).
 
 Pliki cookie sesji i numer PKK nie trafiają nigdzie poza info-kierowca.pl.
