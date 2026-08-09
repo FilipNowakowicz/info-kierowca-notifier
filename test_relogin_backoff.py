@@ -92,6 +92,10 @@ class TriggerAutoRefreshBackoffTests(unittest.TestCase):
         )
         self.log_patch.start()
         self.addCleanup(self.log_patch.stop)
+        self.lock_path = Path(self.directory.name) / "auto-refresh.lock"
+        self.lock_patch = patch.object(notifier, "AUTO_REFRESH_LOCK", self.lock_path)
+        self.lock_patch.start()
+        self.addCleanup(self.lock_patch.stop)
 
     def test_automatic_attempt_stops_during_persisted_cooldown(self):
         RetryBackoff(self.state_path).record_failure("authentication_timeout")
@@ -144,6 +148,41 @@ class TriggerAutoRefreshBackoffTests(unittest.TestCase):
         ), patch("notifier.subprocess.Popen", return_value=process):
             outcome = notifier.trigger_auto_refresh(self.logger, {}, force=True)
         self.assertEqual(outcome, notifier.TRIGGER_MANUAL_RETRY_LAUNCHED)
+
+    def test_manual_retry_never_terminates_live_relogin(self):
+        self.lock_path.write_text("123", encoding="utf-8")
+        with patch("notifier.auto_refresh_session.chrome_available", return_value=True), patch(
+            "notifier.os.kill", return_value=None
+        ) as kill, patch("notifier.subprocess.Popen") as popen:
+            outcome = notifier.trigger_auto_refresh(self.logger, {}, force=True)
+        self.assertEqual(outcome, notifier.TRIGGER_ALREADY_RUNNING)
+        kill.assert_called_once_with(123, 0)
+        popen.assert_not_called()
+        self.assertTrue(self.lock_path.exists())
+
+    def test_manual_retry_removes_dead_lock_before_launching(self):
+        self.lock_path.write_text("123", encoding="utf-8")
+        process = Mock()
+        with patch("notifier.auto_refresh_session.chrome_available", return_value=True), patch.object(
+            notifier, "AUTO_REFRESH_SCRIPT", Path(__file__)
+        ), patch("notifier.shutil.which", return_value=None), patch(
+            "notifier.os.kill", side_effect=ProcessLookupError
+        ), patch("notifier.subprocess.Popen", return_value=process):
+            outcome = notifier.trigger_auto_refresh(self.logger, {}, force=True)
+        self.assertEqual(outcome, notifier.TRIGGER_MANUAL_RETRY_LAUNCHED)
+        self.assertFalse(self.lock_path.exists())
+
+    def test_manual_retry_removes_malformed_lock_before_launching(self):
+        self.lock_path.write_text("not-a-pid", encoding="utf-8")
+        process = Mock()
+        with patch("notifier.auto_refresh_session.chrome_available", return_value=True), patch.object(
+            notifier, "AUTO_REFRESH_SCRIPT", Path(__file__)
+        ), patch("notifier.shutil.which", return_value=None), patch(
+            "notifier.subprocess.Popen", return_value=process
+        ):
+            outcome = notifier.trigger_auto_refresh(self.logger, {}, force=True)
+        self.assertEqual(outcome, notifier.TRIGGER_MANUAL_RETRY_LAUNCHED)
+        self.assertFalse(self.lock_path.exists())
 
 
 if __name__ == "__main__":

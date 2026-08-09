@@ -337,9 +337,8 @@ automation. Regenerate the static snapshots with `fetch_word_centers.py` / `fetc
   - First run is login-first, so the wizard can prefill the PKK number/category instead of asking
     blind: `GET /` serves `LOGIN_PAGE` (not the wizard) whenever neither `config.json` nor
     `session.json` exists yet. Its "Log in with mObywatel" button hits `POST /login-start`
-    (`_handle_login_start()` → `trigger_auto_refresh(force=True)` — same `force=True` rationale as
-    the toolbar's "Open browser" button below, since a stale lock from a forgotten QR window must
-    not silently no-op a user's own deliberate first-run click), then polls `GET /login-status`
+    (`_handle_login_start()` → `trigger_auto_refresh(force=True)` — a deliberate retry bypasses
+    persisted automatic backoff, while a live QR login remains protected), then polls `GET /login-status`
     (`{"ready": SESSION_FILE.exists(), "in_progress": auto_refresh_in_progress()}`) every 2s and
     redirects to `/` once ready.
   - Once `session.json` exists but `config.json` still doesn't, `/` renders the wizard with
@@ -410,10 +409,9 @@ automation. Regenerate the static snapshots with `fetch_word_centers.py` / `fetc
       `auto_click=False` is the important bit: this button is for opening the site or
       troubleshooting, not the reschedule flow, so it lands on `/cases` without clicking through to
       "Zmień termin" — unlike the automatic urgent-slot-hit trigger, which keeps `auto_click=True`
-      so the date-picker is ready the moment the push lands. Why `force=True` here: see the
-      auto-relogin lock gotcha below. `trigger_open_browser()` has no equivalent `force` — forcing
-      there would mean a second Chrome fighting over the same fixed debug port an already-open one
-      is using, so "already_running" is the desired outcome, not something to override.
+      so the date-picker is ready the moment the push lands. Here `force=True` only bypasses
+      persisted automatic backoff; a live QR-login lock still returns "already_running".
+      `trigger_open_browser()` has no equivalent because it does not have automatic retry backoff.
 - `templates.py` — holds `TOOLBAR_HTML`, `LOGIN_PAGE`, and `WIZARD_PAGE`: the three big HTML/JS
   strings `app.py` serves, moved out verbatim since they made up the bulk of that file's line
   count (~1180 of ~1750 lines) with none of its request-handling logic. Plain string
@@ -509,23 +507,18 @@ Chrome that had crashed hours earlier (visible only as a `<defunct>` zombie in `
 screen) left its wrapper spinning forever against a dead debug port, since a permanently-closed
 connection was caught by the same `except Exception: pass` meant to tolerate Chrome being
 mid-navigation — so the lock silently blocked every later `trigger_auto_refresh()` call with
-nothing for the user to notice or close. This only covers a **crashed** Chrome, not a genuinely
-still-open QR window someone forgot about — that case is unchanged and correctly not force-cleared
-by the automatic path; the "Open browser" button's `force=True` is still what clears that one.
+nothing for the user to notice or close. This only covers a **crashed** Chrome. A genuinely
+still-open QR window remains protected: both automatic and manual retries return "already_running"
+instead of closing a login someone may be completing.
 
 That forgotten-window case is a real reported bug, not a hypothetical: `AUTO_REFRESH_LOCK` has no
 timeout (the script waits indefinitely for a QR scan) and the process is detached, so it outlives
 an `app.py` restart — one observed live held the lock for ~10 hours, silently no-opping every later
 `trigger_auto_refresh()` call including the next launch, with nothing to indicate why. That is why
-the *automatic* path stays conservative (a background retry must never kill a window someone is
-mid-scan on) and only the deliberate button click opts into `force`. `force` SIGTERMs the lock
-holder and waits (~5s) for it to actually exit before relaunching: `auto_refresh_session.py`
-installs a SIGTERM handler so its `finally` still runs — without one, Python dies immediately, its
-Chrome child survives as an orphan still holding `PROFILE_DIR`, and the replacement Chrome launched
-against that same `--user-data-dir` delegates to the orphan and exits instantly, tripping "Chrome
-closed before logging in" on every retry. The wait also matters on the systemd path, where
-`--unit=info-kierowca-auto-refresh` is a fixed name systemd-run refuses to reissue while the old
-unit is still deactivating.
+both automatic and deliberate retries preserve a live QR-login process. A manual `force=True`
+only bypasses persisted automatic-failure backoff; it does not SIGTERM the lock holder. Dead or
+malformed lock files are removed before launching a new process, avoiding a replacement Chrome
+fighting over the same `--user-data-dir` as an active process.
 
 ### Known gotcha: a sandboxed app.py silently hands your curls to the real instance
 
