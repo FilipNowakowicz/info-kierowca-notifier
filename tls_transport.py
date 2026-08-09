@@ -8,17 +8,23 @@ requests.
 from __future__ import annotations
 
 import importlib.util
+import logging
 import os
 import ssl
 import sys
+import threading
+import urllib.error
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from functools import lru_cache
-from typing import Mapping, Optional, Tuple
+from typing import Dict, Mapping, Optional, Tuple
 
 
 APP_CA_BUNDLE_ENV = "INFO_KIEROWCA_CA_BUNDLE"
 STANDARD_CA_ENVS = ("SSL_CERT_FILE", "SSL_CERT_DIR")
+_PROBE_USER_AGENT = "info-kierowca-notifier-tls-probe"
+_LOGGER = logging.getLogger(__name__)
 
 
 class TLSConfigurationError(RuntimeError):
@@ -85,15 +91,25 @@ def _context_for_environment(
             )
         try:
             return _verified_context(app_bundle), "app_ca_bundle"
-        except ssl.SSLError as exc:
+        except (OSError, ssl.SSLError) as exc:
             raise TLSConfigurationError(
                 f"{APP_CA_BUNDLE_ENV} is not a usable CA bundle: {exc}"
             ) from exc
 
-    # CPython's default context already honors SSL_CERT_FILE and SSL_CERT_DIR.
-    # Prefer it whenever either is deliberate user configuration.
+    # CPython's default context honors SSL_CERT_FILE and SSL_CERT_DIR. Treat
+    # either variable as authoritative: an obvious bad path must fail closed,
+    # not be hidden by the automatic certifi fallback below.
     if ssl_cert_file or ssl_cert_dir:
-        return _verified_context(), "system_override"
+        if ssl_cert_file and not os.path.isfile(ssl_cert_file):
+            raise TLSConfigurationError("SSL_CERT_FILE does not name a readable file")
+        if ssl_cert_dir and not os.path.isdir(ssl_cert_dir):
+            raise TLSConfigurationError("SSL_CERT_DIR does not name a readable directory")
+        try:
+            return _verified_context(), "system_override"
+        except (OSError, ssl.SSLError) as exc:
+            raise TLSConfigurationError(
+                "The configured SSL_CERT_FILE/SSL_CERT_DIR trust source is unusable"
+            ) from exc
 
     try:
         return _native_context(), "native_truststore"
@@ -108,9 +124,134 @@ def ssl_context() -> ssl.SSLContext:
     return _context_for_environment(_environment_snapshot())[0]
 
 
-def trust_backend() -> str:
-    """Return the selected backend without exposing CA path values."""
-    return _context_for_environment(_environment_snapshot())[1]
+_resolved_contexts: Dict[
+    Tuple[Tuple[Optional[str], ...], str], Tuple[ssl.SSLContext, str]
+] = {}
+_resolution_lock = threading.RLock()
+
+
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Keep the trust probe on the requested origin."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def _origin(url: str) -> Optional[str]:
+    parsed = urllib.parse.urlsplit(url)
+    if parsed.scheme.lower() != "https" or not parsed.hostname:
+        return None
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        raise TLSConfigurationError("HTTPS request contains an invalid port") from exc
+    host = parsed.hostname
+    if ":" in host:
+        host = f"[{host}]"
+    authority = host if port is None else f"{host}:{port}"
+    return f"https://{authority}"
+
+
+def _request_url(request) -> str:
+    if isinstance(request, urllib.request.Request):
+        return request.full_url
+    return str(request)
+
+
+def _is_certificate_verification_error(error: BaseException) -> bool:
+    """Recognize only chain/hostname verification failures, including wrappers."""
+    current: Optional[BaseException] = error
+    seen = set()
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, ssl.SSLCertVerificationError):
+            return True
+        if isinstance(current, urllib.error.URLError) and isinstance(
+            current.reason, BaseException
+        ):
+            current = current.reason
+            continue
+        current = current.__cause__ or current.__context__
+    return False
+
+
+def _probe_verified_origin(origin: str, context: ssl.SSLContext, timeout: float) -> None:
+    """Verify an origin without sending application request data.
+
+    A HEAD request is sent only to the origin root, with redirects disabled,
+    so no request body, credentials, original path, or query string is sent.
+    Any HTTP response proves that the TLS handshake and hostname verification
+    completed successfully; HTTP status is deliberately irrelevant here.
+    """
+    request = urllib.request.Request(
+        f"{origin}/",
+        headers={"User-Agent": _PROBE_USER_AGENT},
+        method="HEAD",
+    )
+    opener = urllib.request.build_opener(
+        urllib.request.ProxyHandler(),
+        urllib.request.HTTPSHandler(context=context),
+        _NoRedirectHandler(),
+    )
+    try:
+        response = opener.open(request, timeout=timeout)
+    except urllib.error.HTTPError as response:
+        # Includes redirect responses because redirects are disabled. TLS has
+        # already succeeded, which is the only result this probe needs.
+        response.close()
+        return
+    else:
+        response.close()
+
+
+def _resolved_context(origin: str, timeout: float) -> Tuple[ssl.SSLContext, str]:
+    environment = _environment_snapshot()
+    key = (environment, origin)
+    with _resolution_lock:
+        cached = _resolved_contexts.get(key)
+        if cached is not None:
+            return cached
+
+        context, backend = _context_for_environment(environment)
+        if backend != "native_truststore":
+            resolved = (context, backend)
+        else:
+            try:
+                _probe_verified_origin(origin, context, timeout)
+                resolved = (context, backend)
+            except Exception as exc:
+                if not _is_certificate_verification_error(exc):
+                    raise
+                fallback = _certifi_context()
+                # A failed fallback probe is surfaced as-is. It is never
+                # replaced by a permissive context or another trust source.
+                _probe_verified_origin(origin, fallback, timeout)
+                resolved = (fallback, "certifi_fallback")
+                hostname = urllib.parse.urlsplit(origin).hostname or "unknown"
+                _LOGGER.warning(
+                    "native certificate verification failed; tls_backend=certifi_fallback host=%s",
+                    hostname,
+                )
+
+        _resolved_contexts[key] = resolved
+        return resolved
+
+
+def trust_backend(url: Optional[str] = None) -> str:
+    """Return the selected backend without exposing CA path values.
+
+    When ``url`` is supplied, report an already-resolved origin fallback if
+    one exists. This lookup does not initiate network traffic.
+    """
+    environment = _environment_snapshot()
+    if url:
+        origin = _origin(url)
+        if origin:
+            with _resolution_lock:
+                resolved = _resolved_contexts.get((environment, origin))
+            if resolved is not None:
+                return resolved[1]
+    return _context_for_environment(environment)[1]
 
 
 def diagnostics() -> TrustDiagnostics:
@@ -134,9 +275,17 @@ def urlopen(request, *, timeout: float):
     HTTP localhost CDP calls can use this too; ``urllib`` ignores the TLS
     context for non-HTTPS URLs.
     """
-    return urllib.request.urlopen(request, timeout=timeout, context=ssl_context())
+    origin = _origin(_request_url(request))
+    if origin is None:
+        return urllib.request.urlopen(request, timeout=timeout, context=ssl_context())
+    context, _backend = _resolved_context(origin, timeout)
+    # This is the only send of the caller's request. Native/certifi selection
+    # has already been resolved with a bodyless, credential-free HEAD probe.
+    return urllib.request.urlopen(request, timeout=timeout, context=context)
 
 
 def reset_for_tests() -> None:
     """Clear the process-local context cache after test environment changes."""
     _context_for_environment.cache_clear()
+    with _resolution_lock:
+        _resolved_contexts.clear()

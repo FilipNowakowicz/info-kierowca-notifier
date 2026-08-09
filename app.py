@@ -582,7 +582,7 @@ def run_tls_smoke():
     with tls_transport.urlopen(req, timeout=15) as response:
         if response.status != 200:
             raise RuntimeError(f"TLS smoke request returned HTTP {response.status}")
-    print(f"Verified HTTPS smoke passed ({tls_transport.trust_backend()}).")
+    print(f"Verified HTTPS smoke passed ({tls_transport.trust_backend(req.full_url)}).")
 
 
 def main():
