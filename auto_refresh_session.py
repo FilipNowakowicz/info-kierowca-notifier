@@ -132,13 +132,18 @@ def sanitize_click_diagnostics(result):
         r"\b\d{6,}\b", matched
     ):
         safe["matched_text"] = "[redacted sensitive text]"
+    for key in ("page_url", "href"):
+        if safe.get(key):
+            safe[key] = re.split(r"[?#]", str(safe[key]), maxsplit=1)[0]
     return safe
 
-# Shared by both scripts below: find the smallest element anywhere on the
-# page whose text contains one of `targets` (checked in that order) and
-# click the nearest real clickable ancestor — login-page rows are often a
-# plain <div> wrapping an icon + label, not a bare <button>/<a>. Once
-# targets[0] (the most specific/downstream one, "Aplikacja mObywatel" — the
+# Shared by both scripts below: find eligible elements anywhere on the page
+# whose text contains one of `targets` (checked in that order) and resolve
+# them to the nearest real clickable ancestor — login-page rows are often a
+# plain <div> wrapping an icon + label, not a bare <button>/<a>. Matching
+# descendants resolving to the same control are deduplicated; one uniquely
+# exact control wins, while multiple distinct plausible controls fail safely.
+# Once targets[0] (the most specific/downstream one, "Aplikacja mObywatel" — the
 # tile that lands on the QR page itself) gets clicked, a sessionStorage flag
 # is set so neither this function nor its callers try again: sessionStorage
 # survives same-origin navigations (including the browser back button), so
@@ -181,27 +186,41 @@ function __ikw_pageIsKnownError() {
     body.indexOf('został już użyty') !== -1 || body.indexOf('zostal juz uzyty') !== -1 ||
     body.indexOf('strona błędu') !== -1 || body.indexOf('strona bledu') !== -1;
 }
-function __ikw_isExcludedControl(el) {
+function __ikw_hasExcludedStructure(el) {
   var cur = el;
   for (var i = 0; i < 8 && cur; i++, cur = cur.parentElement) {
     var tag = (cur.tagName || '').toLowerCase();
     var identity = ((cur.id || '') + ' ' + (cur.className || '') + ' ' +
       (cur.getAttribute('role') || '') + ' ' + (cur.getAttribute('aria-label') || '')).toLowerCase();
-    var href = (cur.href || cur.getAttribute('href') || '').toLowerCase();
-    var text = __ikw_text(cur).toLowerCase();
-    if (tag === 'header' || tag === 'footer' || tag === 'app-logo' ||
+    if (tag === 'header' || tag === 'footer' || tag === 'nav' || tag === 'app-logo' ||
         tag === 'app-wk-footer' || tag === 'app-wk-language-switcher' ||
-        /(^|[ _-])(logo|footer|header|language|lang|go-back|back)([ _-]|$)/.test(identity) ||
-        /\b(wstecz|powrót|powrot|back|cofnij|język|jezyk|language)\b/.test(text) ||
-        /\b(załóż|zaloz|utwórz|utworz|create account|przypomnij|reminder|forgot password|nie pamiętam|nie pamietam|polityka|privacy|pomoc|help|regulamin|terms)\b/.test(text)) {
+        /(^|[ _-])(logo|footer|header|navigation|nav|language|lang|go-back|back|help|policy|terms)([ _-]|$)/.test(identity)) {
       return true;
     }
-    // A regular gov.pl information link is not an authentication chooser.
-    // login.gov.pl remains eligible; it is part of the expected login route.
-    if (/https?:\/\/([^/]*\.)?gov\.pl(?:[/:]|$)/.test(href) &&
-        href.indexOf('login.gov.pl') === -1) return true;
   }
   return false;
+}
+function __ikw_hasExcludedText(el) {
+  var text = __ikw_text(el).toLowerCase();
+  return /\b(wstecz|powrót|powrot|back|cofnij|język|jezyk|language)\b/.test(text) ||
+    /\b(załóż konto|zaloz konto|utwórz konto|utworz konto|create account|przypomnij hasło|przypomnij haslo|password reminder|forgot password|nie pamiętam hasła|nie pamietam hasla|polityka|privacy|pomoc|help|regulamin|terms)\b/.test(text);
+}
+function __ikw_hasUnrelatedGovHref(el) {
+  var href = (el && (el.href || el.getAttribute('href')) || '').toLowerCase();
+  if (!href) return false;
+  try {
+    var host = new URL(href, location.href).hostname.toLowerCase();
+    return (host === 'gov.pl' || host.endsWith('.gov.pl')) &&
+      host !== 'login.gov.pl' && !host.endsWith('.login.gov.pl');
+  } catch (e) { return false; }
+}
+function __ikw_isExcludedControl(candidate, clickable) {
+  clickable = clickable || __ikw_clickableAncestor(candidate);
+  return __ikw_hasExcludedStructure(candidate) ||
+    (clickable !== candidate && __ikw_hasExcludedStructure(clickable)) ||
+    __ikw_hasExcludedText(candidate) ||
+    (clickable !== candidate && __ikw_hasExcludedText(clickable)) ||
+    __ikw_hasUnrelatedGovHref(clickable);
 }
 function __ikw_diagnostics(label, matched, el, reason) {
   var href = el ? (el.href || el.getAttribute('href') || '') : '';
@@ -227,20 +246,27 @@ function __ikw_clickByText(label, selector, exact, requireEnabled) {
   var wanted = label.toLowerCase();
   for (var i = 0; i < all.length; i++) {
     var el = all[i], matched = __ikw_text(el);
-    if (!__ikw_isVisible(el) || __ikw_isExcludedControl(el) || !matched) continue;
+    if (!__ikw_isVisible(el) || !matched) continue;
     if ((exact && matched !== label) || (!exact && matched.toLowerCase().indexOf(wanted) === -1)) continue;
     if (requireEnabled && (el.disabled || el.getAttribute('aria-disabled') === 'true')) continue;
     var clickable = __ikw_clickableAncestor(el);
-    if (!clickable || __ikw_isExcludedControl(clickable)) continue;
+    if (!clickable || __ikw_isExcludedControl(el, clickable)) continue;
     var duplicate = false;
     for (var c = 0; c < candidates.length; c++) {
-      if (candidates[c][0] === clickable) { duplicate = true; break; }
+      if (candidates[c][0] === clickable) {
+        if (matched.toLowerCase() === wanted || matched.length < candidates[c][1].length) {
+          candidates[c] = [clickable, matched, matched.toLowerCase() === wanted];
+        }
+        duplicate = true; break;
+      }
     }
-    if (!duplicate) candidates.push([clickable, matched]);
+    if (!duplicate) candidates.push([clickable, matched, matched.toLowerCase() === wanted]);
   }
   if (!candidates.length) return __ikw_diagnostics(label, '', null, 'not_found');
-  candidates.sort(function(a, b) { return a[1].length - b[1].length; });
-  if (candidates.length > 1 && candidates[0][1].length === candidates[1][1].length) {
+  var exactCandidates = candidates.filter(function(candidate) { return candidate[2]; });
+  if (exactCandidates.length === 1) {
+    candidates = exactCandidates;
+  } else if (candidates.length > 1) {
     return __ikw_diagnostics(label, '', null, 'ambiguous_match');
   }
   var best = candidates[0], result = __ikw_diagnostics(label, best[1], best[0], 'clicked');
@@ -267,32 +293,30 @@ function __ikw_findAndClick(targets) {
       // elements, so a not-yet-revealed tile that's already in the DOM
       // (common in SPA choosers that toggle visibility via a class rather
       // than mounting/unmounting) must not be matched via that fallback.
-      if (!__ikw_isVisible(el) || __ikw_isExcludedControl(el)) continue;
+      if (!__ikw_isVisible(el)) continue;
       var t = __ikw_text(el);
       if (t && t.length < 200 && t.toLowerCase().indexOf(text.toLowerCase()) !== -1) {
-        // <=, not <: querySelectorAll returns document order, so an outer
-        // wrapper div is always seen before the inner button/span it wraps.
-        // When their trimmed text is the same length (the wrapper contains
-        // nothing but that one label), a strict < would keep the first
-        // (outer, usually non-clickable) match instead of the more
-        // specific inner one -- and __ikw_clickableAncestor only walks
-        // *up* from whatever's picked, so it would never reach the real
-        // clickable element in that case.
+        // Multiple descendants can carry the same label. Resolve them first
+        // so they count as one candidate when they belong to one control.
         var clickable = __ikw_clickableAncestor(el);
-        if (!clickable || __ikw_isExcludedControl(clickable)) continue;
+        if (!clickable || __ikw_isExcludedControl(el, clickable)) continue;
         var duplicate = false;
         for (var c = 0; c < candidates.length; c++) {
           if (candidates[c][0] === clickable) {
-            if (t.length < candidates[c][1].length) candidates[c] = [clickable, t];
+            if (t.toLowerCase() === text.toLowerCase() || t.length < candidates[c][1].length) {
+              candidates[c] = [clickable, t, t.toLowerCase() === text.toLowerCase()];
+            }
             duplicate = true; break;
           }
         }
-        if (!duplicate) candidates.push([clickable, t]);
+        if (!duplicate) candidates.push([clickable, t, t.toLowerCase() === text.toLowerCase()]);
       }
     }
     if (candidates.length) {
-      candidates.sort(function(a, b) { return a[1].length - b[1].length; });
-      if (candidates.length > 1 && candidates[0][1].length === candidates[1][1].length) {
+      var exactCandidates = candidates.filter(function(candidate) { return candidate[2]; });
+      if (exactCandidates.length === 1) {
+        candidates = exactCandidates;
+      } else if (candidates.length > 1) {
         return __ikw_diagnostics(text, '', null, 'ambiguous_match');
       }
       var best = candidates[0];

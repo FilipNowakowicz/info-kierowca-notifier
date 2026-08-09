@@ -273,14 +273,36 @@ def set_cookies(host, port, cookies):
         cdp_call(sock, 1, "Storage.setCookies", {"cookies": cookie_params})
 
 
-def create_page_target(host, port, url="about:blank"):
-    """Create and return a new page target without depending on tab order."""
+def create_page_target(
+    host, port, url="about:blank", *, registration_timeout=1.5,
+    poll_interval=0.05, monotonic=None, sleep=None,
+):
+    """Create and return a new page target without depending on tab order.
+
+    Chrome can acknowledge ``Target.createTarget`` just before the new page
+    appears in ``/json``.  Poll only for the returned target ID for a short,
+    bounded interval; never substitute another page while registration is in
+    flight.  The clock and sleeper are injectable for deterministic tests.
+    """
     with cdp_socket(browser_ws_url(host, port)) as sock:
         result = cdp_call(sock, 1, "Target.createTarget", {"url": url})
     target_id = result.get("targetId")
     if not target_id:
         raise RuntimeError("Chrome did not return a target ID for the new tab")
-    return get_page_target(host, port, target_id)
+    monotonic = monotonic or time.monotonic
+    sleep = sleep or time.sleep
+    deadline = monotonic() + max(0, registration_timeout)
+    while True:
+        try:
+            return get_page_target(host, port, target_id)
+        except StaleTargetError:
+            remaining = deadline - monotonic()
+            if remaining <= 0:
+                raise TargetNotFoundError(
+                    f"Created CDP page target {target_id!r} did not register "
+                    f"within {registration_timeout:g} seconds"
+                )
+            sleep(min(max(0, poll_interval), remaining))
 
 
 def _target_id(target):
