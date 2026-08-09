@@ -32,6 +32,7 @@ import urllib.request
 from pathlib import Path
 
 import cdp_client
+import tls_transport
 
 from paths import AUTO_REFRESH_LOCK as LOCK_FILE  # noqa: E402
 from paths import CONFIG_FILE, STATE_DIR  # noqa: E402,F401
@@ -384,7 +385,7 @@ def push_ntfy(title, message, priority="default", tags=None):
         f"https://ntfy.sh/{topic}", data=message.encode("utf-8"), headers=headers, method="POST"
     )
     try:
-        with urllib.request.urlopen(req, timeout=15):
+        with tls_transport.urlopen(req, timeout=15):
             pass
     except Exception:
         pass

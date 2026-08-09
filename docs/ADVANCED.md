@@ -2,13 +2,22 @@
 
 This covers running info-kierowca-notifier from source instead of the downloaded binaries
 described in the main [README](../README.md) — for Linux systemd users, developers, or anyone
-who'd rather not run a downloaded binary. Requires Python 3.9+ and nothing else — zero *runtime*
-dependencies (the release binaries are built with PyInstaller, a build-time-only tool, so this
-claim still holds either way).
+who'd rather not run a downloaded binary. Requires Python 3.9+ and the two small HTTPS-trust
+dependencies declared in `pyproject.toml`. The release binaries package those dependencies, so
+they still need no Python installation or extra setup.
 
 ## Setup
 
-1. Copy the example config files into `~/.config/info-kierowca-notifier/` (this works the same
+1. Install the verified HTTPS trust dependencies:
+
+   ```
+   uv sync
+   ```
+
+   On Python 3.10+, `truststore` uses the native Windows/macOS/Linux trust store. Python 3.9
+   securely uses the bundled `certifi` CA set instead.
+
+2. Copy the example config files into `~/.config/info-kierowca-notifier/` (this works the same
    way on Windows, macOS and Linux — Python resolves `~` to your user profile folder either way).
 
    **Linux / macOS:**
@@ -27,7 +36,7 @@ claim still holds either way).
    ```
    (no `chmod` equivalent needed — the folder is already private to your Windows user account)
 
-2. Get your session cookies into `session.json`. The notifier refreshes these itself on every run,
+3. Get your session cookies into `session.json`. The notifier refreshes these itself on every run,
    so you only need to do this once — and again if the session is ever invalidated (e.g. by
    logging in fresh elsewhere).
 
@@ -36,7 +45,7 @@ claim still holds either way).
    `auth_expired` outcome (session cookie expiry — see [Auto-relogin on session
    expiry](#auto-relogin-on-session-expiry) below):
    ```
-   python auto_refresh_session.py
+   uv run python auto_refresh_session.py
    ```
    It launches Chrome in its own throwaway profile (your regular Chrome windows stay open), clicks
    through the gov.pl → "Aplikacja mObywatel" login chooser on its own, then waits — indefinitely,
@@ -49,7 +58,7 @@ claim still holds either way).
    script:
    ```
    google-chrome --remote-debugging-port=9222   # macOS: .../Google Chrome.app/Contents/MacOS/Google Chrome
-   python pull_session_cookies.py
+   uv run python pull_session_cookies.py
    ```
    It talks to Chrome over that debug port on `127.0.0.1` only, pulls the `__Secure-PUDOJT` and
    `__Secure-PUDOJTMD` cookies for info-kierowca.pl, and writes them straight to `session.json`.
@@ -62,7 +71,7 @@ claim still holds either way).
    Application/Storage → Cookies, and copy the `__Secure-PUDOJT` and `__Secure-PUDOJTMD` values
    into `session.json` by hand.
 
-3. Edit `config.json` (or, once it's running, use the **Settings** button on the dashboard — same
+4. Edit `config.json` (or, once it's running, use the **Settings** button on the dashboard — same
    form, prefilled with your current values, saves straight back to `config.json`):
 
    | Field | Meaning |
@@ -83,12 +92,12 @@ claim still holds either way).
    Slots are only ever considered within 31 days out — that's a hard line on info-kierowca.pl
    itself, not something this project can (or needs to) make configurable.
 
-4. Run it — pick whichever fits your OS:
+5. Run it — pick whichever fits your OS:
 
    **Option A — `app.py` (the same all-in-one wizard + dashboard + Quit button the downloaded
    binaries run, just from source):**
    ```
-   python app.py
+   uv run python app.py
    ```
    Opens a browser tab automatically; if `config.json` doesn't exist yet it replaces steps 1-3
    above with an in-browser setup wizard (using real WORD center names — see `word_centers.json` /
@@ -98,7 +107,7 @@ claim still holds either way).
 
    **Option B — built-in loop (works on Windows, macOS, Linux):**
    ```
-   python notifier.py --loop
+   uv run python notifier.py --loop
    ```
    Leave this running in a terminal, or set your OS to start it in the background for you (e.g. a
    Windows Task Scheduler task running at log-on, or a macOS `launchd` agent). It checks on
@@ -112,21 +121,21 @@ claim still holds either way).
    systemctl --user daemon-reload
    systemctl --user enable --now info-kierowca-notifier.timer
    ```
-   The units run `python3` via `/usr/bin/env` and assume the repo is cloned to `~/infokierowca`. If
-   you cloned it elsewhere, edit the path at the end of each `ExecStart=` line in the two
-   `.service` files first. If `env` can't find `python3` (some minimal setups), add its directory
-   to the `Environment=PATH=` line in those files.
+   The units run the locked uv environment and assume the repo is cloned to `~/infokierowca`.
+   Run `uv sync` first. If you cloned it elsewhere, edit `WorkingDirectory=` in each `.service`
+   file before copying it; if the user service cannot find `uv`, add its directory to the unit's
+   `Environment=PATH=` line.
 
-5. If you used Option A, the dashboard is already running — skip this step. Otherwise, start it
+6. If you used Option A, the dashboard is already running — skip this step. Otherwise, start it
    separately (same command on every OS — plain Python, no extra setup):
    ```
-   python dashboard_server.py
+   uv run python dashboard_server.py
    ```
    Then open `http://127.0.0.1:8787` for a local read-only view of the current status and history.
    It's bound to localhost only. On Linux you can instead run this as the included
    `info-kierowca-dashboard.service` unit.
 
-6. Install the [ntfy app](https://ntfy.sh/app) on your phone and subscribe to your `ntfy_topic` to
+7. Install the [ntfy app](https://ntfy.sh/app) on your phone and subscribe to your `ntfy_topic` to
    get pushes.
 
 **Note:** desktop error notifications use `notify-send` and only work on Linux. On Windows/macOS
@@ -137,6 +146,15 @@ you won't get a popup on errors — check the dashboard or the log file instead,
 asleep, DNS down), the dashboard shows a plain "Offline" and the next check just retries — no
 desktop notification, no red error state. Only responses that actually came back from the server
 are treated as problems worth interrupting you about.
+
+### HTTPS trust troubleshooting
+
+HTTPS certificate and hostname verification is always required. For an unusual Linux layout or a
+corporate CA, first use the standard `SSL_CERT_FILE` / `SSL_CERT_DIR` environment variables. An
+application-specific `INFO_KIEROWCA_CA_BUNDLE` file is also supported and takes precedence. A bad
+explicit bundle fails closed; check `notifier.log` for the selected trust backend and safe
+diagnostics (platform, OpenSSL version, and which override variables were set). Never work around
+such an error by disabling certificate verification.
 
 ## Auto-relogin on session expiry
 
@@ -183,7 +201,7 @@ see `current_slot_date`), pre-authenticated with your saved session, and click
 through the first two steps of changing that booking's date:
 
 ```
-python open_logged_in_browser.py   # or let a slot hit trigger it automatically
+uv run python open_logged_in_browser.py   # or let a slot hit trigger it automatically
 ```
 
 It launches Chrome in its own dedicated profile (a separate `--remote-debugging-port` from

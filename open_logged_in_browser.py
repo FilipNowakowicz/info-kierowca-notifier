@@ -31,6 +31,7 @@ from datetime import datetime
 
 import auto_refresh_session
 import cdp_client
+import tls_transport
 from auto_refresh_session import find_chrome
 
 from paths import CONFIG_FILE, RESCHEDULE_CONFIRM_COOLDOWN_FILE, STATE_DIR  # noqa: E402
@@ -329,7 +330,7 @@ def push_ntfy(topic, title, message, priority="default"):
     headers = {"Title": title, "Priority": priority}
     req = urllib.request.Request(url, data=message.encode("utf-8"), headers=headers, method="POST")
     try:
-        with urllib.request.urlopen(req, timeout=NTFY_TIMEOUT):
+        with tls_transport.urlopen(req, timeout=NTFY_TIMEOUT):
             pass
     except Exception as e:
         print(f"Couldn't send push notification ({e!r}).")

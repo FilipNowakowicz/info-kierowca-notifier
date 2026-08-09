@@ -25,8 +25,32 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - run: pip install pyinstaller==6.21.0
-      - run: pyinstaller pyinstaller.spec
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --locked --group dev
+      - run: uv run --no-sync pyinstaller pyinstaller.spec
+      - name: Verify packaged TLS policy
+        shell: bash
+        run: |
+          uv run --no-sync python - <<'PY'
+          import ast
+          from pathlib import Path
+
+          forbidden = ("_create_unverified_context", "CERT_NONE")
+          for path in Path(".").glob("*.py"):
+              source = path.read_text(encoding="utf-8")
+              if any(token in source for token in forbidden):
+                  raise SystemExit(f"insecure TLS API found in {path}")
+              tree = ast.parse(source, filename=str(path))
+              for node in ast.walk(tree):
+                  if isinstance(node, ast.Assign):
+                      if any(isinstance(target, ast.Attribute) and target.attr == "check_hostname"
+                             for target in node.targets):
+                          if isinstance(node.value, ast.Constant) and node.value.value is False:
+                              raise SystemExit(f"hostname verification disabled in {path}")
+          PY
+      - name: Smoke-test verified HTTPS in packaged binary
+        shell: bash
+        run: '"dist/${{ matrix.dist_name }}" --internal-tls-smoke'
       - name: Rename artifact
         shell: bash
         run: mv "dist/${{ matrix.dist_name }}" "${{ matrix.asset_name }}"
