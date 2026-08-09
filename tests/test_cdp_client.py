@@ -67,6 +67,65 @@ class CdpTargetTests(unittest.TestCase):
             target = cdp_client.create_page_target("h", 1)
         self.assertEqual(target, cdp_client.PageTarget.from_cdp(created))
 
+    def _create_with_registration_sequence(self, target_lists, *, timeout=1.5):
+        created_id = "created-exact-id"
+        calls = []
+        clock = [0.0]
+
+        @contextlib.contextmanager
+        def fake_socket(url):
+            self.assertEqual(url, "ws://browser")
+            yield object()
+
+        def list_targets(host, port):
+            calls.append([target.id for target in target_lists[0]])
+            current = target_lists.pop(0) if len(target_lists) > 1 else target_lists[0]
+            return current
+
+        def sleep(delay):
+            clock[0] += delay
+
+        with patch("cdp_client.browser_ws_url", return_value="ws://browser"), patch(
+            "cdp_client.cdp_socket", fake_socket
+        ), patch("cdp_client.cdp_call", return_value={"targetId": created_id}), patch(
+            "cdp_client.list_page_targets", side_effect=list_targets
+        ):
+            target = cdp_client.create_page_target(
+                "h", 1, registration_timeout=timeout, poll_interval=0.25,
+                monotonic=lambda: clock[0], sleep=sleep,
+            )
+        return target, calls
+
+    def test_create_page_target_tolerates_delayed_registration(self):
+        unrelated = cdp_client.PageTarget("other", "about:blank", "", "ws://other")
+        created = cdp_client.PageTarget(
+            "created-exact-id", "about:blank", "", "ws://created"
+        )
+        target, calls = self._create_with_registration_sequence(
+            [[unrelated], [unrelated], [unrelated, created]]
+        )
+        self.assertEqual(target, created)
+        self.assertEqual(len(calls), 3)
+
+    def test_create_page_target_never_returns_unrelated_tab_while_waiting(self):
+        unrelated = cdp_client.PageTarget("other", "about:blank", "", "ws://other")
+        created = cdp_client.PageTarget(
+            "created-exact-id", "about:blank", "", "ws://created"
+        )
+        target, calls = self._create_with_registration_sequence(
+            [[unrelated], [cdp_client.PageTarget("new-other", "", "", "ws://new")], [created]]
+        )
+        self.assertEqual(target.id, "created-exact-id")
+        self.assertEqual(calls[0], ["other"])
+        self.assertEqual(calls[1], ["new-other"])
+
+    def test_create_page_target_times_out_when_exact_id_never_appears(self):
+        unrelated = cdp_client.PageTarget("other", "about:blank", "", "ws://other")
+        with self.assertRaisesRegex(
+            cdp_client.TargetNotFoundError, "created-exact-id.*did not register"
+        ):
+            self._create_with_registration_sequence([[unrelated]], timeout=0.5)
+
     def test_stale_target_fails_safely_before_socket_is_opened(self):
         target = cdp_client.find_page_target("h", 1, target_id="ikw")
         self.targets = [x for x in self.targets if x["id"] != "ikw"]

@@ -1,5 +1,8 @@
 import contextlib
 import io
+import json
+import shutil
+import subprocess
 import unittest
 from unittest.mock import patch
 
@@ -11,13 +14,137 @@ class BrowserClickSafetyTests(unittest.TestCase):
     def test_shared_helpers_reject_sensitive_or_unrelated_controls(self):
         js = auto_refresh_session.CLICKABLE_HELPERS_JS
         for expected in (
-            "tag === 'header'", "tag === 'footer'", "logo|footer|header|language",
-            "załóż", "przypomnij", "polityka", "help|regulamin|terms",
+            "tag === 'header'", "tag === 'footer'", "tag === 'nav'",
+            "logo|footer|header|navigation|nav|language",
+            "__ikw_hasExcludedText", "załóż konto", "nie pamiętam hasła",
             "login.gov.pl", "__ikw_pageIsKnownError", "known_error_page",
             r"\b(wstecz", "new URL(href, location.href)", "__ikw_safeMatchedText",
             "[redacted sensitive text]",
         ):
             self.assertIn(expected, js)
+
+    def _run_click_scenario(self, elements, label, *, known_error=False):
+        if not shutil.which("node"):
+            self.skipTest("Node.js is required for browser-helper behavior tests")
+        harness = r"""
+const clicked = [];
+function makeElement(spec, parent) {
+  const el = {
+    tagName: (spec.tag || 'DIV').toUpperCase(), id: spec.id || '',
+    className: spec.className || '', innerText: spec.text || '',
+    textContent: spec.text || '', parentElement: parent || null,
+    href: spec.href || '', disabled: !!spec.disabled,
+    offsetWidth: spec.hidden ? 0 : 10, offsetHeight: spec.hidden ? 0 : 10,
+    getClientRects: () => spec.hidden ? [] : [1],
+    getAttribute: function(name) {
+      if (name === 'href') return this.href;
+      if (name === 'role') return spec.role || '';
+      if (name === 'aria-label') return spec.ariaLabel || '';
+      if (name === 'aria-disabled') return spec.ariaDisabled || '';
+      return '';
+    },
+    click: () => clicked.push(spec.name || spec.text || spec.tag || 'element')
+  };
+  el._cursor = spec.cursor || '';
+  return el;
+}
+const specs = SCENARIO.elements;
+const made = {};
+function build(name) {
+  if (made[name]) return made[name];
+  const spec = specs[name];
+  return made[name] = makeElement(spec, spec.parent ? build(spec.parent) : null);
+}
+Object.keys(specs).forEach(build);
+global.window = {getComputedStyle: el => ({
+  display: 'block', visibility: 'visible', opacity: '1', cursor: el._cursor
+})};
+global.location = {origin: 'https://login.gov.pl', pathname: '/auth', hostname: 'login.gov.pl', href: 'https://login.gov.pl/auth?otp=123456'};
+global.document = {
+  body: makeElement({tag: 'body', text: SCENARIO.knownError ? 'Strona błędu' : ''}),
+  querySelector: () => SCENARIO.knownError ? {} : null,
+  querySelectorAll: () => (SCENARIO.candidates || Object.keys(specs)).map(name => made[name])
+};
+RESULT = __ikw_clickByText(SCENARIO.label, 'button, a, [role="button"]', false, false);
+console.log(JSON.stringify({result: RESULT, clicked}));
+"""
+        scenario = {"elements": elements, "label": label, "knownError": known_error}
+        script = (
+            "const SCENARIO = " + json.dumps(scenario, ensure_ascii=False) + ";\n" +
+            auto_refresh_session.CLICKABLE_HELPERS_JS + "\n" + harness
+        )
+        completed = subprocess.run(
+            ["node", "-e", script], check=True, capture_output=True, text=True
+        )
+        return json.loads(completed.stdout)
+
+    def test_login_button_is_not_rejected_by_sibling_recovery_links(self):
+        result = self._run_click_scenario({
+            "form": {"tag": "form", "text": "Zaloguj się Nie pamiętam hasła? Załóż konto"},
+            "login": {"tag": "button", "text": "Zaloguj się", "parent": "form", "name": "login"},
+            "forgot": {"tag": "a", "text": "Nie pamiętam hasła?", "parent": "form"},
+            "create": {"tag": "a", "text": "Załóż konto", "parent": "form"},
+        }, "Zaloguj się")
+        self.assertTrue(result["result"]["clicked"])
+        self.assertEqual(result["clicked"], ["login"])
+
+    def test_dangerous_textual_control_is_rejected(self):
+        result = self._run_click_scenario({
+            "forgot": {"tag": "a", "text": "Nie pamiętam hasła?", "name": "forgot"},
+        }, "Nie pamiętam hasła")
+        self.assertEqual(result["result"]["reason"], "not_found")
+        self.assertEqual(result["clicked"], [])
+
+    def test_header_and_footer_controls_are_rejected(self):
+        for region in ("header", "footer"):
+            with self.subTest(region=region):
+                result = self._run_click_scenario({
+                    "region": {"tag": region, "text": "Zaloguj się"},
+                    "login": {"tag": "button", "text": "Zaloguj się", "parent": "region"},
+                }, "Zaloguj się")
+                self.assertEqual(result["result"]["reason"], "not_found")
+
+    def test_unrelated_gov_link_is_rejected_but_login_gov_is_eligible(self):
+        unrelated = self._run_click_scenario({
+            "link": {"tag": "a", "text": "Zaloguj się", "href": "https://www.gov.pl/help"},
+        }, "Zaloguj się")
+        self.assertEqual(unrelated["result"]["reason"], "not_found")
+        login = self._run_click_scenario({
+            "link": {"tag": "a", "text": "Zaloguj się", "href": "https://login.gov.pl/auth", "name": "login"},
+        }, "Zaloguj się")
+        self.assertTrue(login["result"]["clicked"])
+
+    def test_distinct_matching_controls_are_ambiguous(self):
+        result = self._run_click_scenario({
+            "first": {"tag": "button", "text": "Zaloguj przez bank"},
+            "second": {"tag": "button", "text": "Zaloguj przez aplikację"},
+        }, "Zaloguj")
+        self.assertEqual(result["result"]["reason"], "ambiguous_match")
+        self.assertEqual(result["clicked"], [])
+
+    def test_matching_descendants_resolving_to_one_button_are_deduplicated(self):
+        result = self._run_click_scenario({
+            "button": {"tag": "button", "text": "Zaloguj się", "name": "button"},
+            "label": {"tag": "span", "text": "Zaloguj się", "parent": "button"},
+        }, "Zaloguj się")
+        self.assertTrue(result["result"]["clicked"])
+        self.assertEqual(result["clicked"], ["button"])
+
+    def test_known_error_page_remains_non_clickable(self):
+        result = self._run_click_scenario({
+            "login": {"tag": "button", "text": "Zaloguj się"},
+        }, "Zaloguj się", known_error=True)
+        self.assertEqual(result["result"]["reason"], "known_error_page")
+        self.assertEqual(result["clicked"], [])
+
+    def test_browser_diagnostics_redact_sensitive_text_and_query_strings(self):
+        result = self._run_click_scenario({
+            "otp": {"tag": "button", "text": "OTP 123456", "href": "https://login.gov.pl/next?otp=123456"},
+        }, "OTP")
+        diagnostics = result["result"]
+        self.assertEqual(diagnostics["matched_text"], "[redacted sensitive text]")
+        self.assertEqual(diagnostics["page_url"], "https://login.gov.pl/auth")
+        self.assertEqual(diagnostics["href"], "https://login.gov.pl/next")
 
     def test_auto_click_returns_structured_diagnostics_only_when_clicked(self):
         clicked = {
@@ -36,10 +163,15 @@ class BrowserClickSafetyTests(unittest.TestCase):
 
     def test_sensitive_matched_text_is_redacted_before_returning_or_logging(self):
         result = auto_refresh_session.sanitize_click_diagnostics(
-            {"clicked": True, "matched_text": "PKK 12345678901", "page_url": "https://login.gov.pl/path"}
+            {
+                "clicked": True, "matched_text": "PKK 12345678901",
+                "page_url": "https://login.gov.pl/path?otp=123456",
+                "href": "https://login.gov.pl/next?pesel=12345678901",
+            }
         )
         self.assertEqual(result["matched_text"], "[redacted sensitive text]")
         self.assertEqual(result["page_url"], "https://login.gov.pl/path")
+        self.assertEqual(result["href"], "https://login.gov.pl/next")
 
     def test_safe_matched_text_is_preserved(self):
         result = auto_refresh_session.sanitize_click_diagnostics(
