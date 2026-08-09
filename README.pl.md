@@ -20,6 +20,22 @@ Od tej pory otwarta karta przeglądarki jest Twoim panelem; znajduje się w niej
 
 ## Jak to działa
 
+### Uwierzytelnianie
+
+Ekran konfiguracji oferuje logowanie kodem QR mObywatel oraz w pełni
+automatyczne logowanie przez Profil Zaufany. Hasło Profilu Zaufanego jest
+zapisywane wyłącznie w bezpiecznym magazynie systemu operacyjnego (Menedżer
+poświadczeń Windows, Pęk kluczy macOS lub obsługiwana usługa Secret Service w
+Linuksie), nigdy w `config.json` ani w źródle strony. Jednorazowo sparuj Google
+Messages Web w dedykowanym profilu Chrome aplikacji, aby podczas automatycznego
+logowania można było odczytać świeżą wiadomość weryfikacyjną PZePUAP. Gdy
+bezpieczny magazyn poświadczeń jest niedostępny, konfiguracja kończy się
+bezpiecznym błędem bez zapisu hasła jawnym tekstem.
+
+Struktura stron rządowych i Google może się zmienić. Użyj w Ustawieniach opcji
+**Sparuj Google Messages Web** oraz **Przetestuj odczyt SMS**, a przed włączeniem
+trybu bezobsługowego obserwuj jedno pełne logowanie na żywo.
+
 Program sprawdza te same dwa endpointy, których używa strona info-kierowca.pl do wyświetlania terminów. Robi to automatycznie, według zegara, zamiast ręcznego odświeżania strony. Sprawdzanie jest ściśle tylko do odczytu: nie rezerwuje ani nie wykonuje żadnego działania poza sprawdzeniem dostępności.
 
 Jeśli włączysz pomoc przy zmianie terminu (domyślnie włączona, przełącznik `auto_open_browser`), pasujący termin otworzy także zalogowane okno Chrome na ekranie „zmień termin” istniejącej rezerwacji. Domyślnie program zatrzymuje się tam, na pustym wyborze zakresu dat, bez wysyłania danych — nową datę wybierasz i potwierdzasz ręcznie. W Ustawienia → Automatyzacja są dwa kolejne przełączniki, oba domyślnie wyłączone: pierwszy wybiera pasujący termin i przechodzi do podsumowania, drugi — wymagający pierwszego i własnego okna potwierdzenia przed włączeniem — również go potwierdza, faktycznie wysyłając zmianę rezerwacji bez kliknięcia użytkownika. Dokładny opis kliknięć i uzasadnienie znajdują się w [docs/ADVANCED.md](docs/ADVANCED.md). Nigdy nie włączaj drugiej opcji, zanim nie sprawdzisz, że wybór terminu działa niezawodnie.

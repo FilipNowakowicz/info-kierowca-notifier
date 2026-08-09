@@ -1,0 +1,84 @@
+"""Secure operating-system storage for Profil Zaufany credentials."""
+import keyring
+from keyring.backend import KeyringBackend
+from keyring.errors import KeyringError, NoKeyringError
+
+SERVICE_NAME = "info-kierowca-notifier/profil-zaufany"
+
+
+class CredentialStorageUnavailable(RuntimeError):
+    pass
+
+
+class CredentialNotFound(RuntimeError):
+    pass
+
+
+class SecureCredentialStore:
+    def __init__(self, backend=None):
+        self._require_native = backend is None
+        self.backend = backend or keyring.get_keyring()
+
+    def _require_secure_backend(self):
+        backend = self.backend
+        try:
+            priority = backend.priority
+        except Exception as exc:
+            raise CredentialStorageUnavailable(
+                "Secure operating-system credential storage is unavailable."
+            ) from exc
+        if not isinstance(backend, KeyringBackend) or priority <= 0:
+            raise CredentialStorageUnavailable(
+                "Secure operating-system credential storage is unavailable."
+            )
+        module = type(backend).__module__
+        allowed = ("keyring.backends.Windows", "keyring.backends.macOS",
+                   "keyring.backends.SecretService", "keyring.backends.libsecret",
+                   "keyring.backends.kwallet")
+        if self._require_native and not module.startswith(allowed):
+            raise CredentialStorageUnavailable(
+                "A supported secure operating-system credential store is unavailable."
+            )
+        return backend
+
+    def available(self):
+        try:
+            self._require_secure_backend()
+            return True
+        except CredentialStorageUnavailable:
+            return False
+
+    def save(self, username, password):
+        if not username or not password:
+            raise ValueError("Profil Zaufany username and password are required.")
+        try:
+            self._require_secure_backend().set_password(SERVICE_NAME, username, password)
+        except (KeyringError, NoKeyringError) as exc:
+            raise CredentialStorageUnavailable(
+                "Secure operating-system credential storage is unavailable."
+            ) from exc
+
+    def get(self, username):
+        try:
+            value = self._require_secure_backend().get_password(SERVICE_NAME, username)
+        except (KeyringError, NoKeyringError) as exc:
+            raise CredentialStorageUnavailable(
+                "Secure operating-system credential storage is unavailable."
+            ) from exc
+        if value is None:
+            raise CredentialNotFound("No saved Profil Zaufany password was found.")
+        return value
+
+    def delete(self, username):
+        if not username:
+            return
+        try:
+            backend = self._require_secure_backend()
+            if backend.get_password(SERVICE_NAME, username) is not None:
+                backend.delete_password(SERVICE_NAME, username)
+        except CredentialNotFound:
+            return
+        except (KeyringError, NoKeyringError) as exc:
+            raise CredentialStorageUnavailable(
+                "Secure operating-system credential storage is unavailable."
+            ) from exc

@@ -167,6 +167,12 @@ def browser_ws_url(host, port):
         return json.loads(resp.read())["webSocketDebuggerUrl"]
 
 
+def close_browser(host, port):
+    """Ask the dedicated Chromium instance on ``port`` to close cleanly."""
+    with cdp_socket(browser_ws_url(host, port)) as sock:
+        cdp_call(sock, 1, "Browser.close")
+
+
 def list_page_targets(host, port):
     """Return metadata for every current page target, in Chrome's order."""
     with urllib.request.urlopen(f"http://{host}:{port}/json", timeout=5) as resp:
@@ -330,6 +336,32 @@ def evaluate_in_target(host, port, target, expression):
         result = cdp_call(
             sock, 1, "Runtime.evaluate", {"expression": expression, "returnByValue": True}
         )
+    return result.get("result", {}).get("value")
+
+
+def call_function_in_target(host, port, target, function_declaration, arguments=None):
+    """Call JavaScript in exactly ``target`` with CDP value arguments.
+
+    Authentication secrets belong in the protocol arguments, never formatted
+    into the function source (where diagnostics or exceptions might expose
+    them).
+    """
+    current = get_page_target(host, port, _target_id(target))
+    params = {
+        "functionDeclaration": function_declaration,
+        "arguments": [{"value": value} for value in (arguments or [])],
+        "returnByValue": True,
+        "awaitPromise": True,
+    }
+    with cdp_socket(current.websocket_url) as sock:
+        global_result = cdp_call(sock, 1, "Runtime.evaluate", {"expression": "globalThis"})
+        object_id = global_result.get("result", {}).get("objectId")
+        if not object_id:
+            raise RuntimeError("Target page execution context is unavailable")
+        params["objectId"] = object_id
+        result = cdp_call(sock, 2, "Runtime.callFunctionOn", params)
+    if result.get("exceptionDetails"):
+        raise RuntimeError("Target page function failed")
     return result.get("result", {}).get("value")
 
 

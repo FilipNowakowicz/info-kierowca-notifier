@@ -296,6 +296,12 @@ LOGIN_PAGE = """<!doctype html>
     border-radius: 8px; font-size: 1rem; font-weight: 600; cursor: pointer; }
   button:hover { background: var(--accent-soft); }
   button:disabled { opacity: 0.6; cursor: default; }
+  input { width:100%; padding:0.72rem; margin:0.35rem 0; border-radius:7px; border:1px solid #555; background:#262626; color:#eee; }
+  .methods { display:flex; gap:0.5rem; margin:1rem 0; }
+  .methods button { background:#333; color:#eee; }
+  .methods button.on { background:var(--accent); color:#1c1c1c; }
+  #pz-fields { display:none; text-align:left; margin-bottom:0.8rem; }
+  .secondary { margin-top:0.5rem; background:#333; color:#eee; }
   #hint { opacity: 0.65; font-size: 0.88rem; margin-top: 1.1rem; display: none; }
   #hint.show { display: block; }
   .booking-note { margin: 0 0 1.25rem; padding: 0.75rem 0.9rem; text-align: left; border: 1px solid rgba(157,194,172,0.38); border-radius: 8px; background: rgba(106,156,124,0.12); color: #d7eadf; font-size: 0.88rem; line-height: 1.45; }
@@ -309,9 +315,15 @@ LOGIN_PAGE = """<!doctype html>
 <body>
 <div id="card">
   <h1>Connect your account</h1>
-  <p class="lead">Log in once via the mObywatel QR code — this is what lets the notifier check for
-  slots on your behalf. While we're at it, we'll also find your PKK number and license category
-  automatically, so you don't have to type them in.</p>
+  <p class="lead">Choose how the notifier should authenticate. Profil Zaufany can recover expired sessions automatically after setup.</p>
+  <div class="methods"><button id="method-mobywatel" class="on">mObywatel</button><button id="method-pz">Profil Zaufany</button></div>
+  <div id="pz-fields">
+    <label for="pz-username">Profil Zaufany username</label><input id="pz-username" autocomplete="username">
+    <label for="pz-password">Profil Zaufany password</label><input id="pz-password" type="password" autocomplete="current-password">
+    <button class="secondary" id="pair-messages" type="button">Pair Google Messages Web</button>
+    <button class="secondary" id="test-messages" type="button">Test SMS extraction</button>
+    <div id="messages-status"></div>
+  </div>
   <button id="login-btn">Log in with mObywatel</button>
   <div id="hint">A Chrome window should open — scan the QR code in the mObywatel app. This page
   continues on its own once you're logged in.</div>
@@ -322,12 +334,34 @@ LOGIN_PAGE = """<!doctype html>
 const loginBtn = document.getElementById('login-btn');
 const loginHint = document.getElementById('hint');
 const loginError = document.getElementById('error');
+let loginMethod = 'mobywatel';
+const pzFields = document.getElementById('pz-fields');
+function setMethod(method) {
+  loginMethod = method; pzFields.style.display = method === 'profil_zaufany' ? 'block' : 'none';
+  document.getElementById('method-mobywatel').classList.toggle('on', method === 'mobywatel');
+  document.getElementById('method-pz').classList.toggle('on', method === 'profil_zaufany');
+  loginBtn.textContent = method === 'profil_zaufany' ? 'Log in with Profil Zaufany' : 'Log in with mObywatel';
+}
+document.getElementById('method-mobywatel').onclick = () => setMethod('mobywatel');
+document.getElementById('method-pz').onclick = () => setMethod('profil_zaufany');
+document.getElementById('pair-messages').onclick = async () => {
+  const d = await (await fetch('/pair-google-messages', {method:'POST'})).json();
+  document.getElementById('messages-status').textContent = d.ok ? 'Google Messages Web opened for pairing.' : 'Could not open Google Messages Web.';
+};
+document.getElementById('test-messages').onclick = async () => {
+  const d = await (await fetch('/test-google-messages', {method:'POST'})).json();
+  const text = {found:'SMS extraction is working — a PZePUAP verification message was detected.', no_current_otp:'PZePUAP conversation found, but no current OTP was detected.', stale_otp:'Only a stale PZePUAP OTP was found.', no_conversation:'PZePUAP conversation was not found.', not_paired:'Google Messages is not paired.', page_structure_unsupported:'Google Messages page structure is unsupported.', messages_target_unavailable:'Google Messages target is unavailable.'};
+  document.getElementById('messages-status').textContent = text[d.status] || 'SMS extraction test failed.';
+};
 
 loginBtn.addEventListener('click', async () => {
   loginBtn.disabled = true;
   loginError.classList.remove('show');
   try {
-    const res = await fetch('/login-start', {method: 'POST'});
+    const res = await fetch('/login-start', {method: 'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({
+      login_method:loginMethod, pz_username:document.getElementById('pz-username').value,
+      pz_password:document.getElementById('pz-password').value
+    })});
     const data = await res.json();
     if (!data.ok || data.action === 'launch_failed' || data.action === 'no_chromium_browser') {
       throw new Error(ikwI18n.t(data.message || 'Could not open Chrome — try the manual option below.'));
@@ -340,7 +374,7 @@ loginBtn.addEventListener('click', async () => {
       }
     }
     loginHint.classList.add('show');
-    loginBtn.textContent = 'Waiting for QR scan...';
+    loginBtn.textContent = loginMethod === 'profil_zaufany' ? 'Authenticating automatically...' : 'Waiting for QR scan...';
     let elapsed = 0;
     const polling = setInterval(async () => {
       elapsed += 2000;
@@ -356,7 +390,7 @@ loginBtn.addEventListener('click', async () => {
         // spawned process has even had a chance to acquire its lock file.)
         clearInterval(polling);
         loginBtn.disabled = false;
-        loginBtn.textContent = 'Log in with mObywatel';
+        setMethod(loginMethod);
         loginHint.classList.remove('show');
         loginError.textContent = ikwI18n.t("Login didn't complete — the Chrome window may have been closed. Try again.");
         loginError.classList.add('show');
@@ -614,6 +648,19 @@ WIZARD_PAGE = """<!doctype html>
 
   <form id="form">
     <fieldset>
+      <legend>Authentication</legend>
+      <label for="login_method">Authentication method</label>
+      <select id="login_method"><option value="mobywatel">mObywatel</option><option value="profil_zaufany">Profil Zaufany</option></select>
+      <div id="settings-pz-fields" style="display:none">
+        <label for="settings-pz-username">Profil Zaufany username</label><input id="settings-pz-username" autocomplete="username">
+        <label for="settings-pz-password">Profil Zaufany password</label><input id="settings-pz-password" type="password" autocomplete="new-password" placeholder="Leave blank to keep the saved password">
+        <div class="hint" id="password-status">Password saved securely by your operating system; its value is never shown here.</div>
+        <button type="button" class="cat-more" id="settings-pair-messages">Pair Google Messages Web</button>
+        <button type="button" class="cat-more" id="settings-test-messages">Test SMS extraction</button>
+        <div class="hint" id="settings-messages-status"></div>
+      </div>
+    </fieldset>
+    <fieldset>
       <legend>Exam &amp; centers</legend>
       <div id="pkk-auto-block" style="display:none;">
         <label for="pkk-profile-select">Your PKK profile</label>
@@ -785,6 +832,18 @@ const CENTERS = __CENTERS_JSON__;
 const CATEGORIES = __CATEGORIES_JSON__;
 const EXISTING_CONFIG = __EXISTING_CONFIG_JSON__;
 const KNOWN_IDS = new Set(CENTERS.map(c => c.id));
+const loginMethodSelect = document.getElementById('login_method');
+const settingsPzFields = document.getElementById('settings-pz-fields');
+function updateAuthFields() { settingsPzFields.style.display = loginMethodSelect.value === 'profil_zaufany' ? 'block' : 'none'; }
+loginMethodSelect.addEventListener('change', updateAuthFields);
+document.getElementById('settings-pair-messages').onclick = async () => {
+  const d=await (await fetch('/pair-google-messages',{method:'POST'})).json();
+  document.getElementById('settings-messages-status').textContent=d.ok?'Google Messages Web opened for pairing.':'Could not open Google Messages Web.';
+};
+document.getElementById('settings-test-messages').onclick = async () => {
+  const d=await (await fetch('/test-google-messages',{method:'POST'})).json();
+  document.getElementById('settings-messages-status').textContent=d.status==='found'?'SMS extraction is working — a PZePUAP verification message was detected.':'SMS extraction status: '+d.status;
+};
 // True when this page is loaded inside the dashboard's Settings modal
 // (see TOOLBAR_HTML's #ikw-settings-frame) rather than as its own top-level
 // page (first-run /setup, or a direct /settings visit) — same-origin, so
@@ -1310,6 +1369,9 @@ document.getElementById('clear-search-start-date').addEventListener('click', () 
 renderSelected();
 
 if (EXISTING_CONFIG) {
+  loginMethodSelect.value = EXISTING_CONFIG.login_method || 'mobywatel';
+  document.getElementById('settings-pz-username').value = EXISTING_CONFIG.pz_username || '';
+  updateAuthFields();
   const pageTitle = document.getElementById('page-title');
   pageTitle.textContent = t('Settings');
   pageTitle.style.marginBottom = '1.6rem'; // replaces the gap the (now-hidden) lead paragraph used to provide
@@ -1449,6 +1511,9 @@ document.getElementById('form').addEventListener('submit', async (e) => {
     if (!currentSlotDate) throw new Error(t('Pick the date of your current booked slot.'));
 
     const body = {
+      login_method: loginMethodSelect.value,
+      pz_username: document.getElementById('settings-pz-username').value.trim(),
+      pz_password: document.getElementById('settings-pz-password').value,
       profile_number: profileNumber,
       organization_ids: orgIds,
       category: category,

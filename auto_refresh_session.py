@@ -32,6 +32,9 @@ import time
 from pathlib import Path
 
 import cdp_client
+import auth_providers
+import credential_store
+import sms_provider
 import ntfy_transport
 import relogin_control
 
@@ -51,6 +54,22 @@ DEFAULT_URL = "https://info-kierowca.pl/login"
 # just wait for the QR to be scanned, however long that takes. Pass --timeout
 # to bound it (e.g. for testing).
 DEFAULT_TIMEOUT = None
+
+
+class AttachedChrome:
+    """Process-like owner for a pairing browser already on our dedicated port."""
+    def __init__(self, host, port): self.host, self.port = host, port
+    def poll(self):
+        try:
+            cdp_client.browser_ws_url(self.host, self.port)
+            return None
+        except Exception:
+            return 0
+    def terminate(self):
+        try: cdp_client.close_browser(self.host, self.port)
+        except Exception: pass
+    def wait(self, timeout=None): return 0
+    def kill(self): self.terminate()
 
 # Edge is Chromium-based and supports the same --remote-debugging-port CDP
 # flag, so it's included as a fallback — it's preinstalled on all Windows
@@ -490,6 +509,25 @@ def chrome_available():
         return False
 
 
+def open_google_messages_pairing(host="127.0.0.1", port=DEFAULT_PORT):
+    """Open/reuse one explicitly identified Messages target in the persistent profile."""
+    try:
+        cdp_client.wait_for_debug_port(host, port, timeout=0.2)
+    except Exception:
+        chrome = find_chrome()
+        PROFILE_DIR.mkdir(parents=True, exist_ok=True)
+        subprocess.Popen([
+            chrome, f"--remote-debugging-port={port}", f"--user-data-dir={PROFILE_DIR}",
+            "--no-first-run", "--no-default-browser-check", "--window-size=1100,850",
+            "--app=about:blank",
+        ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        cdp_client.wait_for_debug_port(host, port, timeout=20)
+    provider = sms_provider.GoogleMessagesWebProvider(host, port)
+    target = provider.find_or_create_target(create=True)
+    cdp_client.bring_target_to_front(host, port, target)
+    return target
+
+
 def notify_desktop(summary, body, urgency="normal"):
     """Best-effort local desktop notification — the ntfy phone push is the
     primary alert, this is a secondary one for whoever's at the machine.
@@ -653,11 +691,21 @@ def main():
     restart_shutdown = False
     backoff = RetryBackoff(RELOGIN_BACKOFF_FILE)
     try:
+        try:
+            config = json.loads(CONFIG_FILE.read_text())
+        except Exception:
+            config = {}
+        login_method = config.get("login_method", "mobywatel")
         chrome = find_chrome()
         print(f"using browser: {chrome}")
         PROFILE_DIR.mkdir(parents=True, exist_ok=True)
-        chrome_proc = subprocess.Popen(
-            [
+        try:
+            cdp_client.wait_for_debug_port("127.0.0.1", args.port, timeout=0.2)
+            chrome_proc = AttachedChrome("127.0.0.1", args.port)
+            print("using existing dedicated pairing browser")
+        except Exception:
+            chrome_proc = subprocess.Popen(
+                [
                 chrome,
                 f"--remote-debugging-port={args.port}",
                 f"--user-data-dir={PROFILE_DIR}",
@@ -673,37 +721,57 @@ def main():
                 # the width by trial and error again.
                 "--window-size=900,850",
                 "--app=about:blank",
-            ],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-
-        notify_desktop(
-            "info-kierowca: relogin needed",
-            "Chrome opened — scan the QR in the app to log back in",
-            "critical",
-        )
-        if not args.no_phone_push:
-            push_ntfy(
-                "info-kierowca: relogin needed",
-                "Chrome opened on your desktop — scan the QR in the app to log back in",
-                priority="default",
+                ],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
             )
+
+        if login_method == "mobywatel":
+            notify_desktop(
+                "info-kierowca: relogin needed",
+                "Chrome opened — scan the QR in the app to log back in",
+                "critical",
+            )
+            if not args.no_phone_push:
+                push_ntfy(
+                    "info-kierowca: relogin needed",
+                    "Chrome opened on your desktop — scan the QR in the app to log back in",
+                    priority="default",
+                )
 
         cdp_client.wait_for_debug_port("127.0.0.1", args.port, timeout=20)
         # Register the click-observer before the real page ever loads, then
         # navigate — so it's already watching from the first paint instead
         # of racing our own next poll tick.
         login_target = cdp_client.create_page_target("127.0.0.1", args.port)
-        cdp_client.inject_and_navigate(
-            "127.0.0.1", args.port, args.url, AUTO_CLICK_OBSERVER_JS, target=login_target
-        )
-        cookies = wait_for_cookies(
-            "127.0.0.1", args.port, args.timeout, chrome_proc, target=login_target,
-            should_restart=lambda: relogin_control.restart_requested(
+        if login_method == "profil_zaufany":
+            username = config.get("pz_username", "")
+            password = credential_store.SecureCredentialStore().get(username)
+            messages = sms_provider.GoogleMessagesWebProvider("127.0.0.1", args.port)
+            messages.find_or_create_target(create=True)
+            browser = auth_providers.CDPProfilZaufanyBrowser(
+                "127.0.0.1", args.port, login_target, chrome_proc, args.url
+            )
+            provider = auth_providers.ProfilZaufanyProvider(
+                browser, messages, username, password,
+                logger=lambda message: print(message),
+            )
+            provider.cancelled = lambda: relogin_control.restart_requested(
                 RESTART_REQUEST_FILE, owner
-            ),
-        )
+            )
+            cookies = provider.authenticate()
+            password = None
+        else:
+            cdp_client.inject_and_navigate(
+                "127.0.0.1", args.port, args.url, AUTO_CLICK_OBSERVER_JS, target=login_target
+            )
+            provider = auth_providers.MObywatelProvider(lambda: wait_for_cookies(
+                "127.0.0.1", args.port, args.timeout, chrome_proc, target=login_target,
+                should_restart=lambda: relogin_control.restart_requested(
+                    RESTART_REQUEST_FILE, owner
+                ),
+            ))
+            cookies = provider.authenticate()
 
         if cookies is None:
             if chrome_proc.poll() is not None:
@@ -737,6 +805,39 @@ def main():
     except ReloginRestartRequested:
         restart_shutdown = True
         print("Explicit restart requested; closing the current QR login cleanly.")
+    except auth_providers.AuthenticationFailure as exc:
+        reason = exc.reason
+        if reason == "restart_requested":
+            restart_shutdown = True
+            print("Explicit restart requested; closing the current Profil Zaufany login cleanly.")
+            return
+        print(f"Profil Zaufany authentication failed: {reason}")
+        if args.automatic:
+            delay = backoff.record_failure(reason)
+            print(f"automatic relogin backoff: {delay}s ({reason})")
+        messages = {
+            "invalid_credentials": "Profil Zaufany credentials were rejected.",
+            "sms_provider_unavailable": "Google Messages is unavailable or no longer paired.",
+            "messages_target_lost": "The Google Messages tab was closed.",
+            "sms_timeout": "No fresh PZePUAP verification message arrived in time.",
+        }
+        body = "Automatic Profil Zaufany login failed: " + messages.get(
+            reason, "open the app to retry or review the authentication log."
+        )
+        notify_desktop("info-kierowca: automatic login failed", body, "critical")
+        push_ntfy("info-kierowca: automatic login failed", body, priority="default")
+        sys.exit(1)
+    except (credential_store.CredentialStorageUnavailable,
+            credential_store.CredentialNotFound):
+        reason = "secure_credential_unavailable"
+        print(f"Profil Zaufany authentication failed: {reason}")
+        if args.automatic:
+            delay = backoff.record_failure(reason)
+            print(f"automatic relogin backoff: {delay}s ({reason})")
+        body = "Automatic Profil Zaufany login failed: secure credentials are unavailable."
+        notify_desktop("info-kierowca: automatic login failed", body, "critical")
+        push_ntfy("info-kierowca: automatic login failed", body, priority="default")
+        sys.exit(1)
     except Exception:
         if args.automatic:
             delay = backoff.record_failure("authentication_flow_failed")

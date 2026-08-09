@@ -22,6 +22,8 @@ import webbrowser
 from datetime import date, datetime, timedelta
 
 import auto_refresh_session
+import credential_store
+import sms_provider
 import dashboard_server
 import notifier
 import open_logged_in_browser
@@ -221,7 +223,15 @@ def build_config(payload):
     else:
         search_start = ""
 
+    login_method = payload.get("login_method", "mobywatel")
+    if login_method not in ("mobywatel", "profil_zaufany"):
+        raise ValueError("Choose a supported authentication method")
+    pz_username = (payload.get("pz_username") or "").strip()
+    if login_method == "profil_zaufany" and not pz_username:
+        raise ValueError("Profil Zaufany username is required")
     config = {
+        "login_method": login_method,
+        "pz_username": pz_username,
         "organization_ids": organization_ids,
         "category": category,
         "profile_number": profile_number,
@@ -250,6 +260,14 @@ def build_config(payload):
         payload.get("auto_confirm_reschedule", False)
     )
     return config
+
+
+BOOKING_CONFIG_KEYS = {"organization_ids", "category", "profile_number", "exam_types",
+                       "ntfy_topic", "current_slot_date"}
+
+
+def config_is_complete(config):
+    return BOOKING_CONFIG_KEYS <= set(config)
 
 
 def pkk_category_id(category_code):
@@ -341,7 +359,8 @@ class AppHandler(http.server.BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path in ("/", "/index.html"):
-            if notifier.CONFIG_FILE.exists():
+            config = self._load_config_or_empty()
+            if config_is_complete(config):
                 self._send(200, DASHBOARD_PAGE)
             elif not notifier.SESSION_FILE.exists():
                 # First run, not logged in yet: get the QR login out of the
@@ -392,6 +411,10 @@ class AppHandler(http.server.BaseHTTPRequestHandler):
             self._handle_test_push()
         elif self.path == "/reset-account":
             self._handle_reset_account()
+        elif self.path == "/pair-google-messages":
+            self._handle_pair_google_messages()
+        elif self.path == "/test-google-messages":
+            self._handle_test_google_messages()
         else:
             self._send(404, b"not found", "text/plain")
 
@@ -512,9 +535,29 @@ class AppHandler(http.server.BaseHTTPRequestHandler):
         before any config exists yet. force=True is a deliberate retry that
         bypasses automatic cooldown, but retains a live QR login if one exists.
         """
-        outcome = notifier.trigger_auto_refresh(
-            AppHandler.logger, {}, force=True, notify_phone=False
-        )
+        payload = self._read_json_body()
+        if payload is None:
+            return
+        method = payload.get("login_method", "mobywatel")
+        if method not in ("mobywatel", "profil_zaufany"):
+            self._send_json(400, {"ok": False, "error": "Unsupported authentication method."})
+            return
+        config = self._load_config_or_empty()
+        config["login_method"] = method
+        if method == "profil_zaufany":
+            username = (payload.get("pz_username") or "").strip()
+            password = payload.get("pz_password")
+            if not username or not isinstance(password, str) or not password:
+                self._send_json(400, {"ok": False, "error": "Profil Zaufany credentials are required."})
+                return
+            try:
+                credential_store.SecureCredentialStore().save(username, password)
+            except credential_store.CredentialStorageUnavailable:
+                self._send_json(503, {"ok": False, "error": "Secure credential storage is unavailable."})
+                return
+            config["pz_username"] = username
+        notifier.save_json(notifier.CONFIG_FILE, config)
+        outcome = notifier.trigger_auto_refresh(AppHandler.logger, config, force=True, notify_phone=False)
         messages = {
             notifier.TRIGGER_NO_BROWSER: "No Chrome, Edge, or other Chromium-based browser was found "
                 "on this machine. Install one and try again.",
@@ -530,10 +573,20 @@ class AppHandler(http.server.BaseHTTPRequestHandler):
         if payload is None:
             return
         try:
+            previous = self._load_config_or_empty()
+            payload.setdefault("login_method", previous.get("login_method", "mobywatel"))
+            payload.setdefault("pz_username", previous.get("pz_username", ""))
             config = build_config(payload)
         except ValueError as e:
             self._send_json(400, {"ok": False, "error": str(e)})
             return
+        password = payload.get("pz_password")
+        if config["login_method"] == "profil_zaufany" and password:
+            try:
+                credential_store.SecureCredentialStore().save(config["pz_username"], password)
+            except credential_store.CredentialStorageUnavailable:
+                self._send_json(503, {"ok": False, "error": "Secure credential storage is unavailable."})
+                return
         notifier.save_json(notifier.CONFIG_FILE, config)
         needs_login = not notifier.SESSION_FILE.exists()
         self._send_json(200, {"ok": True, "needs_login": needs_login})
@@ -583,10 +636,34 @@ class AppHandler(http.server.BaseHTTPRequestHandler):
         having to go find and delete those files by hand to switch accounts
         or recover from a broken setup.
         """
+        config = self._load_config_or_empty()
+        if config.get("pz_username"):
+            try:
+                credential_store.SecureCredentialStore().delete(config["pz_username"])
+            except credential_store.CredentialStorageUnavailable:
+                self._send_json(503, {"ok": False, "error": "Secure credential storage is unavailable."})
+                return
         notifier.CONFIG_FILE.unlink(missing_ok=True)
         notifier.SESSION_FILE.unlink(missing_ok=True)
         AppHandler.logger.info("outcome=account_reset")
         self._send_json(200, {"ok": True})
+
+    def _handle_pair_google_messages(self):
+        try:
+            auto_refresh_session.open_google_messages_pairing()
+            self._send_json(200, {"ok": True, "status": "opened"})
+        except Exception:
+            self._send_json(503, {"ok": False, "status": "browser_unavailable"})
+
+    def _handle_test_google_messages(self):
+        try:
+            provider = sms_provider.GoogleMessagesWebProvider("127.0.0.1", auto_refresh_session.DEFAULT_PORT)
+            result = provider.get_latest_pz_code(time.time() - 300)
+        except Exception:
+            self._send_json(200, {"ok": False, "status": "messages_target_unavailable"})
+            return
+        success = result.status == "found"
+        self._send_json(200, {"ok": success, "status": result.status})
 
 
 class ThreadingServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
@@ -619,6 +696,13 @@ def run_tls_smoke():
     print(f"Verified HTTPS smoke passed ({tls_transport.trust_backend(req.full_url)}).")
 
 
+def run_keyring_smoke():
+    """Frozen-build smoke: backend discovery must work without reading credentials."""
+    import keyring
+    backend = keyring.get_keyring()
+    print(f"Keyring discovery passed ({type(backend).__module__}.{type(backend).__name__}).")
+
+
 def main():
     if "--internal-auto-refresh" in sys.argv:
         run_internal_auto_refresh()
@@ -628,6 +712,9 @@ def main():
         return
     if "--internal-tls-smoke" in sys.argv:
         run_tls_smoke()
+        return
+    if "--internal-keyring-smoke" in sys.argv:
+        run_keyring_smoke()
         return
 
     if already_running():
