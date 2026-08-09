@@ -34,8 +34,14 @@ class FakeBrowser:
 
 
 class FakeSMS:
-    def __init__(self, result=None): self.result = result or SMSResult("found", "87654321", 1_800_001_000)
-    def get_latest_pz_code(self, after, used): return self.result
+    def __init__(self, result=None, results=None):
+        self.result = result or SMSResult("found", "87654321", 1_800_001_000)
+        self.results = (list(results) if results is not None
+                        else [SMSResult("no_current_otp")])
+    def get_latest_pz_code(self, after, used):
+        if self.results:
+            return self.results.pop(0)
+        return self.result
 
 
 class PZAuthenticationTests(unittest.TestCase):
@@ -57,6 +63,18 @@ class PZAuthenticationTests(unittest.TestCase):
         self.assertEqual(provider.authenticate(), {"a": "b"})
         self.assertEqual(provider.state, PZState.SUCCESS)
         self.assertTrue(provider.browser.opened)
+
+    def test_codes_visible_before_credential_submission_are_not_reused(self):
+        old = SMSResult("found", "11111111", 1_800_000_998)
+        old_two = SMSResult("found", "22222222", 1_800_000_999)
+        fresh = SMSResult("found", "87654321", 1_800_001_000)
+        provider = self.provider(sms=FakeSMS(results=[
+            old_two, old, SMSResult("no_current_otp"), fresh,
+        ]))
+        provider.authenticate()
+        self.assertIn(("otp", "87654321"), provider.browser.submitted)
+        self.assertNotIn(("otp", "11111111"), provider.browser.submitted)
+        self.assertNotIn(("otp", "22222222"), provider.browser.submitted)
 
     def test_identity_chooser_timeout(self): self.assertEqual(self.reason(FakeBrowser(identity=None)), "identity_provider_timeout")
     def test_profil_chooser_timeout(self): self.assertEqual(self.reason(FakeBrowser(chooser=None)), "profil_zaufany_chooser_timeout")
@@ -130,6 +148,53 @@ class OriginTests(unittest.TestCase):
         self.assertEqual(call.call_args.args[2].id, "auth")
         self.assertIn("mat-card.auth-card", call.call_args.args[3])
         self.assertIn("login.gov.pl", call.call_args.args[3])
+
+    def test_credential_script_verifies_exact_values_and_scopes_submit_to_form(self):
+        self.assertIn("u.value !== username", auth_providers.SUBMIT_CREDENTIALS_FUNCTION)
+        self.assertIn("p.value !== password", auth_providers.SUBMIT_CREDENTIALS_FUNCTION)
+        self.assertIn("var root=form || document", auth_providers.SUBMIT_CREDENTIALS_FUNCTION)
+
+    def test_credentials_are_typed_into_the_retained_auth_target(self):
+        import cdp_client
+        from unittest.mock import Mock, call, patch
+        target = cdp_client.PageTarget("auth", "https://pz.gov.pl/ui/au/login", "", "ws")
+        browser = auth_providers.CDPProfilZaufanyBrowser("h", 1, target, Mock(), target.url)
+        with patch("auth_providers.cdp_client.get_page_target", return_value=target), \
+             patch("auth_providers.cdp_client.call_function_in_target",
+                   side_effect=["ready", "ready", "submitted"]), \
+             patch("auth_providers.cdp_client.insert_text_in_target") as insert:
+            browser.submit_credentials("FilipNowakowicz", "secret")
+        self.assertEqual(insert.call_args_list, [
+            call("h", 1, target, "FilipNowakowicz"),
+            call("h", 1, target, "secret"),
+        ])
+
+    def test_otp_is_typed_and_verified_in_the_retained_auth_target(self):
+        import cdp_client
+        from unittest.mock import Mock, patch
+        target = cdp_client.PageTarget("auth", "https://pz.gov.pl/ui/au/login", "", "ws")
+        browser = auth_providers.CDPProfilZaufanyBrowser("h", 1, target, Mock(), target.url)
+        with patch("auth_providers.cdp_client.get_page_target", return_value=target), \
+             patch("auth_providers.cdp_client.call_function_in_target",
+                   side_effect=["ready", "submitted"]), \
+             patch("auth_providers.cdp_client.insert_text_in_target") as insert:
+            browser.submit_otp("87654321")
+        insert.assert_called_once_with("h", 1, target, "87654321")
+        self.assertIn("i.value !== code", auth_providers.SUBMIT_OTP_FUNCTION)
+
+    def test_live_no_profile_alert_url_is_classified_without_waiting(self):
+        import cdp_client
+        from unittest.mock import Mock, patch
+        target = cdp_client.PageTarget(
+            "auth",
+            "https://pz.gov.pl/ui/au/alert?case=pzip-wk-login-no-profile&processId=safe",
+            "", "ws",
+        )
+        browser = auth_providers.CDPProfilZaufanyBrowser("h", 1, target, Mock(), target.url)
+        with patch("auth_providers.cdp_client.get_page_target", return_value=target), \
+             patch("auth_providers.cdp_client.call_function_in_target") as evaluate:
+            self.assertEqual(browser.redirect_status(), "no_valid_profile")
+        evaluate.assert_not_called()
 
     def test_profil_chooser_waits_during_allowed_cross_origin_navigation(self):
         import cdp_client

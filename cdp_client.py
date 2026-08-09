@@ -378,6 +378,17 @@ def call_function_in_target(host, port, target, function_declaration, arguments=
     return result.get("result", {}).get("value")
 
 
+def insert_text_in_target(host, port, target, text):
+    """Insert text through Chrome's input pipeline in exactly ``target``.
+
+    The value is carried as a CDP protocol parameter, not JavaScript source.
+    This more closely matches real typing for framework-controlled forms.
+    """
+    current = get_page_target(host, port, _target_id(target))
+    with cdp_socket(current.websocket_url) as sock:
+        cdp_call(sock, 1, "Input.insertText", {"text": text})
+
+
 def bring_target_to_front(host, port, target):
     """Focus exactly ``target``; raise if it has disappeared."""
     current = get_page_target(host, port, _target_id(target))

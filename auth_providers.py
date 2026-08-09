@@ -116,6 +116,18 @@ class ProfilZaufanyProvider:
             self._fail("profil_zaufany_inactive")
         if form != "ready":
             self._fail("unexpected_auth_page")
+
+        # Drain every recent candidate before requesting a new SMS. Rapid
+        # retries can leave several codes inside the five-minute window, and
+        # the 30-second timestamp tolerance must not make any of them reusable
+        # while Messages is still rendering the newly requested code.
+        for _ in range(32):
+            existing_sms = self.sms_provider.get_latest_pz_code(
+                self.started_at - 270, self.used_codes
+            )
+            if existing_sms.status != "found" or not existing_sms.code:
+                break
+            self.used_codes.add(existing_sms.code)
         self._transition(PZState.SUBMIT_CREDENTIALS)
         self.browser.submit_credentials(self.username, self.password)
         challenge = self._wait(PZState.WAIT_FOR_SMS_CHALLENGE, self.browser.challenge_status,
@@ -244,17 +256,33 @@ function() {
 }
 """
 
+PREPARE_CREDENTIAL_FIELD_FUNCTION = r"""
+function(kind) {
+  var u=document.querySelector('#username,input[formcontrolname="login"],input[name="login"],#login,input[data-testid="username-input"] input');
+  var p=document.querySelector('#password,input[formcontrolname="password"],input[name="password"],input[data-testid="password-input"] input');
+  if (!u || !p || u.disabled || p.disabled) return 'fields_missing';
+  var field=kind === 'username' ? u : p;
+  field.focus(); field.select();
+  Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(field,'');
+  field.dispatchEvent(new Event('input',{bubbles:true}));
+  return 'ready';
+}
+"""
+
 SUBMIT_CREDENTIALS_FUNCTION = r"""
 function(username,password) {
   var u=document.querySelector('#username,input[formcontrolname="login"],input[name="login"],#login,input[data-testid="username-input"] input');
   var p=document.querySelector('#password,input[formcontrolname="password"],input[name="password"],input[data-testid="password-input"] input');
-  if (!u || !p) return false;
-  function set(el,value) { var setter=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set;
-    setter.call(el,value); el.dispatchEvent(new Event('input',{bubbles:true})); el.dispatchEvent(new Event('change',{bubbles:true})); }
-  set(u,username); set(p,password);
-  var b=document.querySelector('button[data-testid="login-confirm-btn"],button[aria-label="Zaloguj się"],button[type="submit"].gds-button--primary');
-  if (b) b.click(); else if (u.form && u.form.requestSubmit) u.form.requestSubmit(); else return false;
-  return true;
+  if (!u || !p || u.disabled || p.disabled) return 'fields_missing';
+  if (u.value !== username || p.value !== password) return 'value_mismatch';
+  var form=u.form || p.form;
+  if (u.form && p.form && u.form !== p.form) return 'form_mismatch';
+  var root=form || document;
+  var b=root.querySelector('button[data-testid="login-confirm-btn"],button[aria-label="Zaloguj się"],button[type="submit"].gds-button--primary');
+  if (b && !b.disabled) b.click();
+  else if (form && form.requestSubmit) form.requestSubmit();
+  else return 'submit_missing';
+  return 'submitted';
 }
 """
 
@@ -271,14 +299,28 @@ function() {
 }
 """
 
+PREPARE_OTP_FIELD_FUNCTION = r"""
+function() {
+  var i=document.querySelector('input[data-testid="sms-code-input"],#smsInput');
+  if (!i || i.disabled) return 'field_missing';
+  i.focus(); i.select();
+  Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(i,'');
+  i.dispatchEvent(new Event('input',{bubbles:true}));
+  return 'ready';
+}
+"""
+
 SUBMIT_OTP_FUNCTION = r"""
 function(code) {
   var i=document.querySelector('input[data-testid="sms-code-input"],#smsInput');
-  if (!i) return false;
-  Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(i,code);
-  i.dispatchEvent(new Event('input',{bubbles:true})); i.dispatchEvent(new Event('change',{bubbles:true}));
-  var b=document.querySelector('button[data-testid="sms-code-submit-btn"],button[aria-label="Potwierdź"]');
-  if (!b) return false; b.click(); return true;
+  if (!i || i.value !== code) return 'value_mismatch';
+  var form=i.form;
+  var root=form || i.closest('[role="dialog"]') || document;
+  var b=root.querySelector('button[data-testid="sms-code-submit-btn"],button[aria-label="Potwierdź"]');
+  if (b && !b.disabled) b.click();
+  else if (form && form.requestSubmit) form.requestSubmit();
+  else return 'submit_missing';
+  return 'submitted';
 }
 """
 
@@ -344,20 +386,38 @@ class CDPProfilZaufanyBrowser:
         return self._call(FORM_STATUS_FUNCTION, require_pz_origin=True)
 
     def submit_credentials(self, username, password):
-        if not self._call(SUBMIT_CREDENTIALS_FUNCTION, [username, password], True):
+        for kind, value in (("username", username), ("password", password)):
+            result = self._call(PREPARE_CREDENTIAL_FIELD_FUNCTION, [kind], True)
+            if result != "ready":
+                raise AuthenticationFailure("credential_form_timeout", PZState.SUBMIT_CREDENTIALS)
+            cdp_client.insert_text_in_target(
+                self.host, self.port, self.target, value
+            )
+        result = self._call(SUBMIT_CREDENTIALS_FUNCTION, [username, password], True)
+        if result != "submitted":
             raise AuthenticationFailure("credential_form_timeout", PZState.SUBMIT_CREDENTIALS)
 
     def challenge_status(self):
         return self._call(CHALLENGE_STATUS_FUNCTION, require_pz_origin=True)
 
     def submit_otp(self, code):
-        if not OTP_RE.fullmatch(code) or not self._call(SUBMIT_OTP_FUNCTION, [code], True):
+        if not OTP_RE.fullmatch(code):
+            raise AuthenticationFailure("sms_challenge_timeout", PZState.SUBMIT_SMS)
+        if self._call(PREPARE_OTP_FIELD_FUNCTION, require_pz_origin=True) != "ready":
+            raise AuthenticationFailure("sms_challenge_timeout", PZState.SUBMIT_SMS)
+        cdp_client.insert_text_in_target(self.host, self.port, self.target, code)
+        if self._call(SUBMIT_OTP_FUNCTION, [code], True) != "submitted":
             raise AuthenticationFailure("sms_challenge_timeout", PZState.SUBMIT_SMS)
 
     def redirect_status(self):
         current = self._current()
-        if (urlparse(current.url).hostname or "").endswith("info-kierowca.pl"):
+        parsed = urlparse(current.url)
+        if (parsed.hostname or "").endswith("info-kierowca.pl"):
             return "redirected"
+        if (parsed.hostname or "").endswith("pz.gov.pl") and \
+                parsed.path == "/ui/au/alert" and \
+                "case=pzip-wk-login-no-profile" in parsed.query:
+            return "no_valid_profile"
         if not allowed_auth_redirect(current.url):
             raise AuthenticationFailure("unexpected_auth_page", PZState.WAIT_FOR_AUTH_REDIRECT)
         if not allowed_pz_origin(current.url):
