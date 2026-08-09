@@ -34,6 +34,10 @@ class StaleTargetError(TargetNotFoundError):
     """Raised when a target that was selected earlier has since disappeared."""
 
 
+class ExecutionContextLostError(RuntimeError):
+    """Raised when a retained target is navigating between JS contexts."""
+
+
 @dataclass(frozen=True)
 class PageTarget:
     """Stable metadata for one debuggable Chrome page target.
@@ -165,6 +169,12 @@ def browser_ws_url(host, port):
     """Websocket URL of the browser-level debugger target."""
     with urllib.request.urlopen(f"http://{host}:{port}/json/version", timeout=5) as resp:
         return json.loads(resp.read())["webSocketDebuggerUrl"]
+
+
+def close_browser(host, port):
+    """Ask the dedicated Chromium instance on ``port`` to close cleanly."""
+    with cdp_socket(browser_ws_url(host, port)) as sock:
+        cdp_call(sock, 1, "Browser.close")
 
 
 def list_page_targets(host, port):
@@ -331,6 +341,52 @@ def evaluate_in_target(host, port, target, expression):
             sock, 1, "Runtime.evaluate", {"expression": expression, "returnByValue": True}
         )
     return result.get("result", {}).get("value")
+
+
+def call_function_in_target(host, port, target, function_declaration, arguments=None):
+    """Call JavaScript in exactly ``target`` with CDP value arguments.
+
+    Authentication secrets belong in the protocol arguments, never formatted
+    into the function source (where diagnostics or exceptions might expose
+    them).
+    """
+    current = get_page_target(host, port, _target_id(target))
+    params = {
+        "functionDeclaration": function_declaration,
+        "arguments": [{"value": value} for value in (arguments or [])],
+        "returnByValue": True,
+        "awaitPromise": True,
+    }
+    try:
+        with cdp_socket(current.websocket_url) as sock:
+            global_result = cdp_call(sock, 1, "Runtime.evaluate", {"expression": "globalThis"})
+            object_id = global_result.get("result", {}).get("objectId")
+            if not object_id:
+                raise ExecutionContextLostError("Target page execution context is unavailable")
+            params["objectId"] = object_id
+            result = cdp_call(sock, 2, "Runtime.callFunctionOn", params)
+    except RuntimeError as exc:
+        detail = str(exc).lower()
+        if ("cannot find context with specified id" in detail or
+                "execution context was destroyed" in detail):
+            raise ExecutionContextLostError(
+                "Target page execution context changed during navigation"
+            ) from exc
+        raise
+    if result.get("exceptionDetails"):
+        raise RuntimeError("Target page function failed")
+    return result.get("result", {}).get("value")
+
+
+def insert_text_in_target(host, port, target, text):
+    """Insert text through Chrome's input pipeline in exactly ``target``.
+
+    The value is carried as a CDP protocol parameter, not JavaScript source.
+    This more closely matches real typing for framework-controlled forms.
+    """
+    current = get_page_target(host, port, _target_id(target))
+    with cdp_socket(current.websocket_url) as sock:
+        cdp_call(sock, 1, "Input.insertText", {"text": text})
 
 
 def bring_target_to_front(host, port, target):

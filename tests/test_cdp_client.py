@@ -148,3 +148,26 @@ class CdpTargetTests(unittest.TestCase):
             cdp_client.navigate_target("h", 1, target, "https://login.gov.pl/next")
             cdp_client.bring_target_to_front("h", 1, target)
         self.assertEqual(calls, ["ws://localhost/gov"] * 3)
+
+    def test_navigation_context_loss_is_classified_for_bounded_retry(self):
+        @contextlib.contextmanager
+        def fake_socket(_url):
+            yield object()
+
+        responses = [
+            {"result": {"objectId": "old-context"}},
+            RuntimeError("Runtime.callFunctionOn failed: Cannot find context with specified id"),
+        ]
+
+        def call(*_args, **_kwargs):
+            result = responses.pop(0)
+            if isinstance(result, Exception):
+                raise result
+            return result
+
+        with patch("cdp_client.cdp_socket", fake_socket), patch(
+            "cdp_client.cdp_call", side_effect=call
+        ):
+            target = cdp_client.find_page_target("h", 1, target_id="gov")
+            with self.assertRaises(cdp_client.ExecutionContextLostError):
+                cdp_client.call_function_in_target("h", 1, target, "function(){return true}")

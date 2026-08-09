@@ -750,11 +750,12 @@ def _handle_auth_expired(logger, dash_status, config, status, stage):
     auth failure stays each stage's own decision (see the call sites — refresh
     also treats 404, both fold in 500)."""
     logger.info("outcome=auth_expired status=%s stage=%s", status, stage)
-    notify(
-        "info-kierowca: session expired",
-        "Log back in via browser and update session.json",
-        "critical",
-    )
+    if config.get("login_method", "mobywatel") != "profil_zaufany":
+        notify(
+            "info-kierowca: session expired",
+            "Log back in via browser and update session.json",
+            "critical",
+        )
     update_status(dash_status, "auth_expired", f"Session expired during {stage}")
     trigger_auto_refresh(logger, config)
 
@@ -791,13 +792,20 @@ def run_check(logger, dash_status):
     if not SESSION_FILE.exists():
         logger.info("outcome=auth_missing")
         dash_status["session_expires_estimate"] = None
-        notify(
-            "info-kierowca: no session",
-            "session.json missing — log in via browser and populate cookies",
-            "critical",
-        )
+        if config.get("login_method", "mobywatel") != "profil_zaufany":
+            notify(
+                "info-kierowca: no session",
+                "session.json missing — log in via browser and populate cookies",
+                "critical",
+            )
         update_status(dash_status, "auth_expired", "session.json missing")
         trigger_auto_refresh(logger, config)
+        return
+    required_config = {"organization_ids", "category", "profile_number", "exam_types",
+                       "ntfy_topic", "current_slot_date"}
+    if not required_config <= set(config):
+        logger.info("outcome=setup_incomplete detail=booking_config_incomplete")
+        update_status(dash_status, "setup_incomplete", "Waiting for setup to be completed")
         return
     session = load_json(SESSION_FILE)
     captured_at = session.get("captured_at")

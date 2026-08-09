@@ -34,6 +34,20 @@ warning. Windows: click "More info" → "Run anyway". macOS: right-click the fil
 
 ## How it works
 
+### Authentication
+
+The setup screen offers mObywatel QR login and fully automatic Profil Zaufany
+login. Profil Zaufany stores the password only in the operating system's
+credential vault (Windows Credential Manager, macOS Keychain, or a supported
+Linux Secret Service); it is never written to `config.json` or page source.
+Pair Google Messages Web once in the app's dedicated Chrome profile so fresh
+PZePUAP verification messages can be read during unattended relogin. If no
+secure credential backend is available, Profil Zaufany setup fails closed.
+
+The government and Google page structure is external and may change. Use the
+Settings actions **Pair Google Messages Web** and **Test SMS extraction**, then
+watch one complete live login before relying on unattended recovery.
+
 It checks the same two endpoints info-kierowca.pl's own site uses to show you slots — it just
 does that automatically, on a timer, instead of you refreshing the page by hand. Checking is
 strictly read-only: no booking, no reserving, nothing beyond checking availability.

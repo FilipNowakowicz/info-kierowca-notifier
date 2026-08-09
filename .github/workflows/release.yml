@@ -51,6 +51,9 @@ jobs:
       - name: Smoke-test verified HTTPS in packaged binary
         shell: bash
         run: '"dist/${{ matrix.dist_name }}" --internal-tls-smoke'
+      - name: Smoke-test keyring discovery in packaged binary
+        shell: bash
+        run: '"dist/${{ matrix.dist_name }}" --internal-keyring-smoke'
       - name: Rename artifact
         shell: bash
         run: mv "dist/${{ matrix.dist_name }}" "${{ matrix.asset_name }}"
