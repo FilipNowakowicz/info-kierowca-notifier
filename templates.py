@@ -1479,7 +1479,10 @@ resetAccountBtn.addEventListener('click', async () => {
   if (!confirm(t("This logs you out and clears your saved settings. You'll need to scan the QR code again. Continue?"))) return;
   resetAccountBtn.disabled = true;
   try {
-    await fetch('/reset-account', {method: 'POST'});
+    const response = await fetch('/reset-account', {method: 'POST'});
+    const data = await response.json();
+    if (!response.ok || !data.ok) throw new Error(data.error || 'Reset failed');
+    if (data.warning) alert(data.warning);
     // Always a full top-level navigation, even when embedded: reset clears
     // config.json and session.json, so what comes next is the login screen,
     // not just an updated settings form — there's no "back to dashboard" to
@@ -1541,6 +1544,7 @@ document.getElementById('form').addEventListener('submit', async (e) => {
     });
     const data = await res.json();
     if (!res.ok || !data.ok) throw new Error(data.error || t('Save failed.'));
+    if (data.warning) alert(t(data.warning));
 
     ikwGoDashboard('ikw-settings-saved');
   } catch (err) {

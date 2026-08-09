@@ -1,5 +1,6 @@
 import unittest
 from keyring.backend import KeyringBackend
+from unittest.mock import patch
 
 import credential_store
 
@@ -54,3 +55,33 @@ class CredentialStoreTests(unittest.TestCase):
             ) as caught:
                 operation()
             self.assertNotIn("D-Bus transport details", str(caught.exception))
+
+    def test_shared_native_backend_policy_accepts_platform_backend(self):
+        backend_type = type(
+            "WinVaultKeyring", (MemoryBackend,),
+            {"__module__": "keyring.backends.Windows"},
+        )
+        backend = backend_type()
+        self.assertIs(
+            credential_store.require_secure_backend(backend, platform="win32"),
+            backend,
+        )
+
+    def test_shared_native_backend_policy_rejects_wrong_platform_backend(self):
+        backend_type = type(
+            "WinVaultKeyring", (MemoryBackend,),
+            {"__module__": "keyring.backends.Windows"},
+        )
+        with self.assertRaises(credential_store.CredentialStorageUnavailable):
+            credential_store.require_secure_backend(
+                backend_type(), platform="darwin"
+            )
+
+    def test_linux_packaging_check_imports_secret_service_implementations(self):
+        with patch("credential_store.importlib.import_module") as imported:
+            detail = credential_store.require_packaged_keyring_support("linux")
+        self.assertEqual(detail, "linux_secret_service_modules")
+        self.assertEqual(
+            [call.args[0] for call in imported.call_args_list],
+            ["keyring.backends.SecretService", "keyring.backends.libsecret"],
+        )

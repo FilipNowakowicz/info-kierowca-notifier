@@ -2,6 +2,9 @@
 import re
 import time
 from dataclasses import dataclass
+from datetime import datetime
+from urllib.parse import urlparse
+from zoneinfo import ZoneInfo
 
 import cdp_client
 
@@ -11,6 +14,12 @@ TIMESTAMP_RE = re.compile(
     r"(\d{2})\.(\d{2})\.(\d{4}),?\s*godz\.\s*(\d{2}):(\d{2}):(\d{2})",
     re.IGNORECASE,
 )
+WARSAW_TIMEZONE = ZoneInfo("Europe/Warsaw")
+
+
+def allowed_messages_origin(url):
+    parsed = urlparse(url)
+    return parsed.scheme == "https" and (parsed.hostname or "").lower() == "messages.google.com"
 
 
 @dataclass(frozen=True)
@@ -88,7 +97,8 @@ class GoogleMessagesWebProvider:
             return None
         day, month, year, hour, minute, second = map(int, match.groups())
         try:
-            return time.mktime((year, month, day, hour, minute, second, 0, 0, -1))
+            return datetime(year, month, day, hour, minute, second,
+                            tzinfo=WARSAW_TIMEZONE).timestamp()
         except (OverflowError, ValueError):
             return None
 
@@ -97,6 +107,8 @@ class GoogleMessagesWebProvider:
         used_codes = used_codes or set()
         try:
             target = self.find_or_create_target(create=False)
+            if not allowed_messages_origin(target.url):
+                return SMSResult("unexpected_messages_origin")
             result = cdp_client.call_function_in_target(
                 self.host, self.port, target, MESSAGES_SCAN_FUNCTION
             ) or {"status": "unsupported", "candidates": []}

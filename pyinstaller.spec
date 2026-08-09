@@ -17,7 +17,11 @@ a = Analysis(
     # data files need listing explicitly or the wizard silently ends up with an empty
     # center list / a categories dropdown missing everything but the B fallback.
     datas=[("word_centers.json", "."), ("categories.json", ".")] + collect_data_files("certifi"),
-    hiddenimports=["truststore", "certifi"],
+    hiddenimports=[
+        "truststore", "certifi", "keyring.backends.Windows",
+        "keyring.backends.macOS", "keyring.backends.SecretService",
+        "keyring.backends.libsecret", "keyring.backends.kwallet",
+    ],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
