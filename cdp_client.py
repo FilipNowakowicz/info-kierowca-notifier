@@ -17,12 +17,44 @@ import socket
 import struct
 import time
 import urllib.request
+from dataclasses import dataclass
 from urllib.parse import urlparse
 
 from paths import CONFIG_DIR, SESSION_FILE
 
 COOKIE_NAMES = {"__Secure-PUDOJT", "__Secure-PUDOJTMD"}
 DOMAIN_SUFFIX = "info-kierowca.pl"
+
+
+class TargetNotFoundError(RuntimeError):
+    """Raised when an explicitly requested CDP page target is unavailable."""
+
+
+class StaleTargetError(TargetNotFoundError):
+    """Raised when a target that was selected earlier has since disappeared."""
+
+
+@dataclass(frozen=True)
+class PageTarget:
+    """Stable metadata for one debuggable Chrome page target.
+
+    Keep this object (especially ``id``), rather than re-selecting a tab by
+    position after a navigation opens another tab.
+    """
+
+    id: str
+    url: str
+    title: str
+    websocket_url: str
+    type: str = "page"
+
+    @classmethod
+    def from_cdp(cls, raw):
+        return cls(
+            id=raw.get("id", ""), url=raw.get("url", ""),
+            title=raw.get("title", ""), websocket_url=raw.get("webSocketDebuggerUrl", ""),
+            type=raw.get("type", ""),
+        )
 
 
 def ws_handshake(sock, host, path):
@@ -135,16 +167,62 @@ def browser_ws_url(host, port):
         return json.loads(resp.read())["webSocketDebuggerUrl"]
 
 
-def page_ws_url(host, port):
-    """Websocket URL of the first open page/tab, or None if there isn't one.
-
-    Browser-scoped calls (Storage.*) can use browser_ws_url, but Page.* and
-    Runtime.* need a specific page target's own socket.
-    """
+def list_page_targets(host, port):
+    """Return metadata for every current page target, in Chrome's order."""
     with urllib.request.urlopen(f"http://{host}:{port}/json", timeout=5) as resp:
-        targets = json.loads(resp.read())
-    pages = [t for t in targets if t.get("type") == "page"]
-    return pages[0]["webSocketDebuggerUrl"] if pages else None
+        raw_targets = json.loads(resp.read())
+    return [PageTarget.from_cdp(raw) for raw in raw_targets if raw.get("type") == "page"]
+
+
+def get_page_target(host, port, target_id):
+    """Return ``target_id`` if it still exists, else raise StaleTargetError."""
+    for target in list_page_targets(host, port):
+        if target.id == target_id:
+            return target
+    raise StaleTargetError(f"CDP page target {target_id!r} no longer exists")
+
+
+def find_page_target(host, port, *, target_id=None, host_match=None, url_match=None, title_match=None):
+    """Find one page target by explicit ID or URL/host/title criteria.
+
+    A supplied criterion is mandatory.  This deliberately never falls back to
+    another page: a changed tab order must not redirect browser automation.
+    """
+    if not any((target_id, host_match, url_match, title_match)):
+        raise ValueError("Specify target_id, host_match, url_match, or title_match")
+    for target in list_page_targets(host, port):
+        if target_id and target.id != target_id:
+            continue
+        parsed_host = urlparse(target.url).hostname or ""
+        if host_match and host_match.lower() not in parsed_host.lower():
+            continue
+        if url_match and url_match.lower() not in target.url.lower():
+            continue
+        if title_match and title_match.lower() not in target.title.lower():
+            continue
+        return target
+    criteria = ", ".join(
+        f"{name}={value!r}" for name, value in (
+            ("target_id", target_id), ("host_match", host_match),
+            ("url_match", url_match), ("title_match", title_match),
+        ) if value
+    )
+    raise TargetNotFoundError(f"No CDP page target matches {criteria}")
+
+
+def page_ws_url(host, port, *, target_id=None, host_match=None, url_match=None, title_match=None):
+    """Return a requested page target's socket URL, or None with no pages.
+
+    The no-criteria form remains for legacy single-tab callers only.  Any
+    requested match is strict and raises TargetNotFoundError if absent.
+    """
+    if any((target_id, host_match, url_match, title_match)):
+        return find_page_target(
+            host, port, target_id=target_id, host_match=host_match,
+            url_match=url_match, title_match=title_match,
+        ).websocket_url
+    pages = list_page_targets(host, port)
+    return pages[0].websocket_url if pages else None
 
 
 @contextlib.contextmanager
@@ -194,14 +272,63 @@ def set_cookies(host, port, cookies):
         cdp_call(sock, 1, "Storage.setCookies", {"cookies": cookie_params})
 
 
-def navigate(host, port, url):
-    """Navigate the first open page/tab to `url`. No script injection —
-    see inject_and_navigate for the login-auto-click variant that needs one.
+def create_page_target(host, port, url="about:blank"):
+    """Create and return a new page target without depending on tab order."""
+    with cdp_socket(browser_ws_url(host, port)) as sock:
+        result = cdp_call(sock, 1, "Target.createTarget", {"url": url})
+    target_id = result.get("targetId")
+    if not target_id:
+        raise RuntimeError("Chrome did not return a target ID for the new tab")
+    return get_page_target(host, port, target_id)
+
+
+def _target_id(target):
+    return target.id if isinstance(target, PageTarget) else target
+
+
+def navigate_target(host, port, target, url, script=None):
+    """Optionally inject a script then navigate exactly ``target``.
+
+    Target existence is checked immediately before opening its websocket.  A
+    closed tab therefore fails loudly instead of selecting a replacement tab.
     """
-    inject_and_navigate(host, port, url, script=None)
+    current = get_page_target(host, port, _target_id(target))
+    with cdp_socket(current.websocket_url) as sock:
+        cdp_call(sock, 1, "Page.enable")
+        if script:
+            cdp_call(sock, 2, "Page.addScriptToEvaluateOnNewDocument", {"source": script})
+        cdp_call(sock, 3, "Page.navigate", {"url": url})
 
 
-def evaluate_in_page(host, port, expression):
+def evaluate_in_target(host, port, target, expression):
+    """Evaluate JavaScript in exactly ``target`` and return its JSON value."""
+    current = get_page_target(host, port, _target_id(target))
+    with cdp_socket(current.websocket_url) as sock:
+        result = cdp_call(
+            sock, 1, "Runtime.evaluate", {"expression": expression, "returnByValue": True}
+        )
+    return result.get("result", {}).get("value")
+
+
+def bring_target_to_front(host, port, target):
+    """Focus exactly ``target``; raise if it has disappeared."""
+    current = get_page_target(host, port, _target_id(target))
+    with cdp_socket(current.websocket_url) as sock:
+        cdp_call(sock, 1, "Page.bringToFront")
+
+
+def navigate(host, port, url, target=None):
+    """Navigate ``target`` or, for legacy callers, the current first page."""
+    if target is not None:
+        return navigate_target(host, port, target, url)
+    ws_url = page_ws_url(host, port)
+    if ws_url is None:
+        raise TargetNotFoundError("No page target found to navigate")
+    with cdp_socket(ws_url) as sock:
+        cdp_call(sock, 1, "Page.navigate", {"url": url})
+
+
+def evaluate_in_page(host, port, expression, target=None, **match):
     """Run a JS expression in the first open page/tab and return its value.
 
     Unlike fetch_cookies (which talks to the browser-level debugger target,
@@ -209,7 +336,9 @@ def evaluate_in_page(host, port, expression):
     a specific page target's own websocket — so this queries /json for the
     open tabs first.
     """
-    ws_url = page_ws_url(host, port)
+    if target is not None:
+        return evaluate_in_target(host, port, target, expression)
+    ws_url = page_ws_url(host, port, **match)
     if ws_url is None:
         return None
     with cdp_socket(ws_url) as sock:
@@ -219,7 +348,7 @@ def evaluate_in_page(host, port, expression):
     return result.get("result", {}).get("value")
 
 
-def inject_and_navigate(host, port, url, script):
+def inject_and_navigate(host, port, url, script, target=None):
     """Register `script` to run on every future document in the first open
     page/tab, then navigate it to `url`. `script=None` skips the injection
     and just navigates (see navigate()).
@@ -230,9 +359,11 @@ def inject_and_navigate(host, port, url, script):
     the very first paint of `url` (and every redirect after it), instead of
     only reacting after our own next poll tick.
     """
+    if target is not None:
+        return navigate_target(host, port, target, url, script=script)
     ws_url = page_ws_url(host, port)
     if ws_url is None:
-        raise RuntimeError("No page target found to navigate")
+        raise TargetNotFoundError("No page target found to navigate")
     with cdp_socket(ws_url) as sock:
         cdp_call(sock, 1, "Page.enable")
         if script:

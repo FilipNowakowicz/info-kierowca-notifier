@@ -263,9 +263,9 @@ AUTO_CLICK_OBSERVER_JS = CLICK_LOGIC_JS + (
 )
 
 
-def try_auto_click(host, port):
+def try_auto_click(host, port, target=None):
     try:
-        return cdp_client.evaluate_in_page(host, port, AUTO_CLICK_JS)
+        return cdp_client.evaluate_in_page(host, port, AUTO_CLICK_JS, target=target)
     except Exception as e:
         # Swallowed by design (Chrome may be mid-navigation) but logged: a
         # click failing here silently every 0.5s for the whole wait looks
@@ -414,7 +414,7 @@ def release_lock():
         pass
 
 
-def wait_for_cookies(host, port, timeout, chrome_proc):
+def wait_for_cookies(host, port, timeout, chrome_proc, target=None):
     """timeout=None waits indefinitely — but always bails out the moment
     chrome_proc has exited. Without this, a crashed/killed Chrome left this
     looping forever: fetch_cookies() against a dead debug port just raises,
@@ -451,7 +451,7 @@ def wait_for_cookies(host, port, timeout, chrome_proc):
                 return cookies
         except Exception:
             pass  # Chrome may be mid-navigation; just retry
-        clicked = try_auto_click(host, port)
+        clicked = try_auto_click(host, port, target=target)
         if clicked:
             print(f"auto-clicked: {clicked!r}")
         time.sleep(0.5)
@@ -548,8 +548,13 @@ def main():
         # Register the click-observer before the real page ever loads, then
         # navigate — so it's already watching from the first paint instead
         # of racing our own next poll tick.
-        cdp_client.inject_and_navigate("127.0.0.1", args.port, args.url, AUTO_CLICK_OBSERVER_JS)
-        cookies = wait_for_cookies("127.0.0.1", args.port, args.timeout, chrome_proc)
+        login_target = cdp_client.create_page_target("127.0.0.1", args.port)
+        cdp_client.inject_and_navigate(
+            "127.0.0.1", args.port, args.url, AUTO_CLICK_OBSERVER_JS, target=login_target
+        )
+        cookies = wait_for_cookies(
+            "127.0.0.1", args.port, args.timeout, chrome_proc, target=login_target
+        )
 
         if cookies is None:
             if chrome_proc.poll() is not None:
