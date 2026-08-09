@@ -25,22 +25,15 @@ import json
 import os
 import subprocess
 import time
-import urllib.request
 import uuid
 from datetime import datetime
 
 import auto_refresh_session
 import cdp_client
-import tls_transport
+import ntfy_transport
 from auto_refresh_session import find_chrome
 
 from paths import CONFIG_FILE, RESCHEDULE_CONFIRM_COOLDOWN_FILE, STATE_DIR  # noqa: E402
-
-# Duplicated from notifier.py rather than imported — notifier.py imports this
-# module at the top level (OPEN_BROWSER_PORT = open_logged_in_browser.DEFAULT_PORT),
-# so importing notifier back here would be circular.
-NTFY_URL = "https://ntfy.sh"
-NTFY_TIMEOUT = 15
 
 PROFILE_DIR = STATE_DIR / "chrome-reschedule-profile"
 
@@ -308,14 +301,7 @@ def read_config():
 
 
 def push_ntfy(topic, title, message, priority="default"):
-    """POST a plain notification to ntfy.sh — duplicated from
-    notifier.push_ntfy() rather than imported, same circular-import reason
-    as NTFY_URL/NTFY_TIMEOUT above. No tags param: this project deliberately
-    dropped emoji tags from pushes elsewhere (see git history), so this
-    stays consistent with that. Best-effort — a failure here is printed
-    (now captured in RESCHEDULE_LOG_FILE rather than lost to /dev/null, see
-    trigger_open_browser()) rather than raised, same as every other outcome
-    in this file.
+    """Send a plain ntfy notification through the shared safe transport.
 
     Used only for the handful of outcomes in try_select_target_slot() tied
     to auto_confirm_reschedule actually attempting or completing the final
@@ -324,16 +310,10 @@ def push_ntfy(topic, title, message, priority="default"):
     browser ever opened and whose own failures are logged but not worth a
     second, separate alert.
     """
-    if not topic:
-        return
-    url = f"{NTFY_URL}/{topic}"
-    headers = {"Title": title, "Priority": priority}
-    req = urllib.request.Request(url, data=message.encode("utf-8"), headers=headers, method="POST")
-    try:
-        with tls_transport.urlopen(req, timeout=NTFY_TIMEOUT):
-            pass
-    except Exception as e:
-        print(f"Couldn't send push notification ({e!r}).")
+    outcome = ntfy_transport.push_ntfy(topic, title, message, priority=priority)
+    if not outcome.ok:
+        print("Couldn't send push notification (reason={}).".format(outcome.kind))
+    return outcome
 
 
 def update_current_slot_date(new_date_iso):

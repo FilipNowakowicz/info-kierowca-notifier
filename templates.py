@@ -1302,7 +1302,7 @@ testPushBtn.addEventListener('click', async () => {
       body: JSON.stringify({topic: ntfyInput.value}),
     });
     const data = await res.json();
-    testPushStatus.textContent = data.ok ? t('Sent — check your phone.') : (data.error || t('Failed to send.'));
+    testPushStatus.textContent = data.ok ? t('Sent — check your phone.') : t(data.error || 'Failed to send.');
   } catch (e) {
     testPushStatus.textContent = t('Failed to send.');
   } finally {
