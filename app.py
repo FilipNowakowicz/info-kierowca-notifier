@@ -390,9 +390,8 @@ class AppHandler(http.server.BaseHTTPRequestHandler):
 
     def _handle_manual_login(self):
         """Backing handler for the 'Open browser' button: probes the session
-        live and either opens the Chrome+QR relogin (forced, so a forgotten
-        QR window from a previous session can't silently block it — see
-        trigger_auto_refresh()'s docstring) or a plain logged-in browser
+        live and either opens the Chrome+QR relogin (manually retrying past
+        any automatic cooldown, but preserving a live QR window) or a plain logged-in browser
         tab. auto_click=False here on purpose: this button is for opening
         the site or troubleshooting, not for the reschedule flow, so unlike
         the automatic urgent-slot-hit trigger it must NOT click through to
@@ -415,6 +414,9 @@ class AppHandler(http.server.BaseHTTPRequestHandler):
             )
             messages = {
                 notifier.TRIGGER_LAUNCHED: "Session looks expired — opening Chrome for a fresh QR login.",
+                notifier.TRIGGER_MANUAL_RETRY_LAUNCHED: "Session looks expired — opening Chrome for a fresh QR login.",
+                notifier.TRIGGER_ALREADY_RUNNING: "A QR login is already open — finish scanning there.",
+                notifier.TRIGGER_BACKOFF_ACTIVE: "Automatic relogin is cooling down; use this button to retry now.",
                 notifier.TRIGGER_DISABLED: "Session looks expired, but auto_refresh_chrome is turned off in Settings.",
                 notifier.TRIGGER_LAUNCH_FAILED: "Session looks expired, but Chrome failed to launch — check the log.",
                 notifier.TRIGGER_NO_BROWSER: "Session looks expired, but no Chrome, Edge, or other "
@@ -437,7 +439,7 @@ class AppHandler(http.server.BaseHTTPRequestHandler):
             except Exception:
                 pass
         outcome = notifier.trigger_auto_refresh(AppHandler.logger, config, force=True, notify_phone=False)
-        if outcome == notifier.TRIGGER_LAUNCHED:
+        if outcome in (notifier.TRIGGER_LAUNCHED, notifier.TRIGGER_MANUAL_RETRY_LAUNCHED):
             threading.Thread(
                 target=_wait_for_relogin_and_wake,
                 args=(prior_captured_at, AppHandler.wake_event),
@@ -445,6 +447,9 @@ class AppHandler(http.server.BaseHTTPRequestHandler):
             ).start()
         messages = {
             notifier.TRIGGER_LAUNCHED: "Opening Chrome for a fresh QR login.",
+            notifier.TRIGGER_MANUAL_RETRY_LAUNCHED: "Opening Chrome for a fresh QR login.",
+            notifier.TRIGGER_ALREADY_RUNNING: "A QR login is already open — finish scanning there.",
+            notifier.TRIGGER_BACKOFF_ACTIVE: "Automatic relogin is cooling down; retry is available now.",
             notifier.TRIGGER_DISABLED: "auto_refresh_chrome is turned off in Settings.",
             notifier.TRIGGER_LAUNCH_FAILED: "Chrome failed to launch — check the log.",
             notifier.TRIGGER_NO_BROWSER: "No Chrome, Edge, or other Chromium-based browser was found "
@@ -454,10 +459,8 @@ class AppHandler(http.server.BaseHTTPRequestHandler):
 
     def _handle_login_start(self):
         """Backs the login screen's button: launches Chrome for the QR scan
-        before any config exists yet. force=True for the same reason the
-        "Open browser" button uses it (see trigger_auto_refresh's docstring)
-        — a stale lock left by a forgotten QR window must not silently
-        no-op a user's own deliberate click on their very first run.
+        before any config exists yet. force=True is a deliberate retry that
+        bypasses automatic cooldown, but retains a live QR login if one exists.
         """
         outcome = notifier.trigger_auto_refresh(
             AppHandler.logger, {}, force=True, notify_phone=False
@@ -465,6 +468,9 @@ class AppHandler(http.server.BaseHTTPRequestHandler):
         messages = {
             notifier.TRIGGER_NO_BROWSER: "No Chrome, Edge, or other Chromium-based browser was found "
                 "on this machine. Install one and try again.",
+            notifier.TRIGGER_MANUAL_RETRY_LAUNCHED: "Opening Chrome for a fresh QR login.",
+            notifier.TRIGGER_ALREADY_RUNNING: "A QR login is already open — finish scanning there.",
+            notifier.TRIGGER_BACKOFF_ACTIVE: "Automatic relogin is cooling down; retry is available now.",
             notifier.TRIGGER_LAUNCH_FAILED: "Could not open Chrome — try the manual option below.",
         }
         self._reply_outcome(outcome, messages, default=None)

@@ -13,11 +13,9 @@ import logging.handlers
 import os
 import random
 import shutil
-import signal
 import subprocess
 import sys
 import threading
-import time
 import urllib.error
 import urllib.request
 from datetime import datetime, timedelta
@@ -26,11 +24,13 @@ from pathlib import Path
 import auto_refresh_session
 import open_logged_in_browser
 import tls_transport
+from relogin_backoff import RetryBackoff
 from paths import (  # noqa: F401  (re-exported: other modules read these off notifier)
     AUTO_REFRESH_LOG_FILE,
     CONFIG_FILE,
     LOG_FILE,
     PAUSE_FILE,
+    RELOGIN_BACKOFF_FILE,
     RESCHEDULE_CONFIRM_COOLDOWN_FILE,
     RESCHEDULE_LOG_FILE,
     SESSION_FILE,
@@ -302,13 +302,17 @@ AUTO_REFRESH_LOCK = auto_refresh_session.LOCK_FILE
 TRIGGER_DISABLED = "disabled"
 TRIGGER_NO_BROWSER = "no_chromium_browser"
 TRIGGER_ALREADY_RUNNING = "already_running"
+TRIGGER_BACKOFF_ACTIVE = "backoff_active"
 TRIGGER_LAUNCHED = "launched"
+TRIGGER_MANUAL_RETRY_LAUNCHED = "manual_retry_launched"
 TRIGGER_LAUNCH_FAILED = "launch_failed"
 TRIGGER_OUTCOMES = (
     TRIGGER_DISABLED,
     TRIGGER_NO_BROWSER,
     TRIGGER_ALREADY_RUNNING,
+    TRIGGER_BACKOFF_ACTIVE,
     TRIGGER_LAUNCHED,
+    TRIGGER_MANUAL_RETRY_LAUNCHED,
     TRIGGER_LAUNCH_FAILED,
 )
 
@@ -328,16 +332,11 @@ def trigger_auto_refresh(logger, config, force=False, notify_phone=True):
     re-invoke the binary with a hidden flag that app.py dispatches straight
     to auto_refresh_session.main(), keeping it a separate detached process.
 
-    force=True (the manual "Open browser" button) kills whatever's holding the
-    lock and relaunches anyway. This exists because the lock has no timeout
-    (auto_refresh_session.py waits indefinitely for a QR scan) and survives
-    app.py restarts, since the Chrome+QR process it guards is detached —
-    the most common way this bites someone is a QR window left open and
-    forgotten from a previous session (confirmed live: a lock stayed held
-    for ~10 hours), which silently no-ops every later auto-trigger,
-    including the very next app launch, with no visible sign why. The
-    automatic path stays conservative (never force); force is opt-in so a
-    background retry never kills a window the user is mid-scan on.
+    force=True denotes a deliberate manual retry. It bypasses only persisted
+    automatic-failure backoff; it never replaces an active QR-login process.
+    A live lock always returns ``already_running`` so a second click cannot
+    close a browser while the person is mid-scan. Dead or malformed lock files
+    are still removed before launching a new process.
 
     notify_phone=False (the manual "Open browser"/login-screen buttons) skips
     the ntfy push telling the user to go scan a QR — they just clicked a
@@ -350,39 +349,30 @@ def trigger_auto_refresh(logger, config, force=False, notify_phone=True):
 
     Returns one of the TRIGGER_* outcome constants.
     """
+    automatic = not force
+    backoff = RetryBackoff(RELOGIN_BACKOFF_FILE)
     if not config.get("auto_refresh_chrome", True):
         return TRIGGER_DISABLED
+    remaining = backoff.cooldown_remaining(manual=force)
+    if remaining:
+        logger.info(
+            "outcome=auto_refresh_skipped detail=backoff_active remaining_seconds=%d",
+            remaining,
+        )
+        return TRIGGER_BACKOFF_ACTIVE
     if not auto_refresh_session.chrome_available():
         logger.info("outcome=auto_refresh_no_browser detail=no_chromium_found")
+        if automatic:
+            backoff.record_failure("browser_unavailable")
         return TRIGGER_NO_BROWSER
     if AUTO_REFRESH_LOCK.exists():
         try:
             pid = int(AUTO_REFRESH_LOCK.read_text().strip())
             os.kill(pid, 0)
-            if not force:
-                logger.info("outcome=auto_refresh_skipped detail=already_running pid=%s", pid)
-                return TRIGGER_ALREADY_RUNNING
-            logger.info("outcome=auto_refresh_force_restart detail=killing_stale pid=%s", pid)
-            try:
-                os.kill(pid, signal.SIGTERM)
-            except OSError:
-                pass
-            else:
-                # Wait for it to actually go before relaunching. It has a
-                # SIGTERM handler to run (closing its Chrome, which still
-                # holds the shared --user-data-dir), and the systemd path
-                # reuses a fixed --unit name that systemd-run refuses to
-                # reissue while the old unit is still deactivating.
-                for _ in range(50):  # ~5s
-                    try:
-                        os.kill(pid, 0)
-                    except OSError:
-                        break
-                    time.sleep(0.1)
-                else:
-                    logger.info("outcome=auto_refresh_force_restart detail=still_alive pid=%s", pid)
+            logger.info("outcome=auto_refresh_skipped detail=already_running pid=%s", pid)
+            return TRIGGER_ALREADY_RUNNING
         except ValueError:
-            pass  # stale lock — let auto_refresh_session.py sort it out
+            pass  # malformed lock — safe to remove before launching
         except OSError:
             pass  # pid is gone — stale lock, safe to relaunch
         AUTO_REFRESH_LOCK.unlink(missing_ok=True)
@@ -412,6 +402,8 @@ def trigger_auto_refresh(logger, config, force=False, notify_phone=True):
             cmd = [python, str(AUTO_REFRESH_SCRIPT)]
     if not notify_phone:
         cmd.append("--no-phone-push")
+    if automatic:
+        cmd.append("--automatic")
     try:
         AUTO_REFRESH_LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
         with open(AUTO_REFRESH_LOG_FILE, "a") as logf:
@@ -421,9 +413,11 @@ def trigger_auto_refresh(logger, config, force=False, notify_phone=True):
                 cmd, stdout=logf, stderr=subprocess.STDOUT, start_new_session=True
             )
         logger.info("outcome=auto_refresh_launched")
-        return TRIGGER_LAUNCHED
+        return TRIGGER_MANUAL_RETRY_LAUNCHED if force else TRIGGER_LAUNCHED
     except Exception as e:
         logger.info("outcome=auto_refresh_launch_failed detail=%r", str(e))
+        if automatic:
+            backoff.record_failure("launch_failed")
         return TRIGGER_LAUNCH_FAILED
 
 

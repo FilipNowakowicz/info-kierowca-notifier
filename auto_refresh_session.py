@@ -35,7 +35,8 @@ import cdp_client
 import tls_transport
 
 from paths import AUTO_REFRESH_LOCK as LOCK_FILE  # noqa: E402
-from paths import CONFIG_FILE, STATE_DIR  # noqa: E402,F401
+from paths import CONFIG_FILE, RELOGIN_BACKOFF_FILE, STATE_DIR  # noqa: E402,F401
+from relogin_backoff import RetryBackoff  # noqa: E402
 
 PROFILE_DIR = STATE_DIR / "chrome-relogin-profile"
 
@@ -476,6 +477,9 @@ def main():
     parser.add_argument(
         "--keep-open", action="store_true", help="Leave Chrome open after capturing cookies"
     )
+    parser.add_argument(
+        "--automatic", action="store_true", help=argparse.SUPPRESS
+    )
     args = parser.parse_args()
 
     # notifier.trigger_auto_refresh(force=True) — the "Open browser" button's
@@ -507,6 +511,7 @@ def main():
         return
 
     chrome_proc = None
+    backoff = RetryBackoff(RELOGIN_BACKOFF_FILE)
     try:
         chrome = find_chrome()
         print(f"using browser: {chrome}")
@@ -560,6 +565,7 @@ def main():
         if cookies is None:
             if chrome_proc.poll() is not None:
                 print("Chrome exited before logging in (crashed or was closed).")
+                failure_reason = "browser_closed"
                 notify_desktop(
                     "info-kierowca: relogin failed",
                     "Chrome closed before logging in — run auto_refresh_session.py again",
@@ -567,19 +573,29 @@ def main():
                 )
             else:
                 print(f"No login detected within {args.timeout}s.")
+                failure_reason = "authentication_timeout"
                 notify_desktop(
                     "info-kierowca: relogin timed out",
                     f"No login detected within {args.timeout}s — run auto_refresh_session.py again when ready",
                     "critical",
                 )
+            if args.automatic:
+                delay = backoff.record_failure(failure_reason)
+                print(f"automatic relogin backoff: {delay}s ({failure_reason})")
             sys.exit(1)
 
         cdp_client.write_session_file(cookies)
+        backoff.record_success()
         print(f"Wrote {len(cookies)} cookie(s) to {cdp_client.SESSION_FILE}")
         notify_desktop(
             "info-kierowca: session refreshed",
             "Logged back in — the notifier will pick it up on the next check",
         )
+    except Exception:
+        if args.automatic:
+            delay = backoff.record_failure("authentication_flow_failed")
+            print(f"automatic relogin backoff: {delay}s (authentication_flow_failed)")
+        raise
     finally:
         if chrome_proc and not args.keep_open:
             chrome_proc.terminate()

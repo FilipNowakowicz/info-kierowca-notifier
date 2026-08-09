@@ -180,6 +180,13 @@ captures the new cookies and writes `session.json` automatically. A lock file
 subsequent 60s tick while a relogin is already in flight; it's cleaned up when that run finishes
 (delete it by hand if a run ever crashes without cleaning up).
 
+If an unattended relogin itself fails (for example Chrome closes before the QR scan), the
+notifier records a small, non-sensitive retry state in
+`~/.local/state/info-kierowca-notifier/relogin-backoff.json`. Automatic retries wait 1 minute,
+then double after repeated failures up to 1 hour, including across restarts. A successful QR
+login clears that state immediately. The dashboard's deliberate relogin buttons always bypass
+the cooldown; they do not disable certificate checks or discard session data.
+
 **Only works if a real desktop/GUI session is available** — Chrome needs somewhere to render the
 QR code. If `info-kierowca-notifier.service` runs under systemd on a headless box or before you've
 logged into a desktop session, disable it (`auto_refresh_chrome: false` in `config.json`) and use
