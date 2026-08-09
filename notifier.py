@@ -22,6 +22,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 import auto_refresh_session
+import ntfy_transport
 import open_logged_in_browser
 import tls_transport
 from relogin_backoff import RetryBackoff
@@ -110,8 +111,6 @@ SEARCH_URL = f"{BASE}/bknd/exam/api/v1/Schedules/user/MultipleCentersExams"
 # category) — used by app.py's setup wizard to prefill the PKK number and
 # category from the account instead of asking the user to type them in.
 PKK_PROFILES_URL = f"{BASE}/bknd/status/api/v1/pkk/get_profiles"
-
-NTFY_URL = "https://ntfy.sh"
 
 # The site itself won't show slots further out than this, so there's no
 # benefit to making it configurable — it's a hard line on info-kierowca.pl,
@@ -275,19 +274,15 @@ def notify(summary, body, urgency="normal"):
 
 
 def push_ntfy(logger, topic, title, message, priority="default", tags=None):
-    """POST a plain notification (no cookies, no PKK) to ntfy.sh. Best-effort."""
-    if not topic:
-        return
-    url = f"{NTFY_URL}/{topic}"
-    headers = {"Title": title, "Priority": priority}
-    if tags:
-        headers["Tags"] = ",".join(tags)
-    req = urllib.request.Request(url, data=message.encode("utf-8"), headers=headers, method="POST")
-    try:
-        with tls_transport.urlopen(req, timeout=TIMEOUT):
-            pass
-    except Exception as e:
-        logger.info("outcome=push_failed detail=%r", str(e))
+    """Send an ntfy push and return a safe, structured delivery outcome."""
+    outcome = ntfy_transport.push_ntfy(
+        topic, title, message, priority=priority, tags=tags, timeout=TIMEOUT
+    )
+    if outcome.ok:
+        logger.info("outcome=push_sent status=%s", outcome.http_status)
+    else:
+        logger.info("outcome=push_failed reason=%s status=%s", outcome.kind, outcome.http_status)
+    return outcome
 
 
 AUTO_REFRESH_SCRIPT = Path(__file__).parent / "auto_refresh_session.py"

@@ -28,11 +28,10 @@ import signal
 import subprocess
 import sys
 import time
-import urllib.request
 from pathlib import Path
 
 import cdp_client
-import tls_transport
+import ntfy_transport
 
 from paths import AUTO_REFRESH_LOCK as LOCK_FILE  # noqa: E402
 from paths import CONFIG_FILE, RELOGIN_BACKOFF_FILE, STATE_DIR  # noqa: E402,F401
@@ -375,21 +374,15 @@ def push_ntfy(title, message, priority="default", tags=None):
     try:
         config = json.loads(CONFIG_FILE.read_text())
     except Exception:
-        return
+        return ntfy_transport.NotificationOutcome(
+            ntfy_transport.NOT_CONFIGURED, "No notification topic is configured."
+        )
     topic = config.get("ntfy_topic")
     if not topic or not config.get("phone_alerts_relogin", True):
-        return
-    headers = {"Title": title, "Priority": priority}
-    if tags:
-        headers["Tags"] = ",".join(tags)
-    req = urllib.request.Request(
-        f"https://ntfy.sh/{topic}", data=message.encode("utf-8"), headers=headers, method="POST"
-    )
-    try:
-        with tls_transport.urlopen(req, timeout=15):
-            pass
-    except Exception:
-        pass
+        return ntfy_transport.NotificationOutcome(
+            ntfy_transport.NOT_CONFIGURED, "Phone alerts are disabled or not configured."
+        )
+    return ntfy_transport.push_ntfy(topic, title, message, priority=priority, tags=tags)
 
 
 def acquire_lock():
