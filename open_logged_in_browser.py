@@ -98,22 +98,7 @@ def click_text_js(text):
     # (buttons/links only, shorter text cap) — see the module docstring — but
     # the clickability heuristic itself is the shared one.
     return auto_refresh_session.CLICKABLE_HELPERS_JS + """
-(function(text) {
-  var all = document.querySelectorAll('button, a, [role="button"]');
-  var best = null;
-  for (var i = 0; i < all.length; i++) {
-    var el = all[i];
-    var t = (el.innerText || el.textContent || '').trim();
-    if (t && t.length < 60 && t.toLowerCase().indexOf(text.toLowerCase()) !== -1) {
-      if (!best || t.length < best[1].length) best = [el, t];
-    }
-  }
-  if (best) {
-    __ikw_clickableAncestor(best[0]).click();
-    return true;
-  }
-  return false;
-})(%s)
+(function(text) { return __ikw_clickByText(text, 'button, a, [role="button"]', false, false); })(%s)
 """ % json.dumps(text)
 
 
@@ -175,7 +160,17 @@ def _poll_until_truthy(host, port, js, timeout=20, target=None):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         try:
-            if cdp_client.evaluate_in_page(host, port, js, target=target):
+            result = cdp_client.evaluate_in_page(host, port, js, target=target)
+            if result is True or (isinstance(result, dict) and result.get("clicked")):
+                if isinstance(result, dict):
+                    print(
+                        "browser click result "
+                        f"label={result.get('requested_label')!r} "
+                        f"matched={result.get('matched_text')!r} "
+                        f"host={result.get('page_host')!r} tag={result.get('tag')!r} "
+                        f"id={result.get('element_id')!r} class={result.get('element_class')!r} "
+                        f"href={result.get('href')!r}"
+                    )
                 return True
         except Exception:
             pass
@@ -206,19 +201,7 @@ def click_enabled_button_js(text):
     # and an exact match is the safer choice given what CONFIRM_SUMMARY_TEXT
     # actually does.
     return auto_refresh_session.CLICKABLE_HELPERS_JS + """
-(function(text) {
-  var all = document.querySelectorAll('button, [role="button"]');
-  for (var i = 0; i < all.length; i++) {
-    var el = all[i];
-    var t = (el.innerText || el.textContent || '').trim();
-    if (t === text) {
-      if (el.disabled || el.getAttribute('aria-disabled') === 'true') return false;
-      el.click();
-      return true;
-    }
-  }
-  return false;
-})(%s)
+(function(text) { return __ikw_clickByText(text, 'button, [role="button"]', true, true); })(%s)
 """ % json.dumps(text)
 
 

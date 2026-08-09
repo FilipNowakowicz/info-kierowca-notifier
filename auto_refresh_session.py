@@ -137,7 +137,7 @@ AUTO_CLICK_TARGETS = ["Aplikacja mObywatel", "gov.pl", "Zaloguj się"]
 # site-fragile code in the project — when info-kierowca.pl reshuffles its
 # markup it gets edited under pressure, so it lives in exactly one place
 # rather than in two copies that can silently drift apart.
-CLICKABLE_HELPERS_JS = """
+CLICKABLE_HELPERS_JS = r"""
 function __ikw_isVisible(el) {
   var style = window.getComputedStyle(el);
   if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
@@ -157,6 +157,75 @@ function __ikw_clickableAncestor(el) {
   }
   return el;
 }
+function __ikw_text(el) {
+  return (el.innerText || el.textContent || '').replace(/\\s+/g, ' ').trim();
+}
+function __ikw_pageIsKnownError() {
+  var body = __ikw_text(document.body).toLowerCase();
+  return !!document.querySelector('.alertPage, [class*="alertPage"], .wkProcessUsed') ||
+    body.indexOf('wkprocessused') !== -1 ||
+    body.indexOf('został już użyty') !== -1 || body.indexOf('zostal juz uzyty') !== -1 ||
+    body.indexOf('strona błędu') !== -1 || body.indexOf('strona bledu') !== -1;
+}
+function __ikw_isExcludedControl(el) {
+  var cur = el;
+  for (var i = 0; i < 8 && cur; i++, cur = cur.parentElement) {
+    var tag = (cur.tagName || '').toLowerCase();
+    var identity = ((cur.id || '') + ' ' + (cur.className || '') + ' ' +
+      (cur.getAttribute('role') || '') + ' ' + (cur.getAttribute('aria-label') || '')).toLowerCase();
+    var href = (cur.href || cur.getAttribute('href') || '').toLowerCase();
+    var text = __ikw_text(cur).toLowerCase();
+    if (tag === 'header' || tag === 'footer' || tag === 'app-logo' ||
+        tag === 'app-wk-footer' || tag === 'app-wk-language-switcher' ||
+        /(^|[ _-])(logo|footer|header|language|lang|go-back|back)([ _-]|$)/.test(identity) ||
+        /\b(wstecz|powrót|powrot|back|cofnij|język|jezyk|language)\b/.test(text) ||
+        /\b(załóż|zaloz|utwórz|utworz|create account|przypomnij|reminder|forgot password|nie pamiętam|nie pamietam|polityka|privacy|pomoc|help|regulamin|terms)\b/.test(text)) {
+      return true;
+    }
+    // A regular gov.pl information link is not an authentication chooser.
+    // login.gov.pl remains eligible; it is part of the expected login route.
+    if (/https?:\/\/([^/]*\.)?gov\.pl(?:[/:]|$)/.test(href) &&
+        href.indexOf('login.gov.pl') === -1) return true;
+  }
+  return false;
+}
+function __ikw_diagnostics(label, matched, el, reason) {
+  var href = el ? (el.href || el.getAttribute('href') || '') : '';
+  var safeHref = href;
+  try { safeHref = new URL(href, location.href).origin + new URL(href, location.href).pathname; } catch (e) {}
+  return {
+    clicked: false, reason: reason || 'not_found', requested_label: label || '',
+    matched_text: matched || '', page_url: String(location.origin || '') + String(location.pathname || ''),
+    page_host: String(location.hostname || ''), tag: el ? el.tagName : '',
+    element_id: el ? (el.id || '') : '', element_class: el ? String(el.className || '') : '',
+    href: safeHref
+  };
+}
+function __ikw_clickByText(label, selector, exact, requireEnabled) {
+  if (__ikw_pageIsKnownError()) return __ikw_diagnostics(label, '', null, 'known_error_page');
+  var all = document.querySelectorAll(selector), candidates = [];
+  var wanted = label.toLowerCase();
+  for (var i = 0; i < all.length; i++) {
+    var el = all[i], matched = __ikw_text(el);
+    if (!__ikw_isVisible(el) || __ikw_isExcludedControl(el) || !matched) continue;
+    if ((exact && matched !== label) || (!exact && matched.toLowerCase().indexOf(wanted) === -1)) continue;
+    if (requireEnabled && (el.disabled || el.getAttribute('aria-disabled') === 'true')) continue;
+    var clickable = __ikw_clickableAncestor(el);
+    if (!clickable || __ikw_isExcludedControl(clickable)) continue;
+    var duplicate = false;
+    for (var c = 0; c < candidates.length; c++) {
+      if (candidates[c][0] === clickable) { duplicate = true; break; }
+    }
+    if (!duplicate) candidates.push([clickable, matched]);
+  }
+  if (!candidates.length) return __ikw_diagnostics(label, '', null, 'not_found');
+  candidates.sort(function(a, b) { return a[1].length - b[1].length; });
+  if (candidates.length > 1 && candidates[0][1].length === candidates[1][1].length) {
+    return __ikw_diagnostics(label, '', null, 'ambiguous_match');
+  }
+  var best = candidates[0], result = __ikw_diagnostics(label, best[1], best[0], 'clicked');
+  best[0].click(); result.clicked = true; return result;
+}
 """
 
 CLICK_LOGIC_JS = """
@@ -166,19 +235,20 @@ function __ikw_stopped() {
 }
 """ + CLICKABLE_HELPERS_JS + """
 function __ikw_findAndClick(targets) {
-  if (__ikw_stopped()) return null;
+  if (__ikw_stopped()) return __ikw_diagnostics('', '', null, 'stopped');
+  if (__ikw_pageIsKnownError()) return __ikw_diagnostics('', '', null, 'known_error_page');
   var all = document.querySelectorAll('button, a, [role="button"], li, div, span');
   for (var ti = 0; ti < targets.length; ti++) {
     var text = targets[ti];
-    var best = null;
+    var candidates = [];
     for (var i = 0; i < all.length; i++) {
       var el = all[i];
       // textContent (unlike innerText) includes text from display:none
       // elements, so a not-yet-revealed tile that's already in the DOM
       // (common in SPA choosers that toggle visibility via a class rather
       // than mounting/unmounting) must not be matched via that fallback.
-      if (!__ikw_isVisible(el)) continue;
-      var t = (el.innerText || el.textContent || '').trim();
+      if (!__ikw_isVisible(el) || __ikw_isExcludedControl(el)) continue;
+      var t = __ikw_text(el);
       if (t && t.length < 200 && t.toLowerCase().indexOf(text.toLowerCase()) !== -1) {
         // <=, not <: querySelectorAll returns document order, so an outer
         // wrapper div is always seen before the inner button/span it wraps.
@@ -188,18 +258,34 @@ function __ikw_findAndClick(targets) {
         // specific inner one -- and __ikw_clickableAncestor only walks
         // *up* from whatever's picked, so it would never reach the real
         // clickable element in that case.
-        if (!best || t.length <= best[1].length) best = [el, t];
+        var clickable = __ikw_clickableAncestor(el);
+        if (!clickable || __ikw_isExcludedControl(clickable)) continue;
+        var duplicate = false;
+        for (var c = 0; c < candidates.length; c++) {
+          if (candidates[c][0] === clickable) {
+            if (t.length < candidates[c][1].length) candidates[c] = [clickable, t];
+            duplicate = true; break;
+          }
+        }
+        if (!duplicate) candidates.push([clickable, t]);
       }
     }
-    if (best) {
-      __ikw_clickableAncestor(best[0]).click();
+    if (candidates.length) {
+      candidates.sort(function(a, b) { return a[1].length - b[1].length; });
+      if (candidates.length > 1 && candidates[0][1].length === candidates[1][1].length) {
+        return __ikw_diagnostics(text, '', null, 'ambiguous_match');
+      }
+      var best = candidates[0];
+      best[0].click();
       if (text === targets[0]) {
         try { sessionStorage.setItem(__IKW_STOP_KEY, '1'); } catch (e) {}
       }
-      return text;
+      var result = __ikw_diagnostics(text, best[1], best[0], 'clicked');
+      result.clicked = true;
+      return result;
     }
   }
-  return null;
+  return __ikw_diagnostics('', '', null, 'not_found');
 }
 """
 
@@ -250,11 +336,11 @@ AUTO_CLICK_OBSERVER_JS = CLICK_LOGIC_JS + (
     requestAnimationFrame(function() {
       scheduled = false;
       var clicked = __ikw_findAndClick(targets);
-      if (clicked === targets[0]) observer.disconnect();
+      if (clicked && clicked.clicked && clicked.requested_label === targets[0]) observer.disconnect();
     });
   }
   var clicked = __ikw_findAndClick(targets);
-  if (clicked === targets[0]) return;
+  if (clicked && clicked.clicked && clicked.requested_label === targets[0]) return;
   observer.observe(
     document, {childList: true, subtree: true, characterData: true, attributes: true}
   );
@@ -266,7 +352,20 @@ AUTO_CLICK_OBSERVER_JS = CLICK_LOGIC_JS + (
 
 def try_auto_click(host, port, target=None):
     try:
-        return cdp_client.evaluate_in_page(host, port, AUTO_CLICK_JS, target=target)
+        result = cdp_client.evaluate_in_page(host, port, AUTO_CLICK_JS, target=target)
+        if result and result.get("clicked"):
+            # The browser's URL/host and non-secret DOM identity are useful
+            # when a site markup change needs diagnosis. Do not log page text,
+            # cookies, form values, or any authentication material.
+            print(
+                "auto-click result "
+                f"label={result['requested_label']!r} matched={result['matched_text']!r} "
+                f"host={result['page_host']!r} tag={result['tag']!r} "
+                f"id={result['element_id']!r} class={result['element_class']!r} "
+                f"href={result['href']!r}"
+            )
+            return result
+        return None
     except Exception as e:
         # Swallowed by design (Chrome may be mid-navigation) but logged: a
         # click failing here silently every 0.5s for the whole wait looks
