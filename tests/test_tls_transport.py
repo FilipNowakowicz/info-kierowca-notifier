@@ -198,6 +198,12 @@ class TLSRequestResolutionTests(unittest.TestCase):
         response.status = 200
         return response
 
+    def _verification_error(self, verify_code, verify_message):
+        error = ssl.SSLCertVerificationError(1, verify_message)
+        error.verify_code = verify_code
+        error.verify_message = verify_message
+        return urllib.error.URLError(error)
+
     def test_native_verification_success_uses_native_for_application_request(self):
         native = ssl.create_default_context()
         request = urllib.request.Request(self.URL)
@@ -216,8 +222,8 @@ class TLSRequestResolutionTests(unittest.TestCase):
     def test_native_verification_failure_uses_verified_certifi_fallback(self):
         native = ssl.create_default_context()
         certifi_context = ssl.create_default_context()
-        verification_error = urllib.error.URLError(
-            ssl.SSLCertVerificationError(1, "untrusted issuer")
+        verification_error = self._verification_error(
+            20, "unable to get local issuer certificate"
         )
         request = urllib.request.Request(self.URL)
         with mock.patch.object(tls_transport, "_native_context", return_value=native), mock.patch.object(
@@ -257,11 +263,11 @@ class TLSRequestResolutionTests(unittest.TestCase):
     def test_certifi_verification_failure_fails_before_application_request(self):
         native = ssl.create_default_context()
         certifi_context = ssl.create_default_context()
-        native_error = urllib.error.URLError(
-            ssl.SSLCertVerificationError(1, "native trust rejected certificate")
+        native_error = self._verification_error(
+            20, "unable to get local issuer certificate"
         )
-        certifi_error = urllib.error.URLError(
-            ssl.SSLCertVerificationError(1, "certifi rejected certificate")
+        certifi_error = self._verification_error(
+            20, "unable to get local issuer certificate"
         )
         with mock.patch.object(tls_transport, "_native_context", return_value=native), mock.patch.object(
             tls_transport, "_certifi_context", return_value=certifi_context
@@ -277,13 +283,55 @@ class TLSRequestResolutionTests(unittest.TestCase):
         self.assertIs(raised.exception, certifi_error)
         application_open.assert_not_called()
 
+    def test_hostname_mismatch_does_not_trigger_ca_fallback(self):
+        native = ssl.create_default_context()
+        mismatch = self._verification_error(62, "hostname mismatch")
+        with mock.patch.object(tls_transport, "_native_context", return_value=native), mock.patch.object(
+            tls_transport, "_probe_verified_origin", side_effect=mismatch
+        ), mock.patch.object(tls_transport, "_certifi_context") as fallback, mock.patch.object(
+            tls_transport.urllib.request, "urlopen"
+        ) as application_open:
+            with self.assertRaises(urllib.error.URLError) as raised:
+                tls_transport.urlopen(self.URL, timeout=2)
+        self.assertIs(raised.exception, mismatch)
+        fallback.assert_not_called()
+        application_open.assert_not_called()
+
+    def test_expired_certificate_does_not_trigger_ca_fallback(self):
+        native = ssl.create_default_context()
+        expired = self._verification_error(10, "certificate has expired")
+        with mock.patch.object(tls_transport, "_native_context", return_value=native), mock.patch.object(
+            tls_transport, "_probe_verified_origin", side_effect=expired
+        ), mock.patch.object(tls_transport, "_certifi_context") as fallback, mock.patch.object(
+            tls_transport.urllib.request, "urlopen"
+        ) as application_open:
+            with self.assertRaises(urllib.error.URLError) as raised:
+                tls_transport.urlopen(self.URL, timeout=2)
+        self.assertIs(raised.exception, expired)
+        fallback.assert_not_called()
+        application_open.assert_not_called()
+
+    def test_message_fallback_is_limited_to_chain_discovery(self):
+        chain_error = urllib.error.URLError(
+            ssl.SSLCertVerificationError(1, "unable to get local issuer certificate")
+        )
+        hostname_error = urllib.error.URLError(
+            ssl.SSLCertVerificationError(1, "hostname mismatch")
+        )
+        expired_error = urllib.error.URLError(
+            ssl.SSLCertVerificationError(1, "certificate has expired")
+        )
+        self.assertTrue(tls_transport._is_trust_chain_verification_error(chain_error))
+        self.assertFalse(tls_transport._is_trust_chain_verification_error(hostname_error))
+        self.assertFalse(tls_transport._is_trust_chain_verification_error(expired_error))
+
     def test_explicit_bad_ca_verification_is_not_bypassed(self):
         import certifi
 
         os.environ[tls_transport.APP_CA_BUNDLE_ENV] = certifi.where()
         explicit = ssl.create_default_context()
-        verification_error = urllib.error.URLError(
-            ssl.SSLCertVerificationError(1, "explicit CA rejected certificate")
+        verification_error = self._verification_error(
+            20, "unable to get local issuer certificate"
         )
         request = urllib.request.Request(self.URL)
         with mock.patch.object(tls_transport, "_verified_context", return_value=explicit), mock.patch.object(
@@ -300,8 +348,8 @@ class TLSRequestResolutionTests(unittest.TestCase):
     def test_post_body_is_sent_exactly_once_after_backend_resolution(self):
         native = ssl.create_default_context()
         certifi_context = ssl.create_default_context()
-        verification_error = urllib.error.URLError(
-            ssl.SSLCertVerificationError(1, "native store failure")
+        verification_error = self._verification_error(
+            20, "unable to get local issuer certificate"
         )
         request = urllib.request.Request(
             self.URL,

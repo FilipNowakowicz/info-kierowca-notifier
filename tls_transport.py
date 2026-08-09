@@ -26,6 +26,17 @@ STANDARD_CA_ENVS = ("SSL_CERT_FILE", "SSL_CERT_DIR")
 _PROBE_USER_AGENT = "info-kierowca-notifier-tls-probe"
 _LOGGER = logging.getLogger(__name__)
 
+# OpenSSL X509_V_ERR values that mean the verifier could not build a chain to
+# a trusted issuer. Other verification failures (notably validity dates and
+# hostname/IP mismatch) cannot be repaired by changing the CA source and must
+# fail immediately. Keep this deliberately narrow.
+_TRUST_CHAIN_VERIFY_CODES = frozenset({2, 20, 21})
+_TRUST_CHAIN_VERIFY_MESSAGES = (
+    "unable to get issuer certificate",
+    "unable to get local issuer certificate",
+    "unable to verify the first certificate",
+)
+
 
 class TLSConfigurationError(RuntimeError):
     """An explicitly configured CA source cannot be used safely."""
@@ -158,14 +169,25 @@ def _request_url(request) -> str:
     return str(request)
 
 
-def _is_certificate_verification_error(error: BaseException) -> bool:
-    """Recognize only chain/hostname verification failures, including wrappers."""
+def _is_trust_chain_verification_error(error: BaseException) -> bool:
+    """Recognize only CA-chain failures for which changing roots can help.
+
+    CPython exposes OpenSSL's stable X509 verify code on real verification
+    exceptions. Some platform wrappers omit it, so a small exact-purpose
+    message fallback covers only issuer/chain-discovery failures. Unknown
+    verification failures remain terminal rather than guessing.
+    """
     current: Optional[BaseException] = error
     seen = set()
     while current is not None and id(current) not in seen:
         seen.add(id(current))
         if isinstance(current, ssl.SSLCertVerificationError):
-            return True
+            verify_code = getattr(current, "verify_code", None)
+            if isinstance(verify_code, int):
+                return verify_code in _TRUST_CHAIN_VERIFY_CODES
+            verify_message = getattr(current, "verify_message", None) or str(current)
+            normalized = verify_message.casefold()
+            return any(message in normalized for message in _TRUST_CHAIN_VERIFY_MESSAGES)
         if isinstance(current, urllib.error.URLError) and isinstance(
             current.reason, BaseException
         ):
@@ -220,7 +242,7 @@ def _resolved_context(origin: str, timeout: float) -> Tuple[ssl.SSLContext, str]
                 _probe_verified_origin(origin, context, timeout)
                 resolved = (context, backend)
             except Exception as exc:
-                if not _is_certificate_verification_error(exc):
+                if not _is_trust_chain_verification_error(exc):
                     raise
                 fallback = _certifi_context()
                 # A failed fallback probe is surfaced as-is. It is never
