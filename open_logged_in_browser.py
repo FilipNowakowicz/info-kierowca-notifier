@@ -171,7 +171,7 @@ def select_slot_js(exam_label, time_str):
 """ % (json.dumps(exam_label), json.dumps(time_str))
 
 
-def _poll_until_truthy(host, port, js, timeout=20):
+def _poll_until_truthy(host, port, js, timeout=20, target=None):
     """Evaluate `js` in the page every 0.5s until it returns truthy or
     `timeout`s elapse. Shared body of every wait_*/wait_and_click below: this
     SPA renders content asynchronously after navigation or a prior click, so a
@@ -181,7 +181,7 @@ def _poll_until_truthy(host, port, js, timeout=20):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         try:
-            if cdp_client.evaluate_in_page(host, port, js):
+            if cdp_client.evaluate_in_page(host, port, js, target=target):
                 return True
         except Exception:
             pass
@@ -189,11 +189,11 @@ def _poll_until_truthy(host, port, js, timeout=20):
     return False
 
 
-def wait_and_select_slot(host, port, exam_label, time_str, timeout=20):
+def wait_and_select_slot(host, port, exam_label, time_str, timeout=20, target=None):
     """Same polling shape as wait_and_click(), for select_slot_js() instead —
     the matching slot row may not be in the DOM yet right after the date
     group is expanded."""
-    return _poll_until_truthy(host, port, select_slot_js(exam_label, time_str), timeout)
+    return _poll_until_truthy(host, port, select_slot_js(exam_label, time_str), timeout, target)
 
 
 def click_enabled_button_js(text):
@@ -228,14 +228,14 @@ def click_enabled_button_js(text):
 """ % json.dumps(text)
 
 
-def wait_and_click_enabled(host, port, text, timeout=20):
+def wait_and_click_enabled(host, port, text, timeout=20, target=None):
     """Same polling shape as wait_and_click(), for click_enabled_button_js()
     instead — the target button needs a moment to go from disabled to
     enabled after whatever step precedes it completes."""
-    return _poll_until_truthy(host, port, click_enabled_button_js(text), timeout)
+    return _poll_until_truthy(host, port, click_enabled_button_js(text), timeout, target)
 
 
-def wait_and_verify_summary(host, port, date_str, time_str, exam_label, timeout=10):
+def wait_and_verify_summary(host, port, date_str, time_str, exam_label, timeout=10, target=None):
     """Safety check run before CONFIRM_SUMMARY_TEXT is ever clicked: does the
     summary modal's own visible text actually contain the date, time, and
     exam type we intended to select? This is the one guard against
@@ -258,10 +258,10 @@ def wait_and_verify_summary(host, port, date_str, time_str, exam_label, timeout=
   return text.indexOf(expectedDateTime) !== -1 && text.indexOf(examLabel) !== -1;
 })(%s, %s)
 """ % (json.dumps(expected_datetime), json.dumps(exam_label))
-    return _poll_until_truthy(host, port, js, timeout)
+    return _poll_until_truthy(host, port, js, timeout, target)
 
 
-def wait_and_verify_booking(host, port, date_str, time_str, exam_label, timeout=20):
+def wait_and_verify_booking(host, port, date_str, time_str, exam_label, timeout=20, target=None):
     """Run after CONFIRM_SUMMARY_TEXT is clicked, on the /cases bookings list
     (the caller navigates there first — CONFIRM_SUMMARY_TEXT's own "i
     przejdź dalej" wording implies at least one more screen, unscouted, so
@@ -288,7 +288,7 @@ def wait_and_verify_booking(host, port, date_str, time_str, exam_label, timeout=
          text.indexOf('Potwierdzona') !== -1;
 })(%s, %s)
 """ % (json.dumps(expected_datetime), json.dumps(exam_label))
-    return _poll_until_truthy(host, port, js, timeout)
+    return _poll_until_truthy(host, port, js, timeout, target)
 
 
 def read_config():
@@ -374,7 +374,7 @@ def update_current_slot_date(new_date_iso):
         )
 
 
-def wait_and_click(host, port, text, timeout=20):
+def wait_and_click(host, port, text, timeout=20, target=None):
     """Poll for an element containing `text` and click it once it renders —
     content on this SPA loads asynchronously after navigation/a previous
     click, so it isn't there on the very first frame. Gives up quietly
@@ -382,10 +382,10 @@ def wait_and_click(host, port, text, timeout=20):
     open, etc.) — you can still click it yourself, same fallback as the
     login auto-click.
     """
-    return _poll_until_truthy(host, port, click_text_js(text), timeout)
+    return _poll_until_truthy(host, port, click_text_js(text), timeout, target)
 
 
-def try_select_target_slot(host, port, target_slot_json, confirm=False):
+def try_select_target_slot(host, port, target_slot_json, confirm=False, page_target=None):
     """Best-effort continuation of the auto-click-through, gated behind
     --target-slot (itself only ever passed when config's experimental
     auto_select_slot flag is on — see notifier.trigger_open_browser()).
@@ -451,18 +451,18 @@ def try_select_target_slot(host, port, target_slot_json, confirm=False):
     date_str = dt.strftime("%d/%m/%Y")
     time_str = dt.strftime("%H:%M")
     print(f"Looking for {exam_label} at {time_str} on {date_str}...")
-    if not wait_and_click(host, port, date_str):
+    if not wait_and_click(host, port, date_str, target=page_target):
         print(f"Couldn't find the '{date_str}' date group automatically — pick the slot yourself.")
         return
     print(f"Expanded '{date_str}'.")
-    if not wait_and_select_slot(host, port, exam_label, time_str):
+    if not wait_and_select_slot(host, port, exam_label, time_str, target=page_target):
         print(
             f"Couldn't find a matching {exam_label} row at {time_str} "
             "(may already be taken) — pick the slot yourself."
         )
         return
     print(f"Selected {exam_label} at {time_str}.")
-    if not wait_and_click_enabled(host, port, SUMMARY_BUTTON_TEXT):
+    if not wait_and_click_enabled(host, port, SUMMARY_BUTTON_TEXT, target=page_target):
         print(
             f"Selected the slot but couldn't click '{SUMMARY_BUTTON_TEXT}' automatically "
             "— click it yourself."
@@ -480,7 +480,7 @@ def try_select_target_slot(host, port, target_slot_json, confirm=False):
     # not the earlier, lower-stakes auto_select_slot-only steps above, which
     # already got their own "slot found" push before the browser ever opened.
     topic = read_config().get("ntfy_topic")
-    if not wait_and_verify_summary(host, port, date_str, time_str, exam_label):
+    if not wait_and_verify_summary(host, port, date_str, time_str, exam_label, target=page_target):
         print(
             "Summary screen didn't show the expected date/time/exam type — NOT clicking "
             f"'{CONFIRM_SUMMARY_TEXT}' automatically. Review it yourself before confirming."
@@ -504,7 +504,7 @@ def try_select_target_slot(host, port, target_slot_json, confirm=False):
         RESCHEDULE_CONFIRM_COOLDOWN_FILE.write_text(datetime.now().isoformat())
     except Exception:
         pass  # best-effort, same tolerance as the read side treating a missing file as "no cooldown"
-    if not wait_and_click_enabled(host, port, CONFIRM_SUMMARY_TEXT):
+    if not wait_and_click_enabled(host, port, CONFIRM_SUMMARY_TEXT, target=page_target):
         print(
             f"Couldn't click '{CONFIRM_SUMMARY_TEXT}' automatically — confirm it yourself "
             "if the summary looks right."
@@ -524,7 +524,7 @@ def try_select_target_slot(host, port, target_slot_json, confirm=False):
     )
     time.sleep(2)  # give the backend a moment to process before we go check /cases
     try:
-        cdp_client.navigate(host, port, DEFAULT_URL)
+        cdp_client.navigate(host, port, DEFAULT_URL, target=page_target)
     except Exception as e:
         print(f"Couldn't reload /cases to verify the booking ({e!r}) — check it yourself.")
         push_ntfy(
@@ -535,7 +535,7 @@ def try_select_target_slot(host, port, target_slot_json, confirm=False):
             priority="urgent",
         )
         return
-    if wait_and_verify_booking(host, port, date_str, time_str, exam_label):
+    if wait_and_verify_booking(host, port, date_str, time_str, exam_label, target=page_target):
         print(f"Confirmed on /cases: {exam_label} at {date_str}, {time_str} shows as Potwierdzona.")
         update_current_slot_date(dt.date().isoformat())
         push_ntfy(
@@ -626,18 +626,21 @@ def main():
     cdp_client.set_cookies(
         "127.0.0.1", args.port, {**cookies, "CookieScriptConsent": consent_cookie()}
     )
-    cdp_client.navigate("127.0.0.1", args.port, args.url)
+    page_target = cdp_client.create_page_target("127.0.0.1", args.port)
+    cdp_client.navigate_target("127.0.0.1", args.port, page_target, args.url)
+    cdp_client.bring_target_to_front("127.0.0.1", args.port, page_target)
 
     print(f"Chrome opened at {args.url}, logged in using {cdp_client.SESSION_FILE}.")
     if args.no_auto_click:
         print("Skipping the Zmień termin auto-click-through (--no-auto-click).")
-    elif wait_and_click("127.0.0.1", args.port, CHANGE_DATE_TEXT):
+    elif wait_and_click("127.0.0.1", args.port, CHANGE_DATE_TEXT, target=page_target):
         print(f"Clicked '{CHANGE_DATE_TEXT}'.")
-        if wait_and_click("127.0.0.1", args.port, CONFIRM_CHANGE_DATE_TEXT):
+        if wait_and_click("127.0.0.1", args.port, CONFIRM_CHANGE_DATE_TEXT, target=page_target):
             print(f"Clicked '{CONFIRM_CHANGE_DATE_TEXT}'.")
             if args.target_slot:
                 try_select_target_slot(
-                    "127.0.0.1", args.port, args.target_slot, confirm=args.confirm_reschedule
+                    "127.0.0.1", args.port, args.target_slot, confirm=args.confirm_reschedule,
+                    page_target=page_target,
                 )
             else:
                 print("Pick the new date and confirm yourself from here.")
