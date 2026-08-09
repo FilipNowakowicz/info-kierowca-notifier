@@ -3,7 +3,9 @@ import unittest
 from unittest.mock import patch
 
 import app
+import auto_refresh_session
 import cdp_client
+import credential_store
 import templates
 
 
@@ -28,6 +30,40 @@ class PZSecurityTests(unittest.TestCase):
         self.assertIn('id="pz-username" type="text"', templates.LOGIN_PAGE)
         page = app.render_wizard(app.build_config(self.payload())).decode()
         self.assertIn('id="settings-pz-username" type="text"', page)
+
+    def test_config_cannot_forge_credential_present_marker(self):
+        submitted = self.payload()
+        submitted["pz_credential_present"] = True
+        self.assertNotIn("pz_credential_present", app.build_config(submitted))
+
+    def test_background_relogin_does_not_touch_keyring_without_save_marker(self):
+        class UnexpectedStore:
+            def get(self, _username):
+                raise AssertionError("keyring must not be touched")
+
+        with self.assertRaises(credential_store.CredentialNotFound):
+            auto_refresh_session.load_pz_credentials(
+                {"login_method": "profil_zaufany", "pz_username": "person"},
+                UnexpectedStore(),
+            )
+
+    def test_saved_marker_allows_targeted_credential_read(self):
+        class Store:
+            def get(self, username):
+                self.username = username
+                return "stored-secret"
+
+        store = Store()
+        username, password = auto_refresh_session.load_pz_credentials(
+            {
+                "login_method": "profil_zaufany",
+                "pz_username": "person",
+                "pz_credential_present": True,
+            },
+            store,
+        )
+        self.assertEqual((username, password), ("person", "stored-secret"))
+        self.assertEqual(store.username, "person")
 
     def test_cdp_function_passes_secrets_as_arguments_not_source(self):
         target = cdp_client.PageTarget("auth", "https://login.gov.pl", "", "ws://h:1/x")

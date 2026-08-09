@@ -654,7 +654,7 @@ WIZARD_PAGE = """<!doctype html>
       <div id="settings-pz-fields" style="display:none">
         <label for="settings-pz-username">Profil Zaufany username</label><input id="settings-pz-username" type="text" autocomplete="username">
         <label for="settings-pz-password">Profil Zaufany password</label><input id="settings-pz-password" type="password" autocomplete="new-password" placeholder="Leave blank to keep the saved password">
-        <div class="hint" id="password-status">Password saved securely by your operating system; its value is never shown here.</div>
+        <div class="hint" id="password-status">No Profil Zaufany password is saved. Enter it to enable automatic login.</div>
         <button type="button" class="cat-more" id="settings-pair-messages">Pair Google Messages Web</button>
         <button type="button" class="cat-more" id="settings-test-messages">Test SMS extraction</button>
         <div class="hint" id="settings-messages-status"></div>
@@ -1371,6 +1371,9 @@ renderSelected();
 if (EXISTING_CONFIG) {
   loginMethodSelect.value = EXISTING_CONFIG.login_method || 'mobywatel';
   document.getElementById('settings-pz-username').value = EXISTING_CONFIG.pz_username || '';
+  if (EXISTING_CONFIG.pz_credential_present) {
+    document.getElementById('password-status').textContent = t('Password saved securely by your operating system; its value is never shown here.');
+  }
   updateAuthFields();
   const pageTitle = document.getElementById('page-title');
   pageTitle.textContent = t('Settings');

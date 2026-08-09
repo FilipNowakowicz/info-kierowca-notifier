@@ -556,6 +556,7 @@ class AppHandler(http.server.BaseHTTPRequestHandler):
                 self._send_json(503, {"ok": False, "error": "Secure credential storage is unavailable."})
                 return
             config["pz_username"] = username
+            config["pz_credential_present"] = True
         notifier.save_json(notifier.CONFIG_FILE, config)
         outcome = notifier.trigger_auto_refresh(AppHandler.logger, config, force=True, notify_phone=False)
         messages = {
@@ -581,12 +582,26 @@ class AppHandler(http.server.BaseHTTPRequestHandler):
             self._send_json(400, {"ok": False, "error": str(e)})
             return
         password = payload.get("pz_password")
-        if config["login_method"] == "profil_zaufany" and password:
-            try:
-                credential_store.SecureCredentialStore().save(config["pz_username"], password)
-            except credential_store.CredentialStorageUnavailable:
-                self._send_json(503, {"ok": False, "error": "Secure credential storage is unavailable."})
+        same_pz_account = (
+            previous.get("pz_username") == config.get("pz_username")
+            and bool(previous.get("pz_credential_present"))
+        )
+        if config["login_method"] == "profil_zaufany":
+            if password:
+                try:
+                    credential_store.SecureCredentialStore().save(config["pz_username"], password)
+                except credential_store.CredentialStorageUnavailable:
+                    self._send_json(503, {"ok": False, "error": "Secure credential storage is unavailable."})
+                    return
+                config["pz_credential_present"] = True
+            elif same_pz_account:
+                config["pz_credential_present"] = True
+            else:
+                self._send_json(400, {"ok": False, "error": "Profil Zaufany password is required."})
                 return
+        elif same_pz_account:
+            # Switching methods does not delete or expose the stored secret.
+            config["pz_credential_present"] = True
         notifier.save_json(notifier.CONFIG_FILE, config)
         needs_login = not notifier.SESSION_FILE.exists()
         self._send_json(200, {"ok": True, "needs_login": needs_login})

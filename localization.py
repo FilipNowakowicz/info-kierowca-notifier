@@ -44,6 +44,7 @@ LOCALIZATION_SCRIPT = r"""
     'Authentication': 'Uwierzytelnianie', 'Authentication method': 'Metoda uwierzytelniania',
     'Leave blank to keep the saved password': 'Pozostaw puste, aby zachować zapisane hasło',
     'Password saved securely by your operating system; its value is never shown here.': 'Hasło jest bezpiecznie zapisane przez system operacyjny; jego wartość nigdy nie jest tutaj wyświetlana.',
+    'No Profil Zaufany password is saved. Enter it to enable automatic login.': 'Hasło Profilu Zaufanego nie jest zapisane. Wpisz je, aby włączyć automatyczne logowanie.',
     'Google Messages Web opened for pairing.': 'Otwarto Google Messages Web do parowania.', 'Could not open Google Messages Web.': 'Nie udało się otworzyć Google Messages Web.',
     'SMS extraction is working — a PZePUAP verification message was detected.': 'Odczyt SMS działa — wykryto wiadomość weryfikacyjną PZePUAP.',
     'PZePUAP conversation found, but no current OTP was detected.': 'Znaleziono rozmowę PZePUAP, ale nie wykryto aktualnego kodu.',

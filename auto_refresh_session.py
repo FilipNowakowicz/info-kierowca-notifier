@@ -528,6 +528,27 @@ def open_google_messages_pairing(host="127.0.0.1", port=DEFAULT_PORT):
     return target
 
 
+def load_pz_credentials(config, store=None):
+    """Retrieve PZ credentials only after a deliberate save succeeded.
+
+    On Linux, asking Secret Service for a missing item can create a new
+    collection and display an OS prompt.  Background relogin must never cause
+    that prompt, so the nonsecret marker written after ``save()`` is checked
+    before the keyring is touched.
+    """
+    if not config.get("pz_credential_present"):
+        raise credential_store.CredentialNotFound(
+            "No saved Profil Zaufany password was found."
+        )
+    username = (config.get("pz_username") or "").strip()
+    if not username:
+        raise credential_store.CredentialNotFound(
+            "No saved Profil Zaufany password was found."
+        )
+    store = store or credential_store.SecureCredentialStore()
+    return username, store.get(username)
+
+
 def notify_desktop(summary, body, urgency="normal"):
     """Best-effort local desktop notification — the ntfy phone push is the
     primary alert, this is a secondary one for whoever's at the machine.
@@ -696,6 +717,9 @@ def main():
         except Exception:
             config = {}
         login_method = config.get("login_method", "mobywatel")
+        password = None
+        if login_method == "profil_zaufany":
+            username, password = load_pz_credentials(config)
         chrome = find_chrome()
         print(f"using browser: {chrome}")
         PROFILE_DIR.mkdir(parents=True, exist_ok=True)
@@ -745,8 +769,6 @@ def main():
         # of racing our own next poll tick.
         login_target = cdp_client.create_page_target("127.0.0.1", args.port)
         if login_method == "profil_zaufany":
-            username = config.get("pz_username", "")
-            password = credential_store.SecureCredentialStore().get(username)
             messages = sms_provider.GoogleMessagesWebProvider("127.0.0.1", args.port)
             messages.find_or_create_target(create=True)
             browser = auth_providers.CDPProfilZaufanyBrowser(
