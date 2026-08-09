@@ -193,8 +193,9 @@ def find_page_target(host, port, *, target_id=None, host_match=None, url_match=N
     for target in list_page_targets(host, port):
         if target_id and target.id != target_id:
             continue
-        parsed_host = urlparse(target.url).hostname or ""
-        if host_match and host_match.lower() not in parsed_host.lower():
+        parsed_host = (urlparse(target.url).hostname or "").lower()
+        expected_host = host_match.lower() if host_match else ""
+        if host_match and parsed_host != expected_host and not parsed_host.endswith("." + expected_host):
             continue
         if url_match and url_match.lower() not in target.url.lower():
             continue

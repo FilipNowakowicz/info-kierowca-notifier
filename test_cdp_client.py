@@ -41,6 +41,32 @@ class CdpTargetTests(unittest.TestCase):
         with self.assertRaises(cdp_client.TargetNotFoundError):
             cdp_client.page_ws_url("h", 1, host_match="missing.gov.pl")
 
+    def test_host_matching_obeys_domain_boundaries(self):
+        self.targets.append({
+            "id": "lookalike", "type": "page", "url": "https://notgov.pl", "title": "Bad",
+            "webSocketDebuggerUrl": "ws://localhost/lookalike",
+        })
+        self.assertEqual(cdp_client.find_page_target("h", 1, host_match="gov.pl").id, "gov")
+        self.targets = [x for x in self.targets if x["id"] != "gov"]
+        with self.assertRaises(cdp_client.TargetNotFoundError):
+            cdp_client.find_page_target("h", 1, host_match="gov.pl")
+
+    def test_create_page_target_returns_created_target_metadata(self):
+        created = {
+            "id": "new", "type": "page", "url": "about:blank", "title": "",
+            "webSocketDebuggerUrl": "ws://localhost/new",
+        }
+        self.targets.append(created)
+        @contextlib.contextmanager
+        def fake_socket(url):
+            self.assertEqual(url, "ws://browser")
+            yield object()
+        with patch("cdp_client.browser_ws_url", return_value="ws://browser"), patch(
+            "cdp_client.cdp_socket", fake_socket
+        ), patch("cdp_client.cdp_call", return_value={"targetId": "new"}):
+            target = cdp_client.create_page_target("h", 1)
+        self.assertEqual(target, cdp_client.PageTarget.from_cdp(created))
+
     def test_stale_target_fails_safely_before_socket_is_opened(self):
         target = cdp_client.find_page_target("h", 1, target_id="ikw")
         self.targets = [x for x in self.targets if x["id"] != "ikw"]
@@ -63,4 +89,3 @@ class CdpTargetTests(unittest.TestCase):
             cdp_client.navigate_target("h", 1, target, "https://login.gov.pl/next")
             cdp_client.bring_target_to_front("h", 1, target)
         self.assertEqual(calls, ["ws://localhost/gov"] * 3)
-
