@@ -124,8 +124,11 @@ they still need no Python installation or extra setup.
    ```
    The units run the locked uv environment and assume the repo is cloned to `~/infokierowca`.
    Run `uv sync` first. If you cloned it elsewhere, edit `WorkingDirectory=` in each `.service`
-   file before copying it; if the user service cannot find `uv`, add its directory to the unit's
-   `Environment=PATH=` line.
+   file before copying it. The checked-in units search `%h/.local/bin`, the usual system binary
+   directories, and the common Nix/NixOS profile locations `%h/.nix-profile/bin`,
+   `/etc/profiles/per-user/%u/bin`, and `/run/current-system/sw/bin`. If `uv` is installed
+   somewhere else, add that directory to the unit's `Environment=PATH=` line; do not hardcode a
+   `/nix/store/...` path because store paths change across upgrades.
 
 6. If you used Option A, the dashboard is already running — skip this step. Otherwise, start it
    separately (same command on every OS — plain Python, no extra setup):
