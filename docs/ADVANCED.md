@@ -182,9 +182,12 @@ automatically; mObywatel still requires a new QR scan. For the manual mObywatel 
 dashboard shows an estimated-expiry countdown and a reset control. The estimate comes from
 `session.json`'s `captured_at`, stamped on every fresh login.
 
-By default (`auto_refresh_chrome: true`), whenever a check comes back `auth_expired` — a 401,
-403, 404, or 500 on the refresh call, or a 401/403/500 on the search call, all of which have in
-practice turned out to be the same underlying cookie-expiry problem — `notifier.py` launches
+By default (`auto_refresh_chrome: true`), Profil Zaufany starts a new automatic login when the
+estimated session lifetime has five minutes remaining. This gives quick failures time for the
+normal 1-minute and 2-minute retry cooldowns before the current session expires. The notifier
+also retains the expiry fallback: whenever a check comes back `auth_expired` — a 401, 403, 404,
+or 500 on the refresh call, or a 401/403/500 on the search call, all of which have in practice
+turned out to be the same underlying cookie-expiry problem — it launches
 `auto_refresh_session.py` in the background. It opens Chrome to the login page in the app's
 dedicated profile and follows the `login_method` saved by the setup wizard:
 

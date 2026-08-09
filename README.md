@@ -66,11 +66,12 @@ each one clicks and why, and confirm the slot-selection step works reliably befo
 on the second.
 
 The info-kierowca.pl session still expires after roughly an hour. With Profil Zaufany configured,
-the app opens its dedicated Chrome profile, submits the securely stored credentials, reads the
-fresh PZePUAP verification code from the paired Google Messages Web tab, and restores the session
-automatically. With mObywatel selected, it instead opens the QR screen and waits for you to scan
-it. See [Auto-relogin on session expiry](docs/ADVANCED.md#auto-relogin-on-session-expiry) for
-requirements, fallback behavior, and troubleshooting.
+the app starts refreshing it five minutes before the estimated expiry: it opens its dedicated
+Chrome profile, submits the securely stored credentials, reads the fresh PZePUAP verification
+code from the paired Google Messages Web tab, and restores the session automatically. With
+mObywatel selected, it waits for actual expiry, then opens the QR screen for you to scan. See
+[Auto-relogin on session expiry](docs/ADVANCED.md#auto-relogin-on-session-expiry) for requirements,
+fallback behavior, and troubleshooting.
 
 Your session cookies and PKK number never go anywhere except info-kierowca.pl itself.
 
