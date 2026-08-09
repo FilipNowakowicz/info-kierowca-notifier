@@ -92,7 +92,8 @@ class GoogleMessagesWebProvider:
         except (OverflowError, ValueError):
             return None
 
-    def get_latest_pz_code(self, after_timestamp, used_codes=None):
+    def get_latest_pz_code(self, after_timestamp, used_codes=None,
+                           tolerance_seconds=30):
         used_codes = used_codes or set()
         try:
             target = self.find_or_create_target(create=False)
@@ -118,7 +119,8 @@ class GoogleMessagesWebProvider:
             stamp = self._timestamp(candidate.get("date", ""), candidate.get("time", ""))
             if stamp is None:
                 continue
-            if stamp < after_timestamp - 30 or now - stamp > 300 or stamp > now + 30:
+            if (stamp < after_timestamp - tolerance_seconds or
+                    now - stamp > 300 or stamp > now + 30):
                 stale_found = True
                 continue
             valid.append((stamp, code))

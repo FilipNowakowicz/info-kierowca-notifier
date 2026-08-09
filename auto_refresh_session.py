@@ -682,6 +682,9 @@ def main():
     parser.add_argument(
         "--automatic", action="store_true", help=argparse.SUPPRESS
     )
+    parser.add_argument(
+        "--pz-confirm-delay", type=float, default=0, help=argparse.SUPPRESS
+    )
     args = parser.parse_args()
 
     # Translate an external service-manager shutdown into SystemExit so the
@@ -781,6 +784,7 @@ def main():
             )
             provider = auth_providers.ProfilZaufanyProvider(
                 browser, messages, username, password,
+                otp_confirm_delay=args.pz_confirm_delay,
                 logger=lambda message: print(message),
             )
             provider.cancelled = lambda: relogin_control.restart_requested(

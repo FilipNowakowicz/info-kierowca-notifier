@@ -46,7 +46,8 @@ DEFAULT_TIMEOUTS = {
 
 class ProfilZaufanyProvider:
     def __init__(self, browser, sms_provider, username, password, *, monotonic=None,
-                 wall_clock=None, sleep=None, timeouts=None, overall_timeout=240, logger=None):
+                 wall_clock=None, sleep=None, timeouts=None, overall_timeout=240,
+                 otp_settle_delay=5, otp_confirm_delay=0, logger=None):
         self.browser = browser
         self.sms_provider = sms_provider
         self.username = username
@@ -57,6 +58,8 @@ class ProfilZaufanyProvider:
         self.timeouts = dict(DEFAULT_TIMEOUTS)
         self.timeouts.update(timeouts or {})
         self.overall_timeout = overall_timeout
+        self.otp_settle_delay = otp_settle_delay
+        self.otp_confirm_delay = otp_confirm_delay
         self.logger = logger or (lambda message: print(message))
         self.state = PZState.START
         self.used_codes = set()
@@ -97,6 +100,33 @@ class ProfilZaufanyProvider:
             self._fail("global_deadline")
         self._fail(timeout_reason() if callable(timeout_reason) else timeout_reason)
 
+    def _exclude_existing_sms_codes(self):
+        """Snapshot recent codes before credentials can request a new SMS."""
+        deadline = min(self._global_deadline, self.monotonic() + 5)
+        while self.monotonic() < deadline:
+            existing = self.sms_provider.get_latest_pz_code(
+                self.started_at - 270, self.used_codes
+            )
+            if existing.status == "found" and existing.code:
+                self.used_codes.add(existing.code)
+                continue
+            if existing.status == "switching":
+                self.sleep(min(0.25, max(0, deadline - self.monotonic())))
+                continue
+            return
+
+    def _bounded_pause(self, seconds):
+        deadline = min(self._global_deadline,
+                       self.monotonic() + max(0, seconds))
+        while self.monotonic() < deadline:
+            if self.cancelled and self.cancelled():
+                self._fail("restart_requested")
+            if self.browser.closed():
+                self._fail("browser_closed")
+            self.sleep(min(0.5, max(0, deadline - self.monotonic())))
+        if self.monotonic() >= self._global_deadline:
+            self._fail("global_deadline")
+
     def authenticate(self):
         self.started_at = self.wall_clock()
         self._global_deadline = self.monotonic() + self.overall_timeout
@@ -117,17 +147,9 @@ class ProfilZaufanyProvider:
         if form != "ready":
             self._fail("unexpected_auth_page")
 
-        # Drain every recent candidate before requesting a new SMS. Rapid
-        # retries can leave several codes inside the five-minute window, and
-        # the 30-second timestamp tolerance must not make any of them reusable
-        # while Messages is still rendering the newly requested code.
-        for _ in range(32):
-            existing_sms = self.sms_provider.get_latest_pz_code(
-                self.started_at - 270, self.used_codes
-            )
-            if existing_sms.status != "found" or not existing_sms.code:
-                break
-            self.used_codes.add(existing_sms.code)
+        # Wait through conversation switching and drain every recent candidate
+        # before credentials can request a new SMS.
+        self._exclude_existing_sms_codes()
         self._transition(PZState.SUBMIT_CREDENTIALS)
         self.browser.submit_credentials(self.username, self.password)
         challenge = self._wait(PZState.WAIT_FOR_SMS_CHALLENGE, self.browser.challenge_status,
@@ -140,10 +162,13 @@ class ProfilZaufanyProvider:
             self._fail("profil_zaufany_inactive")
         if challenge != "sms":
             self._fail("unexpected_auth_page")
+        sms_challenge_at = self.wall_clock()
 
         stale_sms_seen = [False]
         def sms_probe():
-            result = self.sms_provider.get_latest_pz_code(self.started_at, self.used_codes)
+            result = self.sms_provider.get_latest_pz_code(
+                sms_challenge_at, self.used_codes, tolerance_seconds=2
+            )
             if result.status == "found":
                 return result
             if result.status in ("not_paired", "page_structure_unsupported"):
@@ -160,7 +185,10 @@ class ProfilZaufanyProvider:
             self._fail("stale_sms")
         self.used_codes.add(sms.code)
         self._transition(PZState.SUBMIT_SMS)
-        self.browser.submit_otp(sms.code)
+        self._bounded_pause(self.otp_settle_delay)
+        self.browser.enter_otp(sms.code)
+        self._bounded_pause(self.otp_confirm_delay)
+        self.browser.confirm_otp(sms.code)
         redirect = self._wait(PZState.WAIT_FOR_AUTH_REDIRECT, self.browser.redirect_status,
                               "auth_redirect_timeout")
         if redirect == "otp_rejected":
@@ -310,6 +338,13 @@ function() {
 }
 """
 
+VERIFY_OTP_FUNCTION = r"""
+function(code) {
+  var i=document.querySelector('input[data-testid="sms-code-input"],#smsInput');
+  return i && i.value === code ? 'ready' : 'value_mismatch';
+}
+"""
+
 SUBMIT_OTP_FUNCTION = r"""
 function(code) {
   var i=document.querySelector('input[data-testid="sms-code-input"],#smsInput');
@@ -400,12 +435,16 @@ class CDPProfilZaufanyBrowser:
     def challenge_status(self):
         return self._call(CHALLENGE_STATUS_FUNCTION, require_pz_origin=True)
 
-    def submit_otp(self, code):
+    def enter_otp(self, code):
         if not OTP_RE.fullmatch(code):
             raise AuthenticationFailure("sms_challenge_timeout", PZState.SUBMIT_SMS)
         if self._call(PREPARE_OTP_FIELD_FUNCTION, require_pz_origin=True) != "ready":
             raise AuthenticationFailure("sms_challenge_timeout", PZState.SUBMIT_SMS)
         cdp_client.insert_text_in_target(self.host, self.port, self.target, code)
+        if self._call(VERIFY_OTP_FUNCTION, [code], True) != "ready":
+            raise AuthenticationFailure("sms_challenge_timeout", PZState.SUBMIT_SMS)
+
+    def confirm_otp(self, code):
         if self._call(SUBMIT_OTP_FUNCTION, [code], True) != "submitted":
             raise AuthenticationFailure("sms_challenge_timeout", PZState.SUBMIT_SMS)
 

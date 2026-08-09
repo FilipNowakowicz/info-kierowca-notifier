@@ -28,7 +28,8 @@ class FakeBrowser:
     def credential_form_status(self): return self._get("form", "ready")
     def submit_credentials(self, username, password): self.submitted.append(("credentials", username, password))
     def challenge_status(self): return self._get("challenge", "sms")
-    def submit_otp(self, code): self.submitted.append(("otp", code))
+    def enter_otp(self, code): self.submitted.append(("otp_entered", code))
+    def confirm_otp(self, code): self.submitted.append(("otp", code))
     def redirect_status(self): return self._get("redirect", "redirected")
     def session_cookies(self): return self._get("cookies", {"a": "b"})
 
@@ -38,7 +39,7 @@ class FakeSMS:
         self.result = result or SMSResult("found", "87654321", 1_800_001_000)
         self.results = (list(results) if results is not None
                         else [SMSResult("no_current_otp")])
-    def get_latest_pz_code(self, after, used):
+    def get_latest_pz_code(self, after, used, tolerance_seconds=30):
         if self.results:
             return self.results.pop(0)
         return self.result
@@ -75,6 +76,39 @@ class PZAuthenticationTests(unittest.TestCase):
         self.assertIn(("otp", "87654321"), provider.browser.submitted)
         self.assertNotIn(("otp", "11111111"), provider.browser.submitted)
         self.assertNotIn(("otp", "22222222"), provider.browser.submitted)
+
+    def test_snapshot_waits_for_messages_conversation_to_finish_switching(self):
+        old = SMSResult("found", "11111111", 1_800_000_999)
+        fresh = SMSResult("found", "87654321", 1_800_001_000)
+        provider = self.provider(sms=FakeSMS(results=[
+            SMSResult("switching"), old, SMSResult("no_current_otp"), fresh,
+        ]))
+        provider.authenticate()
+        self.assertIn(("otp", "87654321"), provider.browser.submitted)
+        self.assertNotIn(("otp", "11111111"), provider.browser.submitted)
+
+    def test_sms_wait_uses_tight_challenge_timestamp_tolerance(self):
+        class RecordingSMS(FakeSMS):
+            def __init__(self):
+                super().__init__()
+                self.calls = []
+            def get_latest_pz_code(self, after, used, tolerance_seconds=30):
+                self.calls.append((after, tolerance_seconds))
+                return super().get_latest_pz_code(after, used, tolerance_seconds)
+
+        sms = RecordingSMS()
+        self.provider(sms=sms).authenticate()
+        self.assertEqual(sms.calls[-1][1], 2)
+
+    def test_otp_submission_has_bounded_settlement_delay(self):
+        provider = self.provider(otp_settle_delay=5)
+        provider.authenticate()
+        self.assertGreaterEqual(provider.monotonic(), 1005)
+
+    def test_developer_otp_confirmation_pause_is_fake_clock_bounded(self):
+        provider = self.provider(otp_confirm_delay=20, overall_timeout=40)
+        provider.authenticate()
+        self.assertGreaterEqual(provider.monotonic(), 1025)
 
     def test_identity_chooser_timeout(self): self.assertEqual(self.reason(FakeBrowser(identity=None)), "identity_provider_timeout")
     def test_profil_chooser_timeout(self): self.assertEqual(self.reason(FakeBrowser(chooser=None)), "profil_zaufany_chooser_timeout")
@@ -134,7 +168,7 @@ class OriginTests(unittest.TestCase):
         with patch("auth_providers.cdp_client.get_page_target", return_value=target), \
              patch("auth_providers.cdp_client.call_function_in_target") as call:
             self.assertRaises(AuthenticationFailure, browser.submit_credentials, "user", "secret")
-            self.assertRaises(AuthenticationFailure, browser.submit_otp, "87654321")
+            self.assertRaises(AuthenticationFailure, browser.enter_otp, "87654321")
             call.assert_not_called()
 
     def test_identity_provider_uses_live_gov_card_on_explicit_auth_target(self):
@@ -176,9 +210,10 @@ class OriginTests(unittest.TestCase):
         browser = auth_providers.CDPProfilZaufanyBrowser("h", 1, target, Mock(), target.url)
         with patch("auth_providers.cdp_client.get_page_target", return_value=target), \
              patch("auth_providers.cdp_client.call_function_in_target",
-                   side_effect=["ready", "submitted"]), \
+                   side_effect=["ready", "ready", "submitted"]), \
              patch("auth_providers.cdp_client.insert_text_in_target") as insert:
-            browser.submit_otp("87654321")
+            browser.enter_otp("87654321")
+            browser.confirm_otp("87654321")
         insert.assert_called_once_with("h", 1, target, "87654321")
         self.assertIn("i.value !== code", auth_providers.SUBMIT_OTP_FUNCTION)
 
