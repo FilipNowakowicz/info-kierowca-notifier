@@ -1,7 +1,6 @@
 """Secure operating-system storage for Profil Zaufany credentials."""
 import keyring
 from keyring.backend import KeyringBackend
-from keyring.errors import KeyringError, NoKeyringError
 
 SERVICE_NAME = "info-kierowca-notifier/profil-zaufany"
 
@@ -53,7 +52,14 @@ class SecureCredentialStore:
             raise ValueError("Profil Zaufany username and password are required.")
         try:
             self._require_secure_backend().set_password(SERVICE_NAME, username, password)
-        except (KeyringError, NoKeyringError) as exc:
+        except CredentialStorageUnavailable:
+            raise
+        except Exception as exc:
+            # Some secure backends propagate transport-specific exceptions
+            # (for example Jeepney's DBusErrorResponse) instead of wrapping
+            # them in keyring.errors.KeyringError.  Keep those implementation
+            # details and any backend-provided text out of HTTP responses and
+            # logs while still failing closed.
             raise CredentialStorageUnavailable(
                 "Secure operating-system credential storage is unavailable."
             ) from exc
@@ -61,7 +67,9 @@ class SecureCredentialStore:
     def get(self, username):
         try:
             value = self._require_secure_backend().get_password(SERVICE_NAME, username)
-        except (KeyringError, NoKeyringError) as exc:
+        except CredentialStorageUnavailable:
+            raise
+        except Exception as exc:
             raise CredentialStorageUnavailable(
                 "Secure operating-system credential storage is unavailable."
             ) from exc
@@ -78,7 +86,9 @@ class SecureCredentialStore:
                 backend.delete_password(SERVICE_NAME, username)
         except CredentialNotFound:
             return
-        except (KeyringError, NoKeyringError) as exc:
+        except CredentialStorageUnavailable:
+            raise
+        except Exception as exc:
             raise CredentialStorageUnavailable(
                 "Secure operating-system credential storage is unavailable."
             ) from exc

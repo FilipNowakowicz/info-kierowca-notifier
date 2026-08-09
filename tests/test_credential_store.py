@@ -19,6 +19,13 @@ class UnavailableBackend(KeyringBackend):
     def delete_password(self, service, username): pass
 
 
+class TransportFailureBackend(KeyringBackend):
+    priority = 1
+    def get_password(self, service, username): raise RuntimeError("D-Bus transport details")
+    def set_password(self, service, username, password): raise RuntimeError("D-Bus transport details")
+    def delete_password(self, service, username): raise RuntimeError("D-Bus transport details")
+
+
 class CredentialStoreTests(unittest.TestCase):
     def test_save_get_replace_delete(self):
         backend = MemoryBackend(); store = credential_store.SecureCredentialStore(backend)
@@ -33,3 +40,17 @@ class CredentialStoreTests(unittest.TestCase):
 
     def test_missing_password_is_structured(self):
         self.assertRaises(credential_store.CredentialNotFound, credential_store.SecureCredentialStore(MemoryBackend()).get, "user")
+
+    def test_backend_transport_errors_are_safely_normalized(self):
+        store = credential_store.SecureCredentialStore(TransportFailureBackend())
+        for operation in (
+            lambda: store.save("user", "secret"),
+            lambda: store.get("user"),
+            lambda: store.delete("user"),
+        ):
+            with self.assertRaisesRegex(
+                credential_store.CredentialStorageUnavailable,
+                "Secure operating-system credential storage is unavailable",
+            ) as caught:
+                operation()
+            self.assertNotIn("D-Bus transport details", str(caught.exception))
