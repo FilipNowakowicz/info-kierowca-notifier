@@ -453,6 +453,7 @@ WIZARD_PAGE = """<!doctype html>
   h1 { font-size: 1.6rem; margin-bottom: 0.2rem; }
   p.lead { opacity: 0.75; margin-top: 0; margin-bottom: 2rem; }
   .booking-note { display: flex; align-items: flex-start; gap: 0.75rem; margin: 0 0 1.25rem; padding: 0.75rem 0.9rem; border: 1px solid rgba(157,194,172,0.38); border-radius: 8px; background: rgba(106,156,124,0.12); color: #d7eadf; font-size: 0.88rem; line-height: 1.45; }
+  .booking-note[hidden] { display: none; }
   .booking-note-text { flex: 1; }
   .booking-note-dismiss { flex: none; padding: 0.2rem 0.45rem; border: 1px solid rgba(157,194,172,0.45); border-radius: 5px; background: transparent; color: var(--accent-soft); cursor: pointer; font: inherit; font-size: 0.8rem; white-space: nowrap; }
   .booking-note-dismiss:hover { background: rgba(106,156,124,0.16); }

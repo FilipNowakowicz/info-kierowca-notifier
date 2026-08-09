@@ -64,6 +64,7 @@ class SearchStartDateTests(unittest.TestCase):
         self.assertIn('id="dismiss-booking-note"', page)
         self.assertIn("BOOKING_PREREQUISITE_DISMISSED_KEY", page)
         self.assertIn("localStorage.setItem(BOOKING_PREREQUISITE_DISMISSED_KEY, '1')", page)
+        self.assertIn(".booking-note[hidden] { display: none; }", page)
 
     def test_run_check_sends_lower_bound_and_filters_older_api_results(self):
         with tempfile.TemporaryDirectory() as directory:
