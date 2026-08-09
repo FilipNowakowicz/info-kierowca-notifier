@@ -34,6 +34,10 @@ class StaleTargetError(TargetNotFoundError):
     """Raised when a target that was selected earlier has since disappeared."""
 
 
+class ExecutionContextLostError(RuntimeError):
+    """Raised when a retained target is navigating between JS contexts."""
+
+
 @dataclass(frozen=True)
 class PageTarget:
     """Stable metadata for one debuggable Chrome page target.
@@ -353,13 +357,22 @@ def call_function_in_target(host, port, target, function_declaration, arguments=
         "returnByValue": True,
         "awaitPromise": True,
     }
-    with cdp_socket(current.websocket_url) as sock:
-        global_result = cdp_call(sock, 1, "Runtime.evaluate", {"expression": "globalThis"})
-        object_id = global_result.get("result", {}).get("objectId")
-        if not object_id:
-            raise RuntimeError("Target page execution context is unavailable")
-        params["objectId"] = object_id
-        result = cdp_call(sock, 2, "Runtime.callFunctionOn", params)
+    try:
+        with cdp_socket(current.websocket_url) as sock:
+            global_result = cdp_call(sock, 1, "Runtime.evaluate", {"expression": "globalThis"})
+            object_id = global_result.get("result", {}).get("objectId")
+            if not object_id:
+                raise ExecutionContextLostError("Target page execution context is unavailable")
+            params["objectId"] = object_id
+            result = cdp_call(sock, 2, "Runtime.callFunctionOn", params)
+    except RuntimeError as exc:
+        detail = str(exc).lower()
+        if ("cannot find context with specified id" in detail or
+                "execution context was destroyed" in detail):
+            raise ExecutionContextLostError(
+                "Target page execution context changed during navigation"
+            ) from exc
+        raise
     if result.get("exceptionDetails"):
         raise RuntimeError("Target page function failed")
     return result.get("result", {}).get("value")

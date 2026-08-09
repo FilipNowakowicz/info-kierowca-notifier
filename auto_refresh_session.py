@@ -771,6 +771,11 @@ def main():
         if login_method == "profil_zaufany":
             messages = sms_provider.GoogleMessagesWebProvider("127.0.0.1", args.port)
             messages.find_or_create_target(create=True)
+            # Messages may become the foreground tab when it is created, but
+            # authentication remains on the retained auth target. Put that
+            # target back in front so the visible browser reflects the active
+            # state machine; target-scoped evaluation does not depend on focus.
+            cdp_client.bring_target_to_front("127.0.0.1", args.port, login_target)
             browser = auth_providers.CDPProfilZaufanyBrowser(
                 "127.0.0.1", args.port, login_target, chrome_proc, args.url
             )
@@ -839,6 +844,7 @@ def main():
             print(f"automatic relogin backoff: {delay}s ({reason})")
         messages = {
             "invalid_credentials": "Profil Zaufany credentials were rejected.",
+            "profil_zaufany_inactive": "This account does not have a valid active Profil Zaufany.",
             "sms_provider_unavailable": "Google Messages is unavailable or no longer paired.",
             "messages_target_lost": "The Google Messages tab was closed.",
             "sms_timeout": "No fresh PZePUAP verification message arrived in time.",

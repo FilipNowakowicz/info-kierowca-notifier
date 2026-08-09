@@ -69,6 +69,11 @@ class PZAuthenticationTests(unittest.TestCase):
     def test_sms_timeout(self): self.assertEqual(self.reason(sms=FakeSMS(SMSResult("no_current_otp"))), "sms_timeout")
     def test_stale_sms(self): self.assertEqual(self.reason(sms=FakeSMS(SMSResult("stale_otp"))), "stale_sms")
     def test_otp_rejection(self): self.assertEqual(self.reason(FakeBrowser(redirect="otp_rejected")), "otp_rejected")
+    def test_inactive_profil_zaufany(self):
+        self.assertEqual(
+            self.reason(FakeBrowser(redirect="no_valid_profile")),
+            "profil_zaufany_inactive",
+        )
     def test_auth_target_disappears(self):
         import cdp_client
         self.assertEqual(self.reason(FakeBrowser(form=cdp_client.StaleTargetError("gone"))), "auth_target_lost")
@@ -97,9 +102,11 @@ class OriginTests(unittest.TestCase):
     def test_allowed_login_hosts(self):
         self.assertTrue(auth_providers.allowed_pz_origin("https://login.gov.pl/x"))
         self.assertTrue(auth_providers.allowed_pz_origin("https://podmiotyzewnetrzne.login.gov.pl/x"))
+        self.assertTrue(auth_providers.allowed_pz_origin("https://pz.gov.pl/ui/au/login"))
     def test_rejects_unexpected_origin(self):
         self.assertFalse(auth_providers.allowed_pz_origin("https://evil.example/login.gov.pl"))
         self.assertFalse(auth_providers.allowed_pz_origin("http://login.gov.pl/x"))
+        self.assertFalse(auth_providers.allowed_pz_origin("https://notpz.gov.pl/x"))
 
     def test_credentials_and_otp_are_never_injected_on_unexpected_origin(self):
         import cdp_client
@@ -110,4 +117,44 @@ class OriginTests(unittest.TestCase):
              patch("auth_providers.cdp_client.call_function_in_target") as call:
             self.assertRaises(AuthenticationFailure, browser.submit_credentials, "user", "secret")
             self.assertRaises(AuthenticationFailure, browser.submit_otp, "87654321")
+            call.assert_not_called()
+
+    def test_identity_provider_uses_live_gov_card_on_explicit_auth_target(self):
+        import cdp_client
+        from unittest.mock import Mock, patch
+        target = cdp_client.PageTarget("auth", "https://info-kierowca.pl/login", "", "ws")
+        browser = auth_providers.CDPProfilZaufanyBrowser("h", 1, target, Mock(), target.url)
+        with patch("auth_providers.cdp_client.get_page_target", return_value=target), \
+             patch("auth_providers.cdp_client.call_function_in_target", return_value={"clicked": True}) as call:
+            self.assertEqual(browser.select_identity_provider(), {"clicked": True})
+        self.assertEqual(call.call_args.args[2].id, "auth")
+        self.assertIn("mat-card.auth-card", call.call_args.args[3])
+        self.assertIn("login.gov.pl", call.call_args.args[3])
+
+    def test_profil_chooser_waits_during_allowed_cross_origin_navigation(self):
+        import cdp_client
+        from unittest.mock import Mock, patch
+        target = cdp_client.PageTarget("auth", "https://info-kierowca.pl/login", "", "ws")
+        browser = auth_providers.CDPProfilZaufanyBrowser("h", 1, target, Mock(), target.url)
+        with patch("auth_providers.cdp_client.get_page_target", return_value=target), \
+             patch("auth_providers.cdp_client.call_function_in_target") as call:
+            self.assertIsNone(browser.select_profil_zaufany())
+            call.assert_not_called()
+
+    def test_identity_provider_waits_for_initial_target_navigation(self):
+        import cdp_client
+        from unittest.mock import Mock, patch
+        target = cdp_client.PageTarget("auth", "chrome://newtab/", "", "ws")
+        browser = auth_providers.CDPProfilZaufanyBrowser(
+            "h", 1, target, Mock(), "https://info-kierowca.pl/login"
+        )
+        with patch("auth_providers.cdp_client.get_page_target", return_value=target), \
+             patch("auth_providers.cdp_client.call_function_in_target") as call:
+            self.assertIsNone(browser.select_identity_provider())
+            call.assert_not_called()
+
+        empty_target = cdp_client.PageTarget("auth", "", "", "ws")
+        with patch("auth_providers.cdp_client.get_page_target", return_value=empty_target), \
+             patch("auth_providers.cdp_client.call_function_in_target") as call:
+            self.assertIsNone(browser.select_identity_provider())
             call.assert_not_called()

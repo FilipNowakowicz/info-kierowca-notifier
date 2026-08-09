@@ -85,6 +85,11 @@ class ProfilZaufanyProvider:
                 outcome = probe()
             except cdp_client.StaleTargetError:
                 self._fail("auth_target_lost")
+            except cdp_client.ExecutionContextLostError:
+                # Cross-origin navigation replaces the target's JavaScript
+                # context without replacing its target ID. Retry within this
+                # state's existing deadline.
+                outcome = None
             if outcome is not None:
                 return outcome
             self.sleep(min(0.5, max(0, deadline - self.monotonic())))
@@ -107,6 +112,8 @@ class ProfilZaufanyProvider:
                           "credential_form_timeout")
         if form == "expired":
             self._fail("auth_transaction_expired")
+        if form == "no_valid_profile":
+            self._fail("profil_zaufany_inactive")
         if form != "ready":
             self._fail("unexpected_auth_page")
         self._transition(PZState.SUBMIT_CREDENTIALS)
@@ -117,6 +124,8 @@ class ProfilZaufanyProvider:
             self._fail("invalid_credentials")
         if challenge == "expired":
             self._fail("auth_transaction_expired")
+        if challenge == "no_valid_profile":
+            self._fail("profil_zaufany_inactive")
         if challenge != "sms":
             self._fail("unexpected_auth_page")
 
@@ -146,6 +155,8 @@ class ProfilZaufanyProvider:
             self._fail("otp_rejected")
         if redirect == "expired":
             self._fail("auth_transaction_expired")
+        if redirect == "no_valid_profile":
+            self._fail("profil_zaufany_inactive")
         if redirect != "redirected":
             self._fail("unexpected_auth_page")
         cookies = self._wait(PZState.WAIT_FOR_INFO_KIEROWCA_SESSION,
@@ -165,7 +176,10 @@ class MObywatelProvider:
 def allowed_pz_origin(url):
     parsed = urlparse(url)
     host = (parsed.hostname or "").lower()
-    return parsed.scheme == "https" and (host == "login.gov.pl" or host.endswith(".login.gov.pl"))
+    return parsed.scheme == "https" and any(
+        host == suffix or host.endswith("." + suffix)
+        for suffix in ("login.gov.pl", "pz.gov.pl")
+    )
 
 
 def allowed_auth_redirect(url):
@@ -174,6 +188,12 @@ def allowed_auth_redirect(url):
         host == suffix or host.endswith("." + suffix)
         for suffix in ("gov.pl", "pwpw.pl", "info-kierowca.pl")
     )
+
+
+def transient_initial_page(url):
+    parsed = urlparse(url)
+    return (not url or url == "about:blank" or
+            (parsed.scheme == "chrome" and parsed.netloc == "newtab"))
 
 
 CLICK_FUNCTION = r"""
@@ -191,9 +211,31 @@ function(labels) {
 }
 """
 
+IDENTITY_PROVIDER_FUNCTION = r"""
+function() {
+  var visible = function(e) { var r=e.getBoundingClientRect(); var s=getComputedStyle(e);
+    return r.width>0 && r.height>0 && s.visibility!=='hidden' && s.display!=='none'; };
+  var cards = Array.from(document.querySelectorAll('mat-card.auth-card'));
+  var govCard = cards.find(function(e) {
+    var text=(e.innerText||e.textContent||'').trim().toLowerCase();
+    return visible(e) && text.indexOf('login.gov.pl')>=0;
+  });
+  if (govCard) { govCard.click(); return {clicked:true}; }
+  var controls = Array.from(document.querySelectorAll('button,a,[role="button"]'));
+  var login = controls.find(function(e) {
+    var text=(e.innerText||e.textContent||'').trim().toLowerCase();
+    return visible(e) && text.indexOf('zaloguj się')>=0;
+  });
+  if (login) { login.click(); return null; }
+  return null;
+}
+"""
+
 FORM_STATUS_FUNCTION = r"""
 function() {
   var body=(document.body && document.body.innerText || '').toLowerCase();
+  if (body.indexOf('nie masz ważnego profilu zaufanego')>=0 ||
+      body.indexOf('nie masz waznego profilu zaufanego')>=0) return 'no_valid_profile';
   if (document.querySelector('.alertPage,[class*="alertPage"],.wkProcessUsed') ||
       body.indexOf('został już użyty')>=0 || body.indexOf('wkprocessused')>=0) return 'expired';
   var u=document.querySelector('#username,input[formcontrolname="login"],input[name="login"],#login,input[data-testid="username-input"] input');
@@ -219,6 +261,8 @@ function(username,password) {
 CHALLENGE_STATUS_FUNCTION = r"""
 function() {
   var body=(document.body && document.body.innerText || '').toLowerCase();
+  if (body.indexOf('nie masz ważnego profilu zaufanego')>=0 ||
+      body.indexOf('nie masz waznego profilu zaufanego')>=0) return 'no_valid_profile';
   if (document.querySelector('input[data-testid="sms-code-input"],#smsInput')) return 'sms';
   if (document.querySelector('.alertPage,[class*="alertPage"],.wkProcessUsed') || body.indexOf('został już użyty')>=0) return 'expired';
   if ((body.indexOf('nieprawidł')>=0 || body.indexOf('błędn')>=0) &&
@@ -241,6 +285,8 @@ function(code) {
 REDIRECT_STATUS_FUNCTION = r"""
 function() {
   var body=(document.body && document.body.innerText || '').toLowerCase();
+  if (body.indexOf('nie masz ważnego profilu zaufanego')>=0 ||
+      body.indexOf('nie masz waznego profilu zaufanego')>=0) return 'no_valid_profile';
   if (document.querySelector('input[data-testid="sms-code-input"],#smsInput')) {
     if (body.indexOf('nieprawidł')>=0 || body.indexOf('błędn')>=0) return 'otp_rejected';
     return null;
@@ -278,10 +324,18 @@ class CDPProfilZaufanyBrowser:
         current = self._current()
         if allowed_pz_origin(current.url):
             return "ready"
-        self._call(CLICK_FUNCTION, [["zaloguj się", "gov.pl"]])
-        return None
+        if transient_initial_page(current.url):
+            return None
+        if not allowed_auth_redirect(current.url):
+            raise AuthenticationFailure("unexpected_auth_page", PZState.SELECT_IDENTITY_PROVIDER)
+        return self._call(IDENTITY_PROVIDER_FUNCTION)
 
     def select_profil_zaufany(self):
+        current = self._current()
+        if not allowed_pz_origin(current.url):
+            if allowed_auth_redirect(current.url):
+                return None
+            raise AuthenticationFailure("unexpected_auth_page", PZState.SELECT_PROFIL_ZAUFANY)
         if self._call(FORM_STATUS_FUNCTION, require_pz_origin=True) == "ready":
             return "ready"
         return self._call(CLICK_FUNCTION, [["profil zaufany"]], require_pz_origin=True)
