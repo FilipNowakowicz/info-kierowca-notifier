@@ -33,8 +33,10 @@ from pathlib import Path
 
 import cdp_client
 import ntfy_transport
+import relogin_control
 
 from paths import AUTO_REFRESH_LOCK as LOCK_FILE  # noqa: E402
+from paths import AUTO_REFRESH_RESTART_REQUEST as RESTART_REQUEST_FILE  # noqa: E402
 from paths import CONFIG_FILE, RELOGIN_BACKOFF_FILE, STATE_DIR  # noqa: E402,F401
 from relogin_backoff import RetryBackoff  # noqa: E402
 
@@ -530,31 +532,29 @@ def push_ntfy(title, message, priority="default", tags=None):
     return ntfy_transport.push_ntfy(topic, title, message, priority=priority, tags=tags)
 
 
-def acquire_lock():
+def acquire_lock(owner):
     if LOCK_FILE.exists():
-        try:
-            pid = int(LOCK_FILE.read_text().strip())
-        except ValueError:
-            pid = None
+        pid = relogin_control.lock_pid(LOCK_FILE)
         if pid is not None:
-            try:
-                os.kill(pid, 0)
+            if relogin_control.process_alive(pid):
                 return False  # a refresh is already in progress
-            except OSError:
-                pass  # stale lock — the owning process is gone
+            # stale lock — the owning process is gone
     LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
-    LOCK_FILE.write_text(str(os.getpid()))
+    relogin_control.write_lock(LOCK_FILE, owner)
+    RESTART_REQUEST_FILE.unlink(missing_ok=True)
     return True
 
 
-def release_lock():
-    try:
-        LOCK_FILE.unlink()
-    except FileNotFoundError:
-        pass
+def release_lock(owner):
+    relogin_control.clear_if_owned(LOCK_FILE, owner)
+    RESTART_REQUEST_FILE.unlink(missing_ok=True)
 
 
-def wait_for_cookies(host, port, timeout, chrome_proc, target=None):
+class ReloginRestartRequested(Exception):
+    """Raised only after this helper receives its own cooperative token."""
+
+
+def wait_for_cookies(host, port, timeout, chrome_proc, target=None, should_restart=None):
     """timeout=None waits indefinitely — but always bails out the moment
     chrome_proc has exited. Without this, a crashed/killed Chrome left this
     looping forever: fetch_cookies() against a dead debug port just raises,
@@ -582,6 +582,8 @@ def wait_for_cookies(host, port, timeout, chrome_proc, target=None):
     """
     deadline = None if timeout is None else time.monotonic() + timeout
     while deadline is None or time.monotonic() < deadline:
+        if should_restart and should_restart():
+            raise ReloginRestartRequested
         if chrome_proc.poll() is not None:
             return None
         try:
@@ -620,14 +622,9 @@ def main():
     )
     args = parser.parse_args()
 
-    # notifier.trigger_auto_refresh(force=True) — the "Open browser" button's
-    # path for clearing a forgotten QR window — SIGTERMs whoever holds the
-    # lock. Without a handler Python dies immediately, skipping the finally
-    # below: the lock got cleared but our Chrome child survived as an orphan
-    # still holding PROFILE_DIR, so the *replacement* Chrome launched against
-    # the same --user-data-dir would delegate to it and exit instantly,
-    # tripping the "Chrome closed before logging in" bail-out on every retry.
-    # Translating the signal into SystemExit lets the finally run normally.
+    # Translate an external service-manager shutdown into SystemExit so the
+    # finally block still closes Chrome and releases our owned lock. Dashboard
+    # restarts use the cooperative token above and never signal a lock-file PID.
     def _terminate(signum, _frame):
         raise SystemExit(f"terminated by signal {signum}")
 
@@ -644,11 +641,13 @@ def main():
     except AttributeError:
         pass  # older Python without reconfigure(); harmless to skip
 
-    if not acquire_lock():
+    owner = relogin_control.new_owner()
+    if not acquire_lock(owner):
         print("A refresh is already in progress (lock file present) — exiting.")
         return
 
     chrome_proc = None
+    restart_shutdown = False
     backoff = RetryBackoff(RELOGIN_BACKOFF_FILE)
     try:
         chrome = find_chrome()
@@ -697,7 +696,10 @@ def main():
             "127.0.0.1", args.port, args.url, AUTO_CLICK_OBSERVER_JS, target=login_target
         )
         cookies = wait_for_cookies(
-            "127.0.0.1", args.port, args.timeout, chrome_proc, target=login_target
+            "127.0.0.1", args.port, args.timeout, chrome_proc, target=login_target,
+            should_restart=lambda: relogin_control.restart_requested(
+                RESTART_REQUEST_FILE, owner
+            ),
         )
 
         if cookies is None:
@@ -729,19 +731,23 @@ def main():
             "info-kierowca: session refreshed",
             "Logged back in — the notifier will pick it up on the next check",
         )
+    except ReloginRestartRequested:
+        restart_shutdown = True
+        print("Explicit restart requested; closing the current QR login cleanly.")
     except Exception:
         if args.automatic:
             delay = backoff.record_failure("authentication_flow_failed")
             print(f"automatic relogin backoff: {delay}s (authentication_flow_failed)")
         raise
     finally:
-        if chrome_proc and not args.keep_open:
+        if chrome_proc and (not args.keep_open or restart_shutdown):
             chrome_proc.terminate()
             try:
                 chrome_proc.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 chrome_proc.kill()
-        release_lock()
+                chrome_proc.wait(timeout=2)
+        release_lock(owner)
 
 
 if __name__ == "__main__":

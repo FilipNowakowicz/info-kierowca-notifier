@@ -189,7 +189,13 @@ notifier records a small, non-sensitive retry state in
 `~/.local/state/info-kierowca-notifier/relogin-backoff.json`. Automatic retries wait 1 minute,
 then double after repeated failures up to 1 hour, including across restarts. A successful QR
 login clears that state immediately. The dashboard's deliberate relogin buttons always bypass
-the cooldown; they do not disable certificate checks or discard session data.
+the cooldown; they do not disable certificate checks or discard session data. A normal retry
+never closes an active QR login. If that QR window has genuinely been forgotten, clicking the
+session-refresh control again offers a separate confirmed restart. The helper then receives a
+per-run cooperative request, closes its own Chrome/profile resources, and only after shutdown
+launches the replacement. If shutdown cannot be confirmed, no second browser is opened. A live
+PID-only lock left by an older app version cannot be restarted this way; close that old Chrome
+window normally and retry.
 
 **Only works if a real desktop/GUI session is available** — Chrome needs somewhere to render the
 QR code. If `info-kierowca-notifier.service` runs under systemd on a headless box or before you've
