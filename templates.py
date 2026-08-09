@@ -406,7 +406,11 @@ WIZARD_PAGE = """<!doctype html>
   #wiz-close-btn:hover { background: rgba(36,36,36,0.95); border-color: rgba(255,255,255,0.32); }
   h1 { font-size: 1.6rem; margin-bottom: 0.2rem; }
   p.lead { opacity: 0.75; margin-top: 0; margin-bottom: 2rem; }
-  .booking-note { margin: 0 0 1.25rem; padding: 0.75rem 0.9rem; border: 1px solid rgba(157,194,172,0.38); border-radius: 8px; background: rgba(106,156,124,0.12); color: #d7eadf; font-size: 0.88rem; line-height: 1.45; }
+  .booking-note { display: flex; align-items: flex-start; gap: 0.75rem; margin: 0 0 1.25rem; padding: 0.75rem 0.9rem; border: 1px solid rgba(157,194,172,0.38); border-radius: 8px; background: rgba(106,156,124,0.12); color: #d7eadf; font-size: 0.88rem; line-height: 1.45; }
+  .booking-note-text { flex: 1; }
+  .booking-note-dismiss { flex: none; padding: 0.2rem 0.45rem; border: 1px solid rgba(157,194,172,0.45); border-radius: 5px; background: transparent; color: var(--accent-soft); cursor: pointer; font: inherit; font-size: 0.8rem; white-space: nowrap; }
+  .booking-note-dismiss:hover { background: rgba(106,156,124,0.16); }
+  .booking-note-dismiss:focus-visible { outline: 2px solid var(--accent-soft); outline-offset: 2px; }
   fieldset { border: 1px solid #383838; border-radius: 10px; margin-bottom: 1.1rem; padding: 1.1rem 1.2rem 1.25rem; }
   legend { padding: 0 0.45rem; opacity: 0.8; font-size: 0.9rem; }
   label { display: block; margin-bottom: 0.35rem; font-size: 0.92rem; opacity: 0.9; }
@@ -638,7 +642,10 @@ WIZARD_PAGE = """<!doctype html>
 
     <fieldset>
       <legend>Alerts</legend>
-      <p class="booking-note" id="booking-note">Before continuing, you need an existing booked exam. This app changes the date of that booking; it does not create a new booking.</p>
+      <div class="booking-note" id="booking-note" role="note">
+        <span class="booking-note-text">Before continuing, you need an existing booked exam. This app changes the date of that booking; it does not create a new booking.</span>
+        <button type="button" class="booking-note-dismiss" id="dismiss-booking-note" aria-label="Dismiss booking prerequisite message">Got it</button>
+      </div>
       <label for="current_slot_date_display">Required: date of the booking to reschedule</label>
       <div class="datepick" id="datepick">
         <input type="text" class="datepick-input" id="current_slot_date_display" placeholder="Select a date" readonly required>
@@ -772,8 +779,18 @@ const KNOWN_IDS = new Set(CENTERS.map(c => c.id));
 // postMessage is just the cleanest way to hand control back to the parent
 // rather than assuming direct window.parent access always stays safe.
 const IKW_EMBEDDED = window.parent !== window;
+// A browser-local acknowledgement, separate from account/config data. Reset
+// account intentionally keeps it: dismissing explanatory copy cannot make a
+// later setup or booking action less safe.
+const BOOKING_PREREQUISITE_DISMISSED_KEY = 'info-kierowca-notifier-dismissed-booking-prerequisite';
 ikwI18n.installSwitcher(document.getElementById('card'));
 const t = (text) => ikwI18n.t(text);
+const bookingNote = document.getElementById('booking-note');
+if (localStorage.getItem(BOOKING_PREREQUISITE_DISMISSED_KEY) === '1') bookingNote.hidden = true;
+document.getElementById('dismiss-booking-note').addEventListener('click', () => {
+  localStorage.setItem(BOOKING_PREREQUISITE_DISMISSED_KEY, '1');
+  bookingNote.hidden = true;
+});
 const centerLabelHeading = document.querySelector('label[for="center-search"]');
 centerLabelHeading.textContent = ikwI18n.lang() === 'pl'
   ? `Ośrodki WORD do obserwowania (${CENTERS.length} w kraju)`

@@ -40,6 +40,7 @@ LOCALIZATION_SCRIPT = r"""
     "Log in once via the mObywatel QR code — this is what lets the notifier check for\n  slots on your behalf. While we're at it, we'll also find your PKK number and license category\n  automatically, so you don't have to type them in.": 'Zaloguj się raz kodem QR w aplikacji mObywatel — dzięki temu program może sprawdzać terminy w Twoim imieniu. Przy okazji automatycznie znajdzie numer PKK i kategorię prawa jazdy, więc nie trzeba ich wpisywać ręcznie.',
     "A Chrome window should open — scan the QR code in the mObywatel app. This page\n  continues on its own once you're logged in.": 'Powinno otworzyć się okno Chrome — zeskanuj kod QR w aplikacji mObywatel. Po zalogowaniu strona przejdzie dalej automatycznie.',
     'Before continuing, you need an existing booked exam. This app changes the date of that booking; it does not create a new booking.': 'Przed kontynuowaniem potrzebujesz już zarezerwowanego egzaminu. Ta aplikacja zmienia datę tej rezerwacji; nie tworzy nowej rezerwacji.',
+    'Got it': 'Rozumiem', 'Dismiss booking prerequisite message': 'Ukryj informację o wymaganej istniejącej rezerwacji',
     'Required: date of the booking to reschedule': 'Wymagane: data rezerwacji do zmiany terminu',
     'Enter the date of the existing booking that you want the app to reschedule.': 'Wpisz datę istniejącej rezerwacji, której termin aplikacja ma zmienić.',
     'Earliest acceptable exam date (optional)': 'Najwcześniejsza akceptowalna data egzaminu (opcjonalnie)',

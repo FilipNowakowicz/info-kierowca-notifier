@@ -59,6 +59,12 @@ class SearchStartDateTests(unittest.TestCase):
         self.assertIn("Earliest acceptable exam date (optional)", page)
         self.assertIn("Search from today", page)
 
+    def test_booking_prerequisite_can_be_dismissed_without_touching_config(self):
+        page = app.render_wizard().decode("utf-8")
+        self.assertIn('id="dismiss-booking-note"', page)
+        self.assertIn("BOOKING_PREREQUISITE_DISMISSED_KEY", page)
+        self.assertIn("localStorage.setItem(BOOKING_PREREQUISITE_DISMISSED_KEY, '1')", page)
+
     def test_run_check_sends_lower_bound_and_filters_older_api_results(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
