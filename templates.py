@@ -214,6 +214,11 @@ ikwSessionRefreshBtn.addEventListener('click', async () => {
     const res = await fetch('/relogin-now', {method: 'POST'});
     const data = await res.json();
     ikwToast(ikwI18n.t(data.message || 'Something went wrong.'));
+    if (data.action === 'already_running' && confirm(ikwI18n.t('A QR login is already open. Close it and restart login?'))) {
+      const restartRes = await fetch('/relogin-restart', {method: 'POST'});
+      const restartData = await restartRes.json();
+      ikwToast(ikwI18n.t(restartData.message || 'Something went wrong.'));
+    }
   } catch (e) {
     ikwToast(ikwI18n.t('Could not reach the app.'));
   } finally {
@@ -326,6 +331,13 @@ loginBtn.addEventListener('click', async () => {
     const data = await res.json();
     if (!data.ok || data.action === 'launch_failed' || data.action === 'no_chromium_browser') {
       throw new Error(ikwI18n.t(data.message || 'Could not open Chrome — try the manual option below.'));
+    }
+    if (data.action === 'already_running' && confirm(ikwI18n.t('A QR login is already open. Close it and restart login?'))) {
+      const restartRes = await fetch('/relogin-restart', {method: 'POST'});
+      const restartData = await restartRes.json();
+      if (restartData.action !== 'restart_launched') {
+        throw new Error(ikwI18n.t(restartData.message || 'Could not restart the QR login.'));
+      }
     }
     loginHint.classList.add('show');
     loginBtn.textContent = 'Waiting for QR scan...';

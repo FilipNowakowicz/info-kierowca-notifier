@@ -27,6 +27,10 @@ STATUS_FILE = STATE_DIR / "status.json"
 # checks are driven by app.py's in-process loop or a systemd timer tick.
 PAUSE_FILE = STATE_DIR / "paused"
 AUTO_REFRESH_LOCK = STATE_DIR / "auto-refresh.lock"
+# Cooperative request consumed by the relogin helper itself. Keeping this
+# separate from the lock means the dashboard never has to kill a PID obtained
+# from a writable state file to restart a forgotten QR flow.
+AUTO_REFRESH_RESTART_REQUEST = STATE_DIR / "auto-refresh.restart"
 # Persisted exponential backoff for failed unattended QR relogins.  It is
 # separate from the lock: a lock prevents concurrency; this prevents a failed
 # flow from being launched again on every poll cycle or after an app restart.

@@ -16,6 +16,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
 import urllib.error
 import urllib.request
 from datetime import date, datetime, timedelta
@@ -24,10 +25,12 @@ from pathlib import Path
 import auto_refresh_session
 import ntfy_transport
 import open_logged_in_browser
+import relogin_control
 import tls_transport
 from relogin_backoff import RetryBackoff
 from paths import (  # noqa: F401  (re-exported: other modules read these off notifier)
     AUTO_REFRESH_LOG_FILE,
+    AUTO_REFRESH_RESTART_REQUEST,
     CONFIG_FILE,
     LOG_FILE,
     PAUSE_FILE,
@@ -321,6 +324,9 @@ TRIGGER_ALREADY_RUNNING = "already_running"
 TRIGGER_BACKOFF_ACTIVE = "backoff_active"
 TRIGGER_LAUNCHED = "launched"
 TRIGGER_MANUAL_RETRY_LAUNCHED = "manual_retry_launched"
+TRIGGER_RESTART_LAUNCHED = "restart_launched"
+TRIGGER_RESTART_UNAVAILABLE = "restart_unavailable"
+TRIGGER_SHUTDOWN_FAILED = "shutdown_failed"
 TRIGGER_LAUNCH_FAILED = "launch_failed"
 TRIGGER_OUTCOMES = (
     TRIGGER_DISABLED,
@@ -329,6 +335,9 @@ TRIGGER_OUTCOMES = (
     TRIGGER_BACKOFF_ACTIVE,
     TRIGGER_LAUNCHED,
     TRIGGER_MANUAL_RETRY_LAUNCHED,
+    TRIGGER_RESTART_LAUNCHED,
+    TRIGGER_RESTART_UNAVAILABLE,
+    TRIGGER_SHUTDOWN_FAILED,
     TRIGGER_LAUNCH_FAILED,
 )
 
@@ -382,15 +391,11 @@ def trigger_auto_refresh(logger, config, force=False, notify_phone=True):
             backoff.record_failure("browser_unavailable")
         return TRIGGER_NO_BROWSER
     if AUTO_REFRESH_LOCK.exists():
-        try:
-            pid = int(AUTO_REFRESH_LOCK.read_text().strip())
-            os.kill(pid, 0)
+        pid = relogin_control.lock_pid(AUTO_REFRESH_LOCK)
+        if pid is not None and relogin_control.process_alive(pid):
             logger.info("outcome=auto_refresh_skipped detail=already_running pid=%s", pid)
             return TRIGGER_ALREADY_RUNNING
-        except ValueError:
-            pass  # malformed lock — safe to remove before launching
-        except OSError:
-            pass  # pid is gone — stale lock, safe to relaunch
+        # Malformed or stale lock — safe to remove before launching.
         AUTO_REFRESH_LOCK.unlink(missing_ok=True)
     if getattr(sys, "frozen", False):
         cmd = [sys.executable, "--internal-auto-refresh"]
@@ -437,6 +442,60 @@ def trigger_auto_refresh(logger, config, force=False, notify_phone=True):
         return TRIGGER_LAUNCH_FAILED
 
 
+def restart_auto_refresh(logger, config, *, timeout=8, clock=time.monotonic, sleeper=time.sleep):
+    """Cooperatively replace a known active QR relogin helper.
+
+    The active helper owns and terminates its Chrome child. This function only
+    writes that helper's unguessable request token and waits for its lock to be
+    released. It never signals a PID read from disk, and it never starts a
+    replacement while the prior owner may still hold the profile/debug port.
+    Older live PID-only locks therefore fail conservatively until that helper
+    exits normally.
+    """
+    if not config.get("auto_refresh_chrome", True):
+        return TRIGGER_DISABLED
+    if not auto_refresh_session.chrome_available():
+        return TRIGGER_NO_BROWSER
+
+    if not AUTO_REFRESH_LOCK.exists():
+        outcome = trigger_auto_refresh(logger, config, force=True, notify_phone=False)
+        return TRIGGER_RESTART_LAUNCHED if outcome == TRIGGER_MANUAL_RETRY_LAUNCHED else outcome
+
+    owner = relogin_control.read_lock(AUTO_REFRESH_LOCK)
+    pid = relogin_control.lock_pid(AUTO_REFRESH_LOCK)
+    if pid is None or not relogin_control.process_alive(pid):
+        AUTO_REFRESH_LOCK.unlink(missing_ok=True)
+        outcome = trigger_auto_refresh(logger, config, force=True, notify_phone=False)
+        return TRIGGER_RESTART_LAUNCHED if outcome == TRIGGER_MANUAL_RETRY_LAUNCHED else outcome
+    if owner is None:
+        logger.info("outcome=auto_refresh_restart_refused detail=unverifiable_legacy_lock")
+        return TRIGGER_RESTART_UNAVAILABLE
+
+    relogin_control.write_restart_request(AUTO_REFRESH_RESTART_REQUEST, owner)
+    deadline = clock() + timeout
+    while clock() < deadline:
+        lock_exists = AUTO_REFRESH_LOCK.exists()
+        if lock_exists and relogin_control.read_lock(AUTO_REFRESH_LOCK) != owner:
+            logger.info("outcome=auto_refresh_restart_failed detail=lock_owner_changed")
+            AUTO_REFRESH_RESTART_REQUEST.unlink(missing_ok=True)
+            return TRIGGER_SHUTDOWN_FAILED
+        if not relogin_control.process_alive(owner.pid):
+            if lock_exists:
+                relogin_control.clear_if_owned(AUTO_REFRESH_LOCK, owner)
+            break
+        sleeper(min(0.1, max(0, deadline - clock())))
+    if AUTO_REFRESH_LOCK.exists() or relogin_control.process_alive(owner.pid):
+        logger.info("outcome=auto_refresh_restart_failed detail=shutdown_timeout")
+        return TRIGGER_SHUTDOWN_FAILED
+
+    AUTO_REFRESH_RESTART_REQUEST.unlink(missing_ok=True)
+    outcome = trigger_auto_refresh(logger, config, force=True, notify_phone=False)
+    if outcome == TRIGGER_MANUAL_RETRY_LAUNCHED:
+        logger.info("outcome=auto_refresh_restart_launched")
+        return TRIGGER_RESTART_LAUNCHED
+    return outcome
+
+
 def auto_refresh_in_progress():
     """Whether a launched auto_refresh_session.py is still alive and holding
     AUTO_REFRESH_LOCK — used by app.py's login screen to tell "still waiting
@@ -448,12 +507,8 @@ def auto_refresh_in_progress():
     """
     if not AUTO_REFRESH_LOCK.exists():
         return False
-    try:
-        pid = int(AUTO_REFRESH_LOCK.read_text().strip())
-        os.kill(pid, 0)
-        return True
-    except (ValueError, OSError):
-        return False
+    pid = relogin_control.lock_pid(AUTO_REFRESH_LOCK)
+    return pid is not None and relogin_control.process_alive(pid)
 
 
 OPEN_BROWSER_SCRIPT = Path(__file__).parent / "open_logged_in_browser.py"

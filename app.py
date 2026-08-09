@@ -382,6 +382,8 @@ class AppHandler(http.server.BaseHTTPRequestHandler):
             self._handle_manual_login()
         elif self.path == "/relogin-now":
             self._handle_relogin_now()
+        elif self.path == "/relogin-restart":
+            self._handle_relogin_restart()
         elif self.path == "/pause":
             self._set_paused(True)
         elif self.path == "/resume":
@@ -470,6 +472,38 @@ class AppHandler(http.server.BaseHTTPRequestHandler):
             notifier.TRIGGER_LAUNCH_FAILED: "Chrome failed to launch — check the log.",
             notifier.TRIGGER_NO_BROWSER: "No Chrome, Edge, or other Chromium-based browser was found "
                 "on this machine — install one to continue.",
+        }
+        self._reply_outcome(outcome, messages)
+
+    def _handle_relogin_restart(self):
+        """Explicit recovery for a forgotten, still-running QR login.
+
+        The helper cooperatively closes its own browser before a replacement
+        starts. A failed or unverifiable shutdown is reported without opening
+        a second Chrome against the same profile/debug port.
+        """
+        config = self._load_config_or_empty()
+        prior_captured_at = None
+        if notifier.SESSION_FILE.exists():
+            try:
+                prior_captured_at = notifier.load_json(notifier.SESSION_FILE).get("captured_at")
+            except Exception:
+                pass
+        outcome = notifier.restart_auto_refresh(AppHandler.logger, config)
+        if outcome == notifier.TRIGGER_RESTART_LAUNCHED:
+            threading.Thread(
+                target=_wait_for_relogin_and_wake,
+                args=(prior_captured_at, AppHandler.wake_event),
+                daemon=True,
+            ).start()
+        messages = {
+            notifier.TRIGGER_RESTART_LAUNCHED: "The previous QR login closed — opening a fresh one.",
+            notifier.TRIGGER_RESTART_UNAVAILABLE: "That older QR login cannot be restarted safely. Close its Chrome window, then try again.",
+            notifier.TRIGGER_SHUTDOWN_FAILED: "The existing QR login did not close. No second browser was opened.",
+            notifier.TRIGGER_ALREADY_RUNNING: "A QR login is still running. No second browser was opened.",
+            notifier.TRIGGER_DISABLED: "auto_refresh_chrome is turned off in Settings.",
+            notifier.TRIGGER_LAUNCH_FAILED: "The old QR login closed, but Chrome failed to relaunch — check the log.",
+            notifier.TRIGGER_NO_BROWSER: "No Chrome, Edge, or other Chromium-based browser was found on this machine — install one to continue.",
         }
         self._reply_outcome(outcome, messages)
 
