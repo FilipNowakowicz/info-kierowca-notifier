@@ -4,6 +4,7 @@ from unittest.mock import patch
 
 import app
 import cdp_client
+import templates
 
 
 class PZSecurityTests(unittest.TestCase):
@@ -22,6 +23,11 @@ class PZSecurityTests(unittest.TestCase):
         self.assertNotIn("SUPER_SECRET_PZ_PASSWORD_123", serialized)
         self.assertNotIn("SUPER_SECRET_PZ_PASSWORD_123", page)
         self.assertNotIn("pz_password", config)
+
+    def test_pz_username_inputs_use_themed_text_input_type(self):
+        self.assertIn('id="pz-username" type="text"', templates.LOGIN_PAGE)
+        page = app.render_wizard(app.build_config(self.payload())).decode()
+        self.assertIn('id="settings-pz-username" type="text"', page)
 
     def test_cdp_function_passes_secrets_as_arguments_not_source(self):
         target = cdp_client.PageTarget("auth", "https://login.gov.pl", "", "ws://h:1/x")

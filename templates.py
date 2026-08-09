@@ -318,7 +318,7 @@ LOGIN_PAGE = """<!doctype html>
   <p class="lead">Choose how the notifier should authenticate. Profil Zaufany can recover expired sessions automatically after setup.</p>
   <div class="methods"><button id="method-mobywatel" class="on">mObywatel</button><button id="method-pz">Profil Zaufany</button></div>
   <div id="pz-fields">
-    <label for="pz-username">Profil Zaufany username</label><input id="pz-username" autocomplete="username">
+    <label for="pz-username">Profil Zaufany username</label><input id="pz-username" type="text" autocomplete="username">
     <label for="pz-password">Profil Zaufany password</label><input id="pz-password" type="password" autocomplete="current-password">
     <button class="secondary" id="pair-messages" type="button">Pair Google Messages Web</button>
     <button class="secondary" id="test-messages" type="button">Test SMS extraction</button>
@@ -652,7 +652,7 @@ WIZARD_PAGE = """<!doctype html>
       <label for="login_method">Authentication method</label>
       <select id="login_method"><option value="mobywatel">mObywatel</option><option value="profil_zaufany">Profil Zaufany</option></select>
       <div id="settings-pz-fields" style="display:none">
-        <label for="settings-pz-username">Profil Zaufany username</label><input id="settings-pz-username" autocomplete="username">
+        <label for="settings-pz-username">Profil Zaufany username</label><input id="settings-pz-username" type="text" autocomplete="username">
         <label for="settings-pz-password">Profil Zaufany password</label><input id="settings-pz-password" type="password" autocomplete="new-password" placeholder="Leave blank to keep the saved password">
         <div class="hint" id="password-status">Password saved securely by your operating system; its value is never shown here.</div>
         <button type="button" class="cat-more" id="settings-pair-messages">Pair Google Messages Web</button>
