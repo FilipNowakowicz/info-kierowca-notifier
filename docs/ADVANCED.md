@@ -2,9 +2,10 @@
 
 This covers running info-kierowca-notifier from source instead of the downloaded binaries
 described in the main [README](../README.md) — for Linux systemd users, developers, or anyone
-who'd rather not run a downloaded binary. Requires Python 3.9+ and the two small HTTPS-trust
-dependencies declared in `pyproject.toml`. The release binaries package those dependencies, so
-they still need no Python installation or extra setup.
+who'd rather not run a downloaded binary. Requires Python 3.9+ and the dependencies declared in
+`pyproject.toml` (HTTPS trust, secure credential storage, and Windows timezone data where needed).
+The release binaries package those dependencies, so they still need no Python installation or
+extra setup.
 
 ## Setup
 
@@ -36,24 +37,32 @@ they still need no Python installation or extra setup.
    ```
    (no `chmod` equivalent needed — the folder is already private to your Windows user account)
 
-3. Get your session cookies into `session.json`. The notifier refreshes these itself on every run,
-   so you only need to do this once — and again if the session is ever invalidated (e.g. by
-   logging in fresh elsewhere).
+3. Get your session cookies into `session.json`. The recommended route is to run `app.py` in
+   step 5 and use its first-run **Profil Zaufany** setup. It stores the password in the operating
+   system credential vault, pairs the dedicated Chrome profile with Google Messages Web, performs
+   the login, and writes `session.json` automatically. Do not put a Profil Zaufany password in
+   `config.json`, `session.json`, an environment variable, or a command line.
 
-   **Option A — `auto_refresh_session.py` (Chrome/Chromium, hands-off):** run it once to seed
-   `session.json`, and from then on it also fires automatically whenever the notifier hits an
-   `auth_expired` outcome (session cookie expiry — see [Auto-relogin on session
-   expiry](#auto-relogin-on-session-expiry) below):
+   **Option A — app wizard (recommended, automatic Profil Zaufany):**
+   ```
+   uv run python app.py
+   ```
+   Select Profil Zaufany, enter the username and password, pair Google Messages Web, and use
+   **Test SMS extraction** before completing login. The password is saved only through the OS
+   credential backend. If no supported secure backend is available, setup stops without falling
+   back to plaintext storage.
+
+   **Option B — `auto_refresh_session.py` (uses the method already saved by the app):**
    ```
    uv run python auto_refresh_session.py
    ```
-   It launches Chrome in its own throwaway profile (your regular Chrome windows stay open), clicks
-   through the gov.pl → "Aplikacja mObywatel" login chooser on its own, then waits — indefinitely,
-   no timeout — for you to scan the mObywatel QR code in the app. Once you do, it captures the
-   resulting `__Secure-PUDOJT` / `__Secure-PUDOJTMD` cookies and writes `session.json` for you.
-   Nothing is sent anywhere but info-kierowca.pl/gov.pl and your own machine.
+   It launches the app's dedicated Chrome profile and reads `login_method` from `config.json`.
+   For `profil_zaufany`, it retrieves the saved password from the OS vault and reads the fresh
+   PZePUAP code from the paired Google Messages Web tab. For `mobywatel`, it opens the QR flow and
+   waits indefinitely for a scan. Either route captures the resulting session cookies and writes
+   `session.json`.
 
-   **Option B — `pull_session_cookies.py` (Chrome/Chromium, manual):** quit Chrome completely,
+   **Option C — `pull_session_cookies.py` (Chrome/Chromium, manual):** quit Chrome completely,
    relaunch it with its remote-debugging port open, log in to info-kierowca.pl, then run the
    script:
    ```
@@ -67,7 +76,7 @@ they still need no Python installation or extra setup.
    script's docstring for the Windows launch command and a security note about the debug port
    (it grants full control of the browser, so don't expose it beyond localhost).
 
-   **Option C — DevTools (manual, any browser):** log in to info-kierowca.pl, open DevTools →
+   **Option D — DevTools (manual, any browser):** log in to info-kierowca.pl, open DevTools →
    Application/Storage → Cookies, and copy the `__Secure-PUDOJT` and `__Secure-PUDOJTMD` values
    into `session.json` by hand.
 
@@ -76,6 +85,8 @@ they still need no Python installation or extra setup.
 
    | Field | Meaning |
    |---|---|
+   | `login_method` *(managed by the app; `"profil_zaufany"` or `"mobywatel"`)* | Authentication used for initial login and session recovery. Profil Zaufany supports unattended renewal; mObywatel waits for a QR scan. Configure this through the app so credentials are handled safely. |
+   | `pz_username` / `pz_credential_present` *(managed by the app)* | Identifies the Profil Zaufany credential stored in the OS vault. The marker records that a secure credential was saved; neither field contains the password. Do not fabricate or copy the marker between machines. |
    | `organization_ids` | WORD center IDs to watch, up to 5 (defaults are Warsaw-area centers). The search endpoint insists on exactly 5, so fewer picks get padded with unrelated centers whose results are then discarded. |
    | `category` | License category (5 = category B) |
    | `profile_number` | Your PKK profile number |
@@ -86,7 +97,7 @@ they still need no Python installation or extra setup.
    | `poll_interval_seconds` *(optional, default `60`)* | Seconds between checks, clamped to 15–1800. Lower is more responsive but hits an undocumented API harder — 15s is a deliberate floor. Set with the dashboard Settings slider, or by hand. |
    | `earliest_slot_hour` / `latest_slot_hour` *(optional, default `0` / `24`)* | Preferred time-of-day window in whole hours, `latest` exclusive. A slot outside `[earliest, latest)` is ignored entirely — no push, no dashboard entry, nothing in history. Defaults span the whole day. Set with the dashboard's dual-handle time slider. |
    | `phone_alerts` *(optional, default `true`)* | Whether a slot that beats your booked date sends a phone push at all. Set to `false` to just watch the dashboard silently; the dashboard's red/gray colouring and `auto_open_browser` still work. |
-   | `phone_alerts_relogin` *(optional, default `true`)* | Whether an `auth_expired` outcome (session expired, Chrome reopening for a fresh QR scan) also sends a phone push. Independent of `phone_alerts` above — that one only covers slots that beat your booked date. Set to `false` to only get the desktop notification when relogin is needed. |
+   | `phone_alerts_relogin` *(optional, default `true`)* | Whether login recovery may send a phone push. With mObywatel this asks for a QR scan; with Profil Zaufany it reports an automatic-login failure that needs attention. Independent of slot-alert pushes. |
    | `auto_refresh_chrome` *(optional, default `true`)* | Whether an `auth_expired` outcome should automatically launch `auto_refresh_session.py` (see below). Set to `false` to fall back to a manual relogin. |
    | `auto_open_browser` *(optional, default `true`)* | Whether a found slot that beats your booked date should also launch `open_logged_in_browser.py` (see [Reschedule assist](#reschedule-assist) below). Set to `false` to disable. |
 
@@ -162,45 +173,58 @@ such an error by disabling certificate verification.
 
 ## Auto-relogin on session expiry
 
-**Expect a full QR relogin roughly every hour, no matter what.** The access-token cookie
+**Expect a full authentication roughly every hour.** The access-token cookie
 (`__Secure-PUDOJT`) is silently refreshed on every poll via `/jwt/refresh`, but that refresh only
 extends the token — it doesn't touch a separate, absolute session ceiling of about 3600 seconds
-from when you last scanned the QR code (confirmed live, consistent across several hours). Once
-that ceiling passes, the next check comes back `auth_expired` regardless of how healthy the
-refreshes were, and a fresh QR scan is the only way past it. `app.py`'s dashboard shows a
-countdown to that estimated expiry (next to a small reset icon that forces a new QR login on
-demand — useful if you know you'll be away when it's about to expire) so this isn't a surprise;
-the estimate is derived from `session.json`'s `captured_at`, stamped on every fresh login.
+from the last full login. Once that ceiling passes, the next check comes back `auth_expired`
+regardless of how healthy the refreshes were. Profil Zaufany can complete the new login
+automatically; mObywatel still requires a new QR scan. For the manual mObywatel path, `app.py`'s
+dashboard shows an estimated-expiry countdown and a reset control. The estimate comes from
+`session.json`'s `captured_at`, stamped on every fresh login.
 
 By default (`auto_refresh_chrome: true`), whenever a check comes back `auth_expired` — a 401,
 403, 404, or 500 on the refresh call, or a 401/403/500 on the search call, all of which have in
 practice turned out to be the same underlying cookie-expiry problem — `notifier.py` launches
-`auto_refresh_session.py` in the background. It opens Chrome to the login page in its own profile,
-clicks through the gov.pl → "Aplikacja mObywatel" chooser on its own, and sends you a single
-push + desktop notification asking you to scan the QR in the app. It waits indefinitely — there's
-no timeout to race, since a relogin has to happen eventually anyway — and the moment you scan it,
-captures the new cookies and writes `session.json` automatically. A lock file
+`auto_refresh_session.py` in the background. It opens Chrome to the login page in the app's
+dedicated profile and follows the `login_method` saved by the setup wizard:
+
+- **Profil Zaufany (recommended):** retrieves the password from the OS credential vault, navigates
+  the government login flow, reads a newly received eight-digit PZePUAP code from the paired
+  Google Messages Web tab, submits it, and captures the new cookies. No user click or QR scan is
+  normally required.
+- **mObywatel:** clicks through to the QR page, sends a push and desktop notification asking for a
+  scan, waits indefinitely, and captures the cookies after the scan.
+
+In both cases the new cookies are written to `session.json`. A lock file
 (`~/.local/state/info-kierowca-notifier/auto-refresh.lock`) stops it firing again on every
 subsequent 60s tick while a relogin is already in flight; it's cleaned up when that run finishes
 (delete it by hand if a run ever crashes without cleaning up).
 
-If an unattended relogin itself fails (for example Chrome closes before the QR scan), the
+If a relogin fails (for example Chrome closes, credentials are rejected, no fresh PZePUAP message
+arrives, or Google Messages Web is no longer paired), the
 notifier records a small, non-sensitive retry state in
 `~/.local/state/info-kierowca-notifier/relogin-backoff.json`. Automatic retries wait 1 minute,
-then double after repeated failures up to 1 hour, including across restarts. A successful QR
-login clears that state immediately. The dashboard's deliberate relogin buttons always bypass
+then double after repeated failures up to 1 hour, including across restarts. A successful login
+clears that state immediately. Profil Zaufany failures also produce desktop and phone alerts so
+you can repair the pairing or credentials. The dashboard's deliberate relogin buttons bypass
 the cooldown; they do not disable certificate checks or discard session data. A normal retry
-never closes an active QR login. If that QR window has genuinely been forgotten, clicking the
+never closes an active login. If that browser window has genuinely been forgotten, clicking the
 session-refresh control again offers a separate confirmed restart. The helper then receives a
 per-run cooperative request, closes its own Chrome/profile resources, and only after shutdown
 launches the replacement. If shutdown cannot be confirmed, no second browser is opened. A live
 PID-only lock left by an older app version cannot be restarted this way; close that old Chrome
 window normally and retry.
 
-**Only works if a real desktop/GUI session is available** — Chrome needs somewhere to render the
-QR code. If `info-kierowca-notifier.service` runs under systemd on a headless box or before you've
-logged into a desktop session, disable it (`auto_refresh_chrome: false` in `config.json`) and use
-`auto_refresh_session.py` or `pull_session_cookies.py` by hand instead.
+**A real desktop/GUI session is still required for both methods** because authentication runs in
+Chrome, even though Profil Zaufany needs no interaction once configured. If
+`info-kierowca-notifier.service` runs on a headless box or before a desktop login, disable
+automatic browser recovery (`auto_refresh_chrome: false`) and populate `session.json` manually.
+
+For Profil Zaufany, keep the dedicated Chrome profile paired with Google Messages Web and leave
+the PZePUAP conversation available. Use **Pair Google Messages Web** and **Test SMS extraction** in
+Settings after a phone/browser reset or whenever automatic login reports that the provider is
+unavailable. Government and Google page markup is external, so observe at least one complete live
+login before relying on it unattended.
 
 **systemd note:** the launch is handed off via `systemd-run --user` specifically so the Chrome +
 watcher process survives after the triggering oneshot `info-kierowca-notifier.service` run exits
@@ -320,7 +344,7 @@ file, which `run_check()` honours on every tick.
 **systemd mode:**
 ```
 systemctl --user stop info-kierowca-notifier.timer   # pause
-systemctl --user start info-kierowca-notifier.timer  # resume (refresh session.json first if it's been a while)
+systemctl --user start info-kierowca-notifier.timer  # resume; configured login recovery handles an expired session
 ```
 After `start`, confirm it actually scheduled a next run:
 ```

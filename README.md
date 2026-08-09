@@ -19,8 +19,9 @@ submit the reservation change with no clicks from you at all — see
 1. Download the build for your OS from the [Releases page](../../releases) — no installer, no
    Python install, nothing else gets set up on your machine.
 2. Run it. A browser tab opens automatically.
-3. Scan the QR code (with the mObywatel app) to log in — or skip this and enter your PKK number
-   by hand instead.
+3. Choose **Profil Zaufany** (recommended), enter your username and password, and pair Google
+   Messages Web when prompted. This lets the app complete both the initial login and later
+   session renewals automatically. mObywatel QR login remains available as a manual fallback.
 4. You need an existing booked exam: this app changes the date of that booking; it does not
    create a new booking. Have that booking's date ready.
 5. Confirm the PKK number/license category it found for you (or fill them in manually if you
@@ -36,8 +37,9 @@ warning. Windows: click "More info" → "Run anyway". macOS: right-click the fil
 
 ### Authentication
 
-The setup screen offers mObywatel QR login and fully automatic Profil Zaufany
-login. Profil Zaufany stores the password only in the operating system's
+Profil Zaufany is the recommended login method because it can renew expired sessions without
+waiting for a QR scan. mObywatel QR login remains available as a manual alternative. Profil
+Zaufany stores the password only in the operating system's
 credential vault (Windows Credential Manager, macOS Keychain, or a supported
 Linux Secret Service); it is never written to `config.json` or page source.
 Pair Google Messages Web once in the app's dedicated Chrome profile so fresh
@@ -63,11 +65,12 @@ change with no click from you at all. See [docs/ADVANCED.md](docs/ADVANCED.md) f
 each one clicks and why, and confirm the slot-selection step works reliably before ever turning
 on the second.
 
-Your login session lasts about an hour before info-kierowca.pl forces a fresh QR scan — that's a
-site-side limit, not something this tool can extend. When it happens, a Chrome window opens
-automatically asking you to rescan the QR code with mObywatel; the dashboard also shows a countdown
-to the estimated expiry with a button to reset it early. See [Auto-relogin on session
-expiry](docs/ADVANCED.md#auto-relogin-on-session-expiry) for details.
+The info-kierowca.pl session still expires after roughly an hour. With Profil Zaufany configured,
+the app opens its dedicated Chrome profile, submits the securely stored credentials, reads the
+fresh PZePUAP verification code from the paired Google Messages Web tab, and restores the session
+automatically. With mObywatel selected, it instead opens the QR screen and waits for you to scan
+it. See [Auto-relogin on session expiry](docs/ADVANCED.md#auto-relogin-on-session-expiry) for
+requirements, fallback behavior, and troubleshooting.
 
 Your session cookies and PKK number never go anywhere except info-kierowca.pl itself.
 

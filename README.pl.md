@@ -10,7 +10,9 @@ Program sprawdza wolne terminy w [info-kierowca.pl](https://info-kierowca.pl), p
 
 1. Pobierz wersję dla swojego systemu z [strony wydań](../../releases) — bez instalatora, Pythona ani dodatkowej konfiguracji.
 2. Uruchom program. Karta przeglądarki otworzy się automatycznie.
-3. Zeskanuj kod QR aplikacją mObywatel, aby się zalogować, albo pomiń ten krok i wpisz numer PKK ręcznie.
+3. Wybierz **Profil Zaufany** (zalecane), wpisz nazwę użytkownika i hasło oraz sparuj Google
+   Messages Web zgodnie z instrukcją. Dzięki temu pierwsze logowanie i późniejsze odnawianie sesji
+   przebiegają automatycznie. Logowanie kodem QR mObywatel pozostaje ręczną opcją zapasową.
 4. Potrzebujesz już zarezerwowanego egzaminu: aplikacja zmienia datę tej rezerwacji, a nie tworzy nowej. Przygotuj datę tej rezerwacji.
 5. Potwierdź wykryty numer PKK/kategorię prawa jazdy (lub wypełnij je ręcznie), wybierz ośrodek/ośrodki egzaminacyjne, **wpisz datę rezerwacji do zmiany terminu** i wybierz sposób powiadamiania.
 
@@ -22,8 +24,9 @@ Od tej pory otwarta karta przeglądarki jest Twoim panelem; znajduje się w niej
 
 ### Uwierzytelnianie
 
-Ekran konfiguracji oferuje logowanie kodem QR mObywatel oraz w pełni
-automatyczne logowanie przez Profil Zaufany. Hasło Profilu Zaufanego jest
+Profil Zaufany jest zalecaną metodą logowania, ponieważ pozwala odnawiać wygasłe sesje bez
+oczekiwania na zeskanowanie kodu QR. Logowanie kodem QR mObywatel pozostaje ręczną alternatywą.
+Hasło Profilu Zaufanego jest
 zapisywane wyłącznie w bezpiecznym magazynie systemu operacyjnego (Menedżer
 poświadczeń Windows, Pęk kluczy macOS lub obsługiwana usługa Secret Service w
 Linuksie), nigdy w `config.json` ani w źródle strony. Jednorazowo sparuj Google
@@ -40,7 +43,12 @@ Program sprawdza te same dwa endpointy, których używa strona info-kierowca.pl 
 
 Jeśli włączysz pomoc przy zmianie terminu (domyślnie włączona, przełącznik `auto_open_browser`), pasujący termin otworzy także zalogowane okno Chrome na ekranie „zmień termin” istniejącej rezerwacji. Domyślnie program zatrzymuje się tam, na pustym wyborze zakresu dat, bez wysyłania danych — nową datę wybierasz i potwierdzasz ręcznie. W Ustawienia → Automatyzacja są dwa kolejne przełączniki, oba domyślnie wyłączone: pierwszy wybiera pasujący termin i przechodzi do podsumowania, drugi — wymagający pierwszego i własnego okna potwierdzenia przed włączeniem — również go potwierdza, faktycznie wysyłając zmianę rezerwacji bez kliknięcia użytkownika. Dokładny opis kliknięć i uzasadnienie znajdują się w [docs/ADVANCED.md](docs/ADVANCED.md). Nigdy nie włączaj drugiej opcji, zanim nie sprawdzisz, że wybór terminu działa niezawodnie.
 
-Sesja logowania trwa około godziny, zanim info-kierowca.pl wymusi ponowne skanowanie kodu QR — to ograniczenie strony, którego narzędzie nie może wydłużyć. Gdy tak się stanie, Chrome otworzy się automatycznie na ekranie logowania; panel pokaże też odliczanie szacowanego wygaśnięcia oraz przycisk wcześniejszego odnowienia. Szczegóły: [automatyczne ponowne logowanie](docs/ADVANCED.md#auto-relogin-on-session-expiry).
+Sesja info-kierowca.pl nadal wygasa po około godzinie. Po skonfigurowaniu Profilu Zaufanego
+aplikacja otwiera dedykowany profil Chrome, podaje bezpiecznie zapisane dane logowania, odczytuje
+nowy kod weryfikacyjny PZePUAP ze sparowanej karty Google Messages Web i automatycznie przywraca
+sesję. Przy wybranym mObywatelu otwiera zamiast tego ekran kodu QR i czeka na jego zeskanowanie.
+Wymagania, zachowanie awaryjne i rozwiązywanie problemów opisano w sekcji
+[automatyczne ponowne logowanie](docs/ADVANCED.md#auto-relogin-on-session-expiry).
 
 Pliki cookie sesji i numer PKK nie trafiają nigdzie poza info-kierowca.pl.
 
