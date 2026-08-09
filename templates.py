@@ -647,6 +647,15 @@ WIZARD_PAGE = """<!doctype html>
       </div>
       <div class="hint">Enter the date of the existing booking that you want the app to reschedule.</div>
 
+      <label for="search_start_date_display" style="margin-top:1rem;">Earliest acceptable exam date (optional)</label>
+      <div class="datepick" id="search-start-datepick">
+        <input type="text" class="datepick-input" id="search_start_date_display" placeholder="Select a date" readonly>
+        <input type="hidden" id="search_start_date">
+        <div class="calendar" id="search-start-calendar"></div>
+      </div>
+      <div class="hint">Ignore slots before this date. Leave blank to search from today; the site searches at most 31 days ahead.</div>
+      <button type="button" class="cat-more" id="clear-search-start-date">Search from today</button>
+
       <div class="freq-head" style="margin-top:1rem;">
         <label for="time_from_slider">Preferred time of day</label>
         <span class="freq-value" id="time-window-label">All day</span>
@@ -1222,6 +1231,53 @@ dpInput.addEventListener('click', () => { calendar.classList.contains('open') ? 
 dpInput.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeCalendar(); });
 document.addEventListener('click', (e) => { if (!document.getElementById('datepick').contains(e.target)) closeCalendar(); });
 
+// Independent optional lower bound for eligible slots.  It deliberately uses
+// the same calendar language as the required booking date, while limiting
+// selection to the government site's known search horizon.
+const sdpInput = document.getElementById('search_start_date_display');
+const sdpValue = document.getElementById('search_start_date');
+const sdpCalendar = document.getElementById('search-start-calendar');
+const searchHorizonDate = new Date(todayDate);
+searchHorizonDate.setDate(searchHorizonDate.getDate() + 31);
+let sdpView = new Date(todayDate.getFullYear(), todayDate.getMonth(), 1);
+let selectedSearchStartDate = null;
+function renderSearchStartCalendar() {
+  sdpCalendar.innerHTML = '';
+  const head = document.createElement('div'); head.className = 'cal-head';
+  const prev = document.createElement('button'); prev.type = 'button'; prev.className = 'cal-nav'; prev.textContent = '‹';
+  const title = document.createElement('div'); title.className = 'cal-title'; title.textContent = sdpView.toLocaleDateString(ikwI18n.lang() === 'pl' ? 'pl-PL' : 'en-GB', {month: 'long', year: 'numeric'});
+  const next = document.createElement('button'); next.type = 'button'; next.className = 'cal-nav'; next.textContent = '›';
+  prev.addEventListener('click', (e) => { e.stopPropagation(); sdpView = new Date(sdpView.getFullYear(), sdpView.getMonth() - 1, 1); renderSearchStartCalendar(); });
+  next.addEventListener('click', (e) => { e.stopPropagation(); sdpView = new Date(sdpView.getFullYear(), sdpView.getMonth() + 1, 1); renderSearchStartCalendar(); });
+  head.appendChild(prev); head.appendChild(title); head.appendChild(next); sdpCalendar.appendChild(head);
+  const grid = document.createElement('div'); grid.className = 'cal-grid';
+  (ikwI18n.lang() === 'pl' ? ['pon','wt','śr','czw','pt','sob','nd'] : DOW).forEach((d) => { const c = document.createElement('div'); c.className = 'cal-dow'; c.textContent = d; grid.appendChild(c); });
+  const startOffset = (new Date(sdpView.getFullYear(), sdpView.getMonth(), 1).getDay() + 6) % 7;
+  const daysInMonth = new Date(sdpView.getFullYear(), sdpView.getMonth() + 1, 0).getDate();
+  const prevDays = new Date(sdpView.getFullYear(), sdpView.getMonth(), 0).getDate();
+  for (let i = 0; i < startOffset; i++) { const cell = document.createElement('div'); cell.className = 'cal-day muted disabled'; cell.textContent = prevDays - startOffset + 1 + i; grid.appendChild(cell); }
+  for (let d = 1; d <= daysInMonth; d++) {
+    const date = new Date(sdpView.getFullYear(), sdpView.getMonth(), d);
+    const cell = document.createElement('div'); cell.className = 'cal-day'; cell.textContent = d;
+    if (date < todayDate || date > searchHorizonDate) cell.classList.add('disabled');
+    if (sameDay(date, todayDate)) cell.classList.add('today');
+    if (sameDay(date, selectedSearchStartDate)) cell.classList.add('selected');
+    if (date >= todayDate && date <= searchHorizonDate) cell.addEventListener('click', (e) => {
+      e.stopPropagation(); selectedSearchStartDate = date; sdpValue.value = isoOf(date); sdpInput.value = fmtDate(date); closeSearchStartCalendar();
+    });
+    grid.appendChild(cell);
+  }
+  sdpCalendar.appendChild(grid);
+}
+function openSearchStartCalendar() { if (selectedSearchStartDate) sdpView = new Date(selectedSearchStartDate.getFullYear(), selectedSearchStartDate.getMonth(), 1); renderSearchStartCalendar(); sdpCalendar.classList.add('open'); }
+function closeSearchStartCalendar() { sdpCalendar.classList.remove('open'); }
+sdpInput.addEventListener('click', () => { sdpCalendar.classList.contains('open') ? closeSearchStartCalendar() : openSearchStartCalendar(); });
+sdpInput.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeSearchStartCalendar(); });
+document.addEventListener('click', (e) => { if (!document.getElementById('search-start-datepick').contains(e.target)) closeSearchStartCalendar(); });
+document.getElementById('clear-search-start-date').addEventListener('click', () => {
+  selectedSearchStartDate = null; sdpValue.value = ''; sdpInput.value = ''; closeSearchStartCalendar();
+});
+
 renderSelected();
 
 if (EXISTING_CONFIG) {
@@ -1258,6 +1314,18 @@ if (EXISTING_CONFIG) {
     }
   }
 
+  if (EXISTING_CONFIG.search_start_date) {
+    const parts = EXISTING_CONFIG.search_start_date.split('-').map(Number);
+    if (parts.length === 3 && parts.every((n) => !Number.isNaN(n))) {
+      const configuredDate = new Date(parts[0], parts[1] - 1, parts[2]);
+      if (configuredDate >= todayDate && configuredDate <= searchHorizonDate) {
+        selectedSearchStartDate = configuredDate;
+        sdpValue.value = EXISTING_CONFIG.search_start_date;
+        sdpInput.value = fmtDate(configuredDate);
+      }
+    }
+  }
+
   setPollIntervalSeconds(EXISTING_CONFIG.poll_interval_seconds || 60);
   setTimeWindow(EXISTING_CONFIG.earliest_slot_hour, EXISTING_CONFIG.latest_slot_hour);
   setSwitch(phoneAlertsSwitch, EXISTING_CONFIG.phone_alerts !== false);
@@ -1281,6 +1349,7 @@ window.addEventListener('ikw-language-changed', () => {
   updatePollIntervalDisplay();
   updateTimeWindow();
   renderCalendar();
+  renderSearchStartCalendar();
   if (EXISTING_CONFIG) {
     document.getElementById('page-title').textContent = t('Settings');
     document.getElementById('submit-btn').textContent = t('Save changes');
@@ -1356,6 +1425,7 @@ document.getElementById('form').addEventListener('submit', async (e) => {
       category: category,
       exam_types: examTypes,
       current_slot_date: currentSlotDate,
+      search_start_date: sdpValue.value,
       poll_interval_seconds: parseInt(document.getElementById('poll_interval_seconds').value, 10),
       earliest_slot_hour: parseInt(timeFromHidden.value, 10),
       latest_slot_hour: parseInt(timeToHidden.value, 10),

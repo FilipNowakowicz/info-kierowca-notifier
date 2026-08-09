@@ -18,7 +18,7 @@ import sys
 import threading
 import urllib.error
 import urllib.request
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import auto_refresh_session
@@ -116,6 +116,27 @@ PKK_PROFILES_URL = f"{BASE}/bknd/status/api/v1/pkk/get_profiles"
 # benefit to making it configurable — it's a hard line on info-kierowca.pl,
 # not a user preference.
 MAX_DAYS_AHEAD = 31
+
+
+def search_start_date(value, *, today=None):
+    """Return the safe lower search bound for a config value.
+
+    This is intentionally separate from ``current_slot_date``: it selects
+    which available dates are worth considering, rather than deciding whether
+    a slot improves the user's existing booking. Missing or malformed values
+    preserve the historical behaviour of searching from today.
+    """
+    today = today or date.today()
+    horizon = today + timedelta(days=MAX_DAYS_AHEAD)
+    if not value:
+        return today
+    try:
+        parsed = date.fromisoformat(value) if isinstance(value, str) else None
+    except ValueError:
+        parsed = None
+    if parsed is None:
+        return today
+    return min(max(parsed, today), horizon)
 
 USER_AGENT = (
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
@@ -748,9 +769,12 @@ def run_check(logger, dash_status):
         update_status(dash_status, "unexpected", f"Refresh call returned {status}")
         return
 
-    # 2. Search for slots.
+    # 2. Search for slots. The API gets this lower bound, and the local filter
+    # below applies it again in case the endpoint returns an older slot.
+    now = datetime.now()
+    lower_date = search_start_date(config.get("search_start_date"), today=now.date())
     payload = {
-        "startDate": datetime.now().strftime("%Y-%m-%d"),
+        "startDate": lower_date.isoformat(),
         "organizationId": build_search_organization_ids(config),
         "category": config["category"],
         "profileNumber": config["profile_number"],
@@ -794,7 +818,7 @@ def run_check(logger, dash_status):
 
     save_json(SESSION_FILE, session)
 
-    max_date = datetime.now() + timedelta(days=MAX_DAYS_AHEAD)
+    max_date = now + timedelta(days=MAX_DAYS_AHEAD)
     wanted_types = set(config["exam_types"])
     watch_ids = set(config["organization_ids"])
     # Hour-of-day preference (wizard's dual-handle slider) — [earliest, latest)
@@ -814,7 +838,7 @@ def run_check(logger, dash_status):
             if not dt_str:
                 continue
             dt = datetime.fromisoformat(dt_str)
-            if dt <= max_date and earliest_hour <= dt.hour < latest_hour:
+            if lower_date <= dt.date() and dt <= max_date and earliest_hour <= dt.hour < latest_hour:
                 places = exam.get("placeTheoryAmount") or exam.get("placePracticeAmount")
                 hits.append((word.get("wordName"), exam_type, dt, places))
 
