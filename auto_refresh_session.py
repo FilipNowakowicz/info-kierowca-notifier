@@ -23,6 +23,7 @@ anywhere; see cdp_client.py's docstring for the debug-port security note.
 import argparse
 import json
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -120,6 +121,19 @@ def _chrome_from_windows_registry():
 # matching, you can still click through by hand while the script waits.
 AUTO_CLICK_TARGETS = ["Aplikacja mObywatel", "gov.pl", "Zaloguj się"]
 
+
+def sanitize_click_diagnostics(result):
+    """Keep browser click diagnostics useful without recording personal codes."""
+    if not isinstance(result, dict):
+        return result
+    safe = dict(result)
+    matched = str(safe.get("matched_text", ""))
+    if re.search(r"\b(?:pkk|pesel|otp|one[ -]?time|kod(?:\s+sms)?)\b", matched, re.I) or re.search(
+        r"\b\d{6,}\b", matched
+    ):
+        safe["matched_text"] = "[redacted sensitive text]"
+    return safe
+
 # Shared by both scripts below: find the smallest element anywhere on the
 # page whose text contains one of `targets` (checked in that order) and
 # click the nearest real clickable ancestor — login-page rows are often a
@@ -195,11 +209,17 @@ function __ikw_diagnostics(label, matched, el, reason) {
   try { safeHref = new URL(href, location.href).origin + new URL(href, location.href).pathname; } catch (e) {}
   return {
     clicked: false, reason: reason || 'not_found', requested_label: label || '',
-    matched_text: matched || '', page_url: String(location.origin || '') + String(location.pathname || ''),
+    matched_text: __ikw_safeMatchedText(matched || ''), page_url: String(location.origin || '') + String(location.pathname || ''),
     page_host: String(location.hostname || ''), tag: el ? el.tagName : '',
     element_id: el ? (el.id || '') : '', element_class: el ? String(el.className || '') : '',
     href: safeHref
   };
+}
+function __ikw_safeMatchedText(text) {
+  if (/\b(pkk|pesel|otp|one[ -]?time|kod\s+sms)\b/i.test(text) || /\b\d{6,}\b/.test(text)) {
+    return '[redacted sensitive text]';
+  }
+  return text;
 }
 function __ikw_clickByText(label, selector, exact, requireEnabled) {
   if (__ikw_pageIsKnownError()) return __ikw_diagnostics(label, '', null, 'known_error_page');
@@ -352,7 +372,9 @@ AUTO_CLICK_OBSERVER_JS = CLICK_LOGIC_JS + (
 
 def try_auto_click(host, port, target=None):
     try:
-        result = cdp_client.evaluate_in_page(host, port, AUTO_CLICK_JS, target=target)
+        result = sanitize_click_diagnostics(
+            cdp_client.evaluate_in_page(host, port, AUTO_CLICK_JS, target=target)
+        )
         if result and result.get("clicked"):
             # The browser's URL/host and non-secret DOM identity are useful
             # when a site markup change needs diagnosis. Do not log page text,
@@ -360,7 +382,7 @@ def try_auto_click(host, port, target=None):
             print(
                 "auto-click result "
                 f"label={result['requested_label']!r} matched={result['matched_text']!r} "
-                f"host={result['page_host']!r} tag={result['tag']!r} "
+                f"url={result.get('page_url', '')!r} host={result['page_host']!r} tag={result['tag']!r} "
                 f"id={result['element_id']!r} class={result['element_class']!r} "
                 f"href={result['href']!r}"
             )

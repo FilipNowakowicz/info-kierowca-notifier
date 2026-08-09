@@ -14,7 +14,8 @@ class BrowserClickSafetyTests(unittest.TestCase):
             "tag === 'header'", "tag === 'footer'", "logo|footer|header|language",
             "załóż", "przypomnij", "polityka", "help|regulamin|terms",
             "login.gov.pl", "__ikw_pageIsKnownError", "known_error_page",
-            r"\b(wstecz", "new URL(href, location.href)",
+            r"\b(wstecz", "new URL(href, location.href)", "__ikw_safeMatchedText",
+            "[redacted sensitive text]",
         ):
             self.assertIn(expected, js)
 
@@ -32,6 +33,19 @@ class BrowserClickSafetyTests(unittest.TestCase):
         output = stream.getvalue()
         self.assertIn("host='login.gov.pl'", output)
         self.assertNotIn("cookie", output.lower())
+
+    def test_sensitive_matched_text_is_redacted_before_returning_or_logging(self):
+        result = auto_refresh_session.sanitize_click_diagnostics(
+            {"clicked": True, "matched_text": "PKK 12345678901", "page_url": "https://login.gov.pl/path"}
+        )
+        self.assertEqual(result["matched_text"], "[redacted sensitive text]")
+        self.assertEqual(result["page_url"], "https://login.gov.pl/path")
+
+    def test_safe_matched_text_is_preserved(self):
+        result = auto_refresh_session.sanitize_click_diagnostics(
+            {"clicked": True, "matched_text": "Aplikacja mObywatel"}
+        )
+        self.assertEqual(result["matched_text"], "Aplikacja mObywatel")
 
     def test_auto_click_abstains_for_non_click_outcome(self):
         with patch.object(

@@ -163,11 +163,13 @@ def _poll_until_truthy(host, port, js, timeout=20, target=None):
             result = cdp_client.evaluate_in_page(host, port, js, target=target)
             if result is True or (isinstance(result, dict) and result.get("clicked")):
                 if isinstance(result, dict):
+                    result = auto_refresh_session.sanitize_click_diagnostics(result)
                     print(
                         "browser click result "
                         f"label={result.get('requested_label')!r} "
                         f"matched={result.get('matched_text')!r} "
-                        f"host={result.get('page_host')!r} tag={result.get('tag')!r} "
+                        f"url={result.get('page_url')!r} host={result.get('page_host')!r} "
+                        f"tag={result.get('tag')!r} "
                         f"id={result.get('element_id')!r} class={result.get('element_class')!r} "
                         f"href={result.get('href')!r}"
                     )
