@@ -415,6 +415,7 @@ class AppHandler(http.server.BaseHTTPRequestHandler):
             )
             messages = {
                 notifier.TRIGGER_LAUNCHED: "Session looks expired — opening Chrome for a fresh QR login.",
+                notifier.TRIGGER_MANUAL_RETRY_LAUNCHED: "Session looks expired — opening Chrome for a fresh QR login.",
                 notifier.TRIGGER_DISABLED: "Session looks expired, but auto_refresh_chrome is turned off in Settings.",
                 notifier.TRIGGER_LAUNCH_FAILED: "Session looks expired, but Chrome failed to launch — check the log.",
                 notifier.TRIGGER_NO_BROWSER: "Session looks expired, but no Chrome, Edge, or other "
@@ -437,7 +438,7 @@ class AppHandler(http.server.BaseHTTPRequestHandler):
             except Exception:
                 pass
         outcome = notifier.trigger_auto_refresh(AppHandler.logger, config, force=True, notify_phone=False)
-        if outcome == notifier.TRIGGER_LAUNCHED:
+        if outcome in (notifier.TRIGGER_LAUNCHED, notifier.TRIGGER_MANUAL_RETRY_LAUNCHED):
             threading.Thread(
                 target=_wait_for_relogin_and_wake,
                 args=(prior_captured_at, AppHandler.wake_event),
@@ -445,6 +446,7 @@ class AppHandler(http.server.BaseHTTPRequestHandler):
             ).start()
         messages = {
             notifier.TRIGGER_LAUNCHED: "Opening Chrome for a fresh QR login.",
+            notifier.TRIGGER_MANUAL_RETRY_LAUNCHED: "Opening Chrome for a fresh QR login.",
             notifier.TRIGGER_DISABLED: "auto_refresh_chrome is turned off in Settings.",
             notifier.TRIGGER_LAUNCH_FAILED: "Chrome failed to launch — check the log.",
             notifier.TRIGGER_NO_BROWSER: "No Chrome, Edge, or other Chromium-based browser was found "
@@ -465,6 +467,7 @@ class AppHandler(http.server.BaseHTTPRequestHandler):
         messages = {
             notifier.TRIGGER_NO_BROWSER: "No Chrome, Edge, or other Chromium-based browser was found "
                 "on this machine. Install one and try again.",
+            notifier.TRIGGER_MANUAL_RETRY_LAUNCHED: "Opening Chrome for a fresh QR login.",
             notifier.TRIGGER_LAUNCH_FAILED: "Could not open Chrome — try the manual option below.",
         }
         self._reply_outcome(outcome, messages, default=None)

@@ -27,6 +27,10 @@ STATUS_FILE = STATE_DIR / "status.json"
 # checks are driven by app.py's in-process loop or a systemd timer tick.
 PAUSE_FILE = STATE_DIR / "paused"
 AUTO_REFRESH_LOCK = STATE_DIR / "auto-refresh.lock"
+# Persisted exponential backoff for failed unattended QR relogins.  It is
+# separate from the lock: a lock prevents concurrency; this prevents a failed
+# flow from being launched again on every poll cycle or after an app restart.
+RELOGIN_BACKOFF_FILE = STATE_DIR / "relogin-backoff.json"
 
 # Both added 2026-07-20 for open_logged_in_browser.py's experimental
 # auto_confirm_reschedule flow (see notifier.trigger_open_browser() and

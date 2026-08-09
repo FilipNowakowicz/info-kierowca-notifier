@@ -26,11 +26,13 @@ from pathlib import Path
 import auto_refresh_session
 import open_logged_in_browser
 import tls_transport
+from relogin_backoff import RetryBackoff
 from paths import (  # noqa: F401  (re-exported: other modules read these off notifier)
     AUTO_REFRESH_LOG_FILE,
     CONFIG_FILE,
     LOG_FILE,
     PAUSE_FILE,
+    RELOGIN_BACKOFF_FILE,
     RESCHEDULE_CONFIRM_COOLDOWN_FILE,
     RESCHEDULE_LOG_FILE,
     SESSION_FILE,
@@ -302,13 +304,17 @@ AUTO_REFRESH_LOCK = auto_refresh_session.LOCK_FILE
 TRIGGER_DISABLED = "disabled"
 TRIGGER_NO_BROWSER = "no_chromium_browser"
 TRIGGER_ALREADY_RUNNING = "already_running"
+TRIGGER_BACKOFF_ACTIVE = "backoff_active"
 TRIGGER_LAUNCHED = "launched"
+TRIGGER_MANUAL_RETRY_LAUNCHED = "manual_retry_launched"
 TRIGGER_LAUNCH_FAILED = "launch_failed"
 TRIGGER_OUTCOMES = (
     TRIGGER_DISABLED,
     TRIGGER_NO_BROWSER,
     TRIGGER_ALREADY_RUNNING,
+    TRIGGER_BACKOFF_ACTIVE,
     TRIGGER_LAUNCHED,
+    TRIGGER_MANUAL_RETRY_LAUNCHED,
     TRIGGER_LAUNCH_FAILED,
 )
 
@@ -350,10 +356,21 @@ def trigger_auto_refresh(logger, config, force=False, notify_phone=True):
 
     Returns one of the TRIGGER_* outcome constants.
     """
+    automatic = not force
+    backoff = RetryBackoff(RELOGIN_BACKOFF_FILE)
     if not config.get("auto_refresh_chrome", True):
         return TRIGGER_DISABLED
+    remaining = backoff.cooldown_remaining(manual=force)
+    if remaining:
+        logger.info(
+            "outcome=auto_refresh_skipped detail=backoff_active remaining_seconds=%d",
+            remaining,
+        )
+        return TRIGGER_BACKOFF_ACTIVE
     if not auto_refresh_session.chrome_available():
         logger.info("outcome=auto_refresh_no_browser detail=no_chromium_found")
+        if automatic:
+            backoff.record_failure("browser_unavailable")
         return TRIGGER_NO_BROWSER
     if AUTO_REFRESH_LOCK.exists():
         try:
@@ -412,6 +429,8 @@ def trigger_auto_refresh(logger, config, force=False, notify_phone=True):
             cmd = [python, str(AUTO_REFRESH_SCRIPT)]
     if not notify_phone:
         cmd.append("--no-phone-push")
+    if automatic:
+        cmd.append("--automatic")
     try:
         AUTO_REFRESH_LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
         with open(AUTO_REFRESH_LOG_FILE, "a") as logf:
@@ -421,9 +440,11 @@ def trigger_auto_refresh(logger, config, force=False, notify_phone=True):
                 cmd, stdout=logf, stderr=subprocess.STDOUT, start_new_session=True
             )
         logger.info("outcome=auto_refresh_launched")
-        return TRIGGER_LAUNCHED
+        return TRIGGER_MANUAL_RETRY_LAUNCHED if force else TRIGGER_LAUNCHED
     except Exception as e:
         logger.info("outcome=auto_refresh_launch_failed detail=%r", str(e))
+        if automatic:
+            backoff.record_failure("launch_failed")
         return TRIGGER_LAUNCH_FAILED
 
 
