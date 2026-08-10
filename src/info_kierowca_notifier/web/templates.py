@@ -1,7 +1,7 @@
-"""HTML/JS template strings for app.py's HTTP handlers.
+"""HTML/JS template strings for the app module's HTTP handlers.
 
-Pulled out of app.py verbatim (no behavior change) since they made up the
-bulk of that file's line count. app.py still owns all rendering logic
+Pulled out of the app module verbatim (no behavior change) since they made up
+the bulk of that file's line count. The app module still owns all rendering logic
 (WIZARD_PAGE's __CENTERS_JSON__ substitution, TOOLBAR_HTML splicing into
 dashboard_server.PAGE, etc.) — this module only holds the literal strings.
 """
@@ -26,7 +26,7 @@ TOOLBAR_HTML = """
   .ikw-icon-btn:disabled { opacity: 0.5; cursor: default; }
   .ikw-icon-btn svg { width: 1.05rem; height: 1.05rem; }
   #ikw-quit-btn:hover { border-color: rgba(224,104,95,0.7); color: #ffb3ad; }
-  /* Small inline icon button next to dashboard_server.py's #session-expiry
+  /* Small inline icon button next to web.server's #session-expiry
      text - deliberately lighter-weight than .ikw-icon-btn (the top toolbar's
      larger circular badges), since this one sits inline with 0.85rem text
      rather than floating over the page. */
@@ -42,7 +42,7 @@ TOOLBAR_HTML = """
     border-radius: 999px; background: rgba(255,255,255,0.3); transition: opacity 0.2s ease; z-index: 9; }
   .ikw-toolbar.show ~ #ikw-toolbar-hint { opacity: 0; }
 
-  /* Makes dashboard_server.py's headline markup clickable: dims the
+  /* Makes web.server's headline markup clickable: dims the
      headline text and overlays one large centered pause/play icon on
      hover/focus, like a video player's hover control, rather than a
      small icon living beside the text. */
@@ -67,7 +67,7 @@ TOOLBAR_HTML = """
   /* Settings modal: the dashboard stays visible (dimmed) behind a
      translucent, blurred backdrop, with /settings loaded into an iframe
      panel on top — rather than the old full-page navigation to /settings.
-     An iframe (not a merged template) keeps app.py's two big templates
+     An iframe (not a merged template) keeps the app module's two big templates
      independent; see WIZARD_PAGE's IKW_EMBEDDED for the other half of
      this, which lets the same settings page run standalone (first-run
      /setup, a direct /settings visit) or embedded here. */
@@ -175,7 +175,7 @@ window.addEventListener('message', (e) => {
     if (typeof poll === 'function') poll();
   } else if (type === 'ikw-settings-saved') {
     ikwCloseSettingsModal();
-    // poll() is dashboard_server.py's own function, sharing this page's
+    // poll() is web.server's own function, sharing this page's
     // script scope — re-reads status.json immediately so a changed poll
     // interval/countdown shows right away instead of waiting up to 5s.
     if (typeof poll === 'function') poll();
@@ -201,7 +201,7 @@ document.getElementById('ikw-browser-btn').addEventListener('click', async () =>
   }
 });
 
-// dashboard_server.py's #session-refresh-btn stays display:none (and has no
+// web.server's #session-refresh-btn stays display:none (and has no
 // listener) without this script - see its CSS comment there for why. Shown
 // unconditionally rather than only when data.session_expires_estimate is
 // set, since it's also the way to get a *first* estimate going.
@@ -227,7 +227,7 @@ ikwSessionRefreshBtn.addEventListener('click', async () => {
 });
 
 // Headline becomes the pause/resume control here rather than in
-// dashboard_server.py, so the plain read-only dashboard (no /pause or
+// web.server, so the plain read-only dashboard (no /pause or
 // /resume endpoints exist there) never shows a cursor or hover affordance
 // it can't back up.
 const ikwHeadlineWrap = document.getElementById('headline-wrap');
@@ -239,14 +239,14 @@ let ikwPauseInFlight = false;
 async function ikwTogglePause() {
   if (ikwPauseInFlight) return;
   ikwPauseInFlight = true;
-  // isPaused is dashboard_server.py's own script-scoped variable, kept
+  // isPaused is web.server's own script-scoped variable, kept
   // current by its poll() loop (same cross-script visibility already
   // relied on below for `poll` itself).
   const resuming = isPaused;
   try {
     const res = await fetch(resuming ? '/resume' : '/pause', {method: 'POST'});
     const data = await res.json();
-    // poll() (defined in dashboard_server.py's own script, sharing this
+    // poll() (defined in web.server's own script, sharing this
     // page) re-reads the now-updated status.json and redraws the
     // headline/icon immediately, instead of waiting up to 5s for its
     // own interval to fire.

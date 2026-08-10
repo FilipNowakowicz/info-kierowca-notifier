@@ -293,7 +293,6 @@ wheels = [
 
 [[package]]
 name = "info-kierowca-notifier"
-version = "2.0.1"
 source = { editable = "." }
 dependencies = [
     { name = "certifi" },

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Shared Chrome DevTools Protocol (CDP) helpers for reading (and, for
-open_logged_in_browser.py, writing) info-kierowca.pl session cookies via a
+booking.reschedule, writing) info-kierowca.pl session cookies via a
 Chrome instance's local remote-debugging port. Used by pull_session_cookies.py
-(manual, Chrome already running), auto_refresh_session.py (launches Chrome
-itself and waits for login), and open_logged_in_browser.py (launches Chrome
+(manual, Chrome already running), auth.session (launches Chrome itself and
+waits for login), and booking.reschedule (launches Chrome
 and injects an already-saved session instead of waiting for a fresh login).
 
 Everything here talks to 127.0.0.1 only and writes straight to session.json.

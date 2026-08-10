@@ -37,7 +37,7 @@ extra setup.
    ```
    (no `chmod` equivalent needed — the folder is already private to your Windows user account)
 
-3. Get your session cookies into `session.json`. The recommended route is to run `src/info_kierowca_notifier/app.py` in
+3. Get your session cookies into `session.json`. The recommended route is to run `python -m info_kierowca_notifier` in
    step 5 and use its first-run **Profil Zaufany** setup. It stores the password in the operating
    system credential vault, pairs the dedicated Chrome profile with Google Messages Web, performs
    the login, and writes `session.json` automatically. Do not put a Profil Zaufany password in
@@ -106,7 +106,7 @@ extra setup.
 
 5. Run it — pick whichever fits your OS:
 
-   **Option A — `src/info_kierowca_notifier/app.py` (the same all-in-one wizard + dashboard + Quit button the downloaded
+   **Option A — `python -m info_kierowca_notifier` (the same all-in-one wizard + dashboard + Quit button the downloaded
    binaries run, just from source):**
    ```
    uv run python -m info_kierowca_notifier
@@ -178,7 +178,7 @@ such an error by disabling certificate verification.
 extends the token — it doesn't touch a separate, absolute session ceiling of about 3600 seconds
 from the last full login. Once that ceiling passes, the next check comes back `auth_expired`
 regardless of how healthy the refreshes were. Profil Zaufany can complete the new login
-automatically; mObywatel still requires a new QR scan. For the manual mObywatel path, `src/info_kierowca_notifier/app.py`'s
+automatically; mObywatel still requires a new QR scan. For the manual mObywatel path, the app module's
 dashboard shows an estimated-expiry countdown and a reset control. The estimate comes from
 `session.json`'s `captured_at`, stamped on every fresh login.
 
@@ -293,7 +293,7 @@ matching slot" is already on — **in addition to** that toggle. (Or set both
 `"auto_select_slot": true` and `"auto_confirm_reschedule": true` in `config.json` by hand.) It
 clicks that button too — actually submitting the reservation date change. `auto_confirm_reschedule`
 alone, without `auto_select_slot`, does nothing: without it, the flow never reaches the summary
-screen to confirm on — the wizard enforces this by dimming/disabling the toggle, and `src/info_kierowca_notifier/app.py`
+screen to confirm on — the wizard enforces this by dimming/disabling the toggle, and the app module
 enforces it again server-side regardless of what a saved `config.json` says.
 
 Before that click, it re-checks the summary screen's own text actually shows the date, time, and
@@ -334,7 +334,7 @@ without this cooldown the very next check finding some other nearby slot could i
 
 ## Pausing / resuming
 
-**`src/info_kierowca_notifier/app.py`:** click the headline on the dashboard — it toggles pause/resume (hover it and a
+**`python -m info_kierowca_notifier`:** click the headline on the dashboard — it toggles pause/resume (hover it and a
 pause/play icon appears over the text; Enter or Space works too when it's focused). Checks stop
 until you click again; the last real result stays on screen underneath. This writes a flag file
 (`~/.local/state/info-kierowca-notifier/paused`) rather than a config setting, so it survives

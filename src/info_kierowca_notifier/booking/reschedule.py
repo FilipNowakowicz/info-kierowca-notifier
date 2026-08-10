@@ -8,10 +8,10 @@ Run by hand:
     python -m info_kierowca_notifier.booking.reschedule
 
 Uses a dedicated throwaway profile (separate from your regular browsing and
-from auto_refresh_session.py's own profile) so it never fights over a
+from auth.session's own profile) so it never fights over a
 profile lock. Reads only from session.json; nothing but the two
 info-kierowca.pl session cookies is sent anywhere, and only to
-info-kierowca.pl itself — see cdp_client.py's docstring for the
+info-kierowca.pl itself — see browser.cdp's docstring for the
 debug-port security note. The one write this file can make is conditional:
 with --confirm-reschedule and a confirmed booking change verified on
 /cases afterward, it updates config.json's current_slot_date to match (see
@@ -39,7 +39,7 @@ from info_kierowca_notifier.paths import CONFIG_FILE, RESCHEDULE_CONFIRM_COOLDOW
 PROFILE_DIR = STATE_DIR / "chrome-reschedule-profile"
 
 # Distinct from pull_session_cookies.py's manual default (9222) and
-# auto_refresh_session.py's (9333) so none of the three ever fight over a
+# auth.session's (9333) so none of the three ever fight over a
 # port if run at the same time.
 DEFAULT_PORT = 9555
 DEFAULT_URL = "https://info-kierowca.pl/cases"
@@ -69,7 +69,7 @@ def consent_cookie():
 # "are you sure" modal, then that modal's own confirm button. Both matches
 # are deliberately narrow — exact-ish text against just button/link/
 # role=button elements, not the login flow's fuzzy multi-target chooser (see
-# AUTO_CLICK_TARGETS in auto_refresh_session.py) — because the list page
+# AUTO_CLICK_TARGETS in auth.session) — because the list page
 # also has an "Anuluj" (cancel the booking outright) button close by, and
 # CONFIRM_CHANGE_DATE_TEXT is intentionally the longer, more specific phrase
 # so it can't also match CHANGE_DATE_TEXT's own button. By default nothing
@@ -95,7 +95,7 @@ CONFIRM_SUMMARY_TEXT = "Potwierdź i przejdź dalej"
 
 
 def click_text_js(text):
-    # Deliberately stricter than auto_refresh_session.py's chooser matching
+    # Deliberately stricter than auth.session's chooser matching
     # (buttons/links only, shorter text cap) — see the module docstring — but
     # the clickability heuristic itself is the shared one.
     return auto_refresh_session.CLICKABLE_HELPERS_JS + """

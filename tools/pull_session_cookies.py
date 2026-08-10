@@ -28,7 +28,7 @@ into, not just info-kierowca.pl. It defaults to binding 127.0.0.1 only
 port beyond localhost, and don't leave Chrome running this way any
 longer than you need to.
 
-See also: auto_refresh_session.py, which launches Chrome itself (in a
+See also: info_kierowca_notifier.auth.session, which launches Chrome itself (in a
 dedicated profile) and waits for you to log in via QR, instead of you
 launching Chrome and running this script by hand.
 """

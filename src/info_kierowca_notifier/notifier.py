@@ -55,7 +55,7 @@ MAX_HISTORY = 200
 # the padding picks doesn't matter.
 SEARCH_ORG_ID_COUNT = 5
 
-# Adjustable via app.py's Settings (poll_interval_seconds in config.json).
+# Adjustable via the app module's Settings (poll_interval_seconds in config.json).
 # MIN is a hard floor, not a UI default — a deliberate good-citizen limit on an
 # undocumented API; don't lower it without an explicit request. MAX is a sanity
 # cap so "watching" doesn't become effectively "not watching".
@@ -118,7 +118,7 @@ REFRESH_URL = f"{BASE}/bknd/auth/api/v1/jwt/refresh"
 SEARCH_URL = f"{BASE}/bknd/exam/api/v1/Schedules/user/MultipleCentersExams"
 # Traced from the site's own main-*.js (pkkProfilesResource(), used by its
 # "check documents"/reservation forms to resolve a PKK number to a license
-# category) — used by app.py's setup wizard to prefill the PKK number and
+# category) — used by the app module's setup wizard to prefill the PKK number and
 # category from the account instead of asking the user to type them in.
 PKK_PROFILES_URL = f"{BASE}/bknd/status/api/v1/pkk/get_profiles"
 
@@ -190,7 +190,7 @@ def save_json(path, data):
     """Atomically write `data` to `path`.
 
     The temp file name carries the writing thread's id: status.json and
-    session.json are both written from the poll thread *and* from app.py's
+    session.json are both written from the poll thread *and* from the app module's
     HTTP threads (pause/resume, "Open browser", saving settings), and a single
     fixed "<name>.tmp" let two concurrent writers scribble over each other's
     half-written temp file — one would then rename the other's partial JSON
@@ -274,7 +274,7 @@ def update_status(status, outcome, message="", current_hits=None, urgent=False):
             # a busy check can return dozens of hits that would otherwise be
             # rewritten every 60s and re-parsed by the page every 5s. Older
             # entries carrying the full "hits" list still render — see
-            # dashboard_server.py's PAGE, which falls back to them.
+            # web.server's PAGE, which falls back to them.
             status.setdefault("history", []).append(
                 {"seen_at": status["last_check"], "fastest": signature}
             )
@@ -322,7 +322,7 @@ AUTO_REFRESH_LOCK = auto_refresh_session.LOCK_FILE
 
 # Outcome vocabulary returned by trigger_auto_refresh() and
 # trigger_open_browser(). Named constants — rather than bare string literals
-# re-spelled in app.py's login handlers — so the producer and every consumer
+# re-spelled in the app module's login handlers — so the producer and every consumer
 # key off one source; a renamed or added outcome is then a grep away instead of
 # a silent fall-through to a generic message. TRIGGER_OUTCOMES is the full set.
 TRIGGER_DISABLED = "disabled"
@@ -350,18 +350,18 @@ TRIGGER_OUTCOMES = (
 
 
 def trigger_auto_refresh(logger, config, force=False, notify_phone=True):
-    """Best-effort: launch auto_refresh_session.py to relogin via Chrome+QR.
+    """Best-effort: launch auth.session to relogin via Chrome+QR.
 
     Detached so it survives this (oneshot) process exiting — on systemd it's
     handed off via `systemd-run --user` so it isn't killed when this unit's
     cgroup is torn down at exit; elsewhere a plain detached Popen is enough.
-    Guarded by auto_refresh_session.py's own lock file so a stuck relogin
+    Guarded by auth.session's own lock file so a stuck relogin
     doesn't get relaunched on every subsequent 60s tick.
 
     Inside a PyInstaller-frozen build, sys.executable is the bundled binary
     itself (not a Python interpreter that can run a loose .py file) and
     AUTO_REFRESH_SCRIPT has no file on disk to point at — so instead we
-    re-invoke the binary with a hidden flag that app.py dispatches straight
+    re-invoke the binary with a hidden flag that the app module dispatches straight
     to auto_refresh_session.main(), keeping it a separate detached process.
 
     force=True denotes a deliberate manual retry. It bypasses only persisted
@@ -420,7 +420,7 @@ def trigger_auto_refresh(logger, config, force=False, notify_phone=True):
             # inheriting a caller's runtime overrides.  Keep the helper in
             # the same state home as this notifier: otherwise a preview or
             # alternate HOME writes its lock/session under the regular user
-            # home while app.py polls the alternate location and concludes
+            # home while the app module polls the alternate location and concludes
             # that Chrome closed before a QR scan.
             for name in ("HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME"):
                 if value := os.environ.get(name):
@@ -516,11 +516,11 @@ def restart_auto_refresh(
 
 
 def auto_refresh_in_progress():
-    """Whether a launched auto_refresh_session.py is still alive and holding
-    AUTO_REFRESH_LOCK — used by app.py's login screen to tell "still waiting
+    """Whether a launched auth.session helper is still alive and holding
+    AUTO_REFRESH_LOCK — used by the app module's login screen to tell "still waiting
     on you to scan" apart from "Chrome was closed/crashed before you scanned,
     give up waiting and let the user retry" (see wait_for_cookies's docstring
-    in auto_refresh_session.py: that process releases the lock and exits the
+    in auth.session: that process releases the lock and exits the
     moment its own Chrome disappears, whether from a scan, a close, or a
     crash — so the lock's liveness is exactly the signal we need here).
     """
@@ -563,7 +563,7 @@ def confirm_reschedule_cooldown_active():
 
 
 def trigger_open_browser(logger, config, auto_click=True, target_hit=None):
-    """Best-effort: launch open_logged_in_browser.py so a pre-authenticated
+    """Best-effort: launch booking.reschedule so a pre-authenticated
     tab is already open by the moment the push notification lands — skips
     the login step that otherwise costs you the fastest-moving slots.
 
@@ -586,7 +586,7 @@ def trigger_open_browser(logger, config, auto_click=True, target_hit=None):
     target_hit, when given together with auto_click and config's
     experimental, default-off "auto_select_slot" flag, is one of
     run_check()'s hit_dicts (word/exam_type/datetime/places) — passed
-    through as --target-slot JSON so open_logged_in_browser.py can also try
+    through as --target-slot JSON so booking.reschedule can also try
     to expand that date's slot group, select the matching time radio
     button, and click through to the summary/review screen, past the plain
     date-picker screen.
@@ -594,14 +594,14 @@ def trigger_open_browser(logger, config, auto_click=True, target_hit=None):
     A second, separate, also default-off flag — config's
     "auto_confirm_reschedule" — additionally passes --confirm-reschedule,
     which (only once auto_select_slot has already landed on the summary
-    screen, and only after open_logged_in_browser.py itself re-verifies
+    screen, and only after booking.reschedule itself re-verifies
     that screen matches the intended slot) clicks through the final
     "Potwierdź i przejdź dalej" confirm button — actually submitting the
     reservation change. auto_confirm_reschedule alone, without
     auto_select_slot, does nothing (no --target-slot means
-    open_logged_in_browser.py never reaches that screen to confirm on).
+    booking.reschedule never reaches that screen to confirm on).
     UNVERIFIED against the live site as of 2026-07-20, by explicit user
-    request that same day — see open_logged_in_browser.py's own docstrings
+    request that same day — see booking.reschedule's own docstrings
     for exactly what it does and does not click, and the verification step
     that gates the final click. Both flags are omitted entirely (no
     --target-slot/--confirm-reschedule at all) whenever off, so a config
@@ -616,7 +616,7 @@ def trigger_open_browser(logger, config, auto_click=True, target_hit=None):
     The launched subprocess's stdout/stderr go to RESCHEDULE_LOG_FILE
     (append mode) rather than DEVNULL — this is a
     detached, fire-and-forget launch with no other way for its outcome to
-    reach anyone, and open_logged_in_browser.py's own print()s are the only
+    reach anyone, and booking.reschedule's own print()s are the only
     record of what an auto-triggered run actually did, especially the
     "couldn't verify automatically — check yourself" messages past the
     confirm click.
@@ -688,7 +688,7 @@ def parse_set_cookies(headers, session):
     Deletions must actually delete: a logout/invalidate response carrying
     `__Secure-PUDOJT=; Expires=Thu, 01 Jan 1970 ...` would otherwise be stored
     as an empty-string cookie, leaving session.json looking complete to
-    open_logged_in_browser.py's COOKIE_NAMES check — which then injects blank
+    booking.reschedule's COOKIE_NAMES check — which then injects blank
     cookies and opens a logged-*out* tab instead of reporting the problem.
     """
     if headers is None:
@@ -730,7 +730,7 @@ def do_request(url, session, method="GET", json_body=None):
 
 
 def fetch_pkk_profiles(session):
-    """Best-effort lookup of the account's PKK profile(s) — used by app.py's
+    """Best-effort lookup of the account's PKK profile(s) — used by the app module's
     setup wizard to prefill the PKK number/category right after QR login
     instead of asking the user to type a PKK number in blind. The endpoint
     also returns pesel/name/birthDate; only pkkNumber/categoryName are kept,
@@ -785,7 +785,7 @@ def should_proactively_relogin(config, captured_at, *, now=None):
 
 
 def run_check(logger, dash_status):
-    """Note: pausing/resuming itself is applied instantly by app.py's
+    """Note: pausing/resuming itself is applied instantly by the app module's
     /pause and /resume handlers (they write dash_status/status.json
     directly) — this check just stops the real work from running while
     paused. It deliberately leaves outcome/message untouched instead of
@@ -801,7 +801,7 @@ def run_check(logger, dash_status):
         return
 
     # No desktop notification here: "no config yet" is the normal state during
-    # first-run setup and right after app.py's Reset account, where the poll
+    # first-run setup and right after the app module's Reset account, where the poll
     # thread keeps ticking while the user sits on the login screen — notifying
     # meant a critical popup every INTERVAL seconds. The dashboard already
     # shows it. Caught rather than exists()-checked because Reset account can
@@ -997,7 +997,7 @@ def run_check(logger, dash_status):
 
 def configured_poll_interval(default=DEFAULT_POLL_INTERVAL_SECONDS):
     """Read config.json's poll_interval_seconds fresh every call, so a
-    Settings save (app.py's /setup) takes effect on the very next wait
+    Settings save (the app module's /setup) takes effect on the very next wait
     instead of needing the poll thread restarted. `default` is only used
     when config.json doesn't exist yet or predates this setting."""
     try:
@@ -1015,7 +1015,7 @@ def jittered_wait(interval):
 def loop(logger, dash_status, interval=None, stop_event=None, wake_event=None):
     """Check on a timer until stop_event is set (or forever, if none given).
 
-    Factored out of main()'s --loop branch so app.py can run this in a
+    Factored out of main()'s --loop branch so the app module can run this in a
     background thread instead of shelling out to `python notifier.py --loop`
     as a subprocess — stop_event lets that thread be told to exit cleanly.
 
@@ -1023,7 +1023,7 @@ def loop(logger, dash_status, interval=None, stop_event=None, wake_event=None):
     each cycle (e.g. from --interval on the CLI); once config.json has its own
     poll_interval_seconds, that value wins.
 
-    `wake_event`, if given, lets app.py's /setup handler cut the current wait
+    `wake_event`, if given, lets the app module's /setup handler cut the current wait
     short the instant a new poll_interval_seconds is saved, instead of the
     dashboard's countdown (and the actual next check) staying stuck on
     whatever interval was configured when this cycle's wait started — set it
@@ -1070,7 +1070,7 @@ def main():
         help=(
             "Seconds between checks in --loop mode (default: 60). Only used "
             "as a fallback when config.json has no poll_interval_seconds "
-            "(set via app.py's Settings page)."
+            "(set via the app module's Settings page)."
         ),
     )
     args = parser.parse_args()

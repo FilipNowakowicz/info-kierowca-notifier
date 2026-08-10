@@ -2,9 +2,10 @@
 """Single owner of the runtime state/config file locations.
 
 These paths used to be re-spelled in five modules (notifier, app,
-auto_refresh_session, open_logged_in_browser, dashboard_server, cdp_client).
+auth.session, booking.reschedule, web.server, browser.cdp).
 That mattered more than it looks: the project's promise that a packaged
-binary and a `python app.py` run share the same config, session and history
+binary and a `python -m info_kierowca_notifier` run share the same config,
+session and history
 holds only as long as every one of those copies agrees, and a typo in any of
 them would silently split state in two rather than fail loudly.
 
@@ -24,7 +25,7 @@ LOG_FILE = STATE_DIR / "notifier.log"
 STATUS_FILE = STATE_DIR / "status.json"
 # A plain flag file rather than a config.json field, so pausing is a quick
 # runtime toggle independent of saved settings, and works the same whether
-# checks are driven by app.py's in-process loop or a systemd timer tick.
+# checks are driven by the app module's in-process loop or a systemd timer tick.
 PAUSE_FILE = STATE_DIR / "paused"
 AUTO_REFRESH_LOCK = STATE_DIR / "auto-refresh.lock"
 # Cooperative request consumed by the relogin helper itself. Keeping this
@@ -36,9 +37,9 @@ AUTO_REFRESH_RESTART_REQUEST = STATE_DIR / "auto-refresh.restart"
 # flow from being launched again on every poll cycle or after an app restart.
 RELOGIN_BACKOFF_FILE = STATE_DIR / "relogin-backoff.json"
 
-# Both added 2026-07-20 for open_logged_in_browser.py's experimental
+# Both added 2026-07-20 for booking.reschedule's experimental
 # auto_confirm_reschedule flow (see notifier.trigger_open_browser() and
-# open_logged_in_browser.try_select_target_slot()). RESCHEDULE_LOG_FILE is
+# booking.reschedule.try_select_target_slot()). RESCHEDULE_LOG_FILE is
 # separate from LOG_FILE rather than shared with it: that one's written via
 # a RotatingFileHandler from notifier.py's own process, and a detached
 # subprocess writing raw stdout into the same path could straddle a
@@ -51,7 +52,7 @@ RESCHEDULE_CONFIRM_COOLDOWN_FILE = STATE_DIR / "reschedule-confirm-cooldown"
 RESCHEDULE_DIAGNOSTICS_DIR = STATE_DIR / "reschedule-diagnostics"
 
 # Same rationale as RESCHEDULE_LOG_FILE (own file, not LOG_FILE, for the same
-# rotation-race reason) — auto_refresh_session.py's stdout used to go to
+# rotation-race reason) — auth.session's stdout used to go to
 # DEVNULL, leaving no record of what an auto-triggered relogin actually did.
 AUTO_REFRESH_LOG_FILE = STATE_DIR / "auto-refresh.log"
 
@@ -64,7 +65,7 @@ CATEGORIES_FILE = DATA_DIR / "categories.json"
 def empty_status():
     """The "nothing has happened yet" status shape, shared by
     notifier.load_status() (its fallback when status.json is missing/
-    unreadable) and dashboard_server.EMPTY_STATUS (the JSON served before the
+    unreadable) and web.server.EMPTY_STATUS (the JSON served before the
     first check). Lives here — the one module both already import — so the two
     dashboards can't drift out of step, as they did once before (the dashboard
     copy had grown "urgent"/"paused" keys the notifier default lacked).

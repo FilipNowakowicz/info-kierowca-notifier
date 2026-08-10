@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Regenerates word_centers.json — the static id/name/location catalog of
-every active DORD/WORD/MORD/PORD/ZORD driving-exam center, used by app.py's
+every active DORD/WORD/MORD/PORD/ZORD driving-exam center, used by the app module's
 setup wizard to show real center names instead of bare numeric IDs.
 
 The site's own dictionary endpoint needs an authenticated session (there's
