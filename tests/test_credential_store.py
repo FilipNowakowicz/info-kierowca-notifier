@@ -2,7 +2,7 @@ import unittest
 from keyring.backend import KeyringBackend
 from unittest.mock import patch
 
-import credential_store
+from info_kierowca_notifier.auth import credentials as credential_store
 
 
 class MemoryBackend(KeyringBackend):
@@ -78,7 +78,7 @@ class CredentialStoreTests(unittest.TestCase):
             )
 
     def test_linux_packaging_check_imports_secret_service_implementations(self):
-        with patch("credential_store.importlib.import_module") as imported:
+        with patch("info_kierowca_notifier.auth.credentials.importlib.import_module") as imported:
             detail = credential_store.require_packaged_keyring_support("linux")
         self.assertEqual(detail, "linux_secret_service_modules")
         self.assertEqual(

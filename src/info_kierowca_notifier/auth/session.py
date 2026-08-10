@@ -9,7 +9,7 @@ a script" dance required.
 
 Run by hand:
 
-    python auto_refresh_session.py
+    python -m info_kierowca_notifier.auth.session
 
 or invoked automatically by notifier.py (see trigger_auto_refresh() in
 notifier.py) whenever a check comes back auth_expired. A lock file at
@@ -31,17 +31,17 @@ import sys
 import time
 from pathlib import Path
 
-import cdp_client
-import auth_providers
-import credential_store
-import sms_provider
-import ntfy_transport
-import relogin_control
+from info_kierowca_notifier.browser import cdp as cdp_client
+from info_kierowca_notifier.auth import providers as auth_providers
+from info_kierowca_notifier.auth import credentials as credential_store
+from info_kierowca_notifier.auth import sms as sms_provider
+from info_kierowca_notifier import ntfy_transport
+from info_kierowca_notifier.auth import relogin_control
 
-from paths import AUTO_REFRESH_LOCK as LOCK_FILE  # noqa: E402
-from paths import AUTO_REFRESH_RESTART_REQUEST as RESTART_REQUEST_FILE  # noqa: E402
-from paths import CONFIG_FILE, RELOGIN_BACKOFF_FILE, STATE_DIR  # noqa: E402,F401
-from relogin_backoff import RetryBackoff  # noqa: E402
+from info_kierowca_notifier.paths import AUTO_REFRESH_LOCK as LOCK_FILE  # noqa: E402
+from info_kierowca_notifier.paths import AUTO_REFRESH_RESTART_REQUEST as RESTART_REQUEST_FILE  # noqa: E402
+from info_kierowca_notifier.paths import CONFIG_FILE, RELOGIN_BACKOFF_FILE, STATE_DIR  # noqa: E402,F401
+from info_kierowca_notifier.auth.relogin_backoff import RetryBackoff  # noqa: E402
 
 PROFILE_DIR = STATE_DIR / "chrome-relogin-profile"
 
@@ -840,7 +840,7 @@ def main():
                 failure_reason = "browser_closed"
                 notify_desktop(
                     "info-kierowca: relogin failed",
-                    "Chrome closed before logging in — run auto_refresh_session.py again",
+                    "Chrome closed before logging in — run the login flow again",
                     "critical",
                 )
             else:
@@ -848,7 +848,7 @@ def main():
                 failure_reason = "authentication_timeout"
                 notify_desktop(
                     "info-kierowca: relogin timed out",
-                    f"No login detected within {args.timeout}s — run auto_refresh_session.py again when ready",
+                    f"No login detected within {args.timeout}s — run the login flow again when ready",
                     "critical",
                 )
             if args.automatic:

@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-import relogin_control
+from info_kierowca_notifier.auth import relogin_control
 
 
 class ProcessLivenessTests(unittest.TestCase):
@@ -69,8 +69,8 @@ class ProcessLivenessTests(unittest.TestCase):
 
     def test_windows_dispatch_never_invokes_os_kill(self):
         with patch.object(relogin_control.os, "name", "nt"), patch(
-            "relogin_control._windows_process_alive", return_value=True
-        ) as windows_probe, patch("relogin_control.os.kill") as kill:
+            "info_kierowca_notifier.auth.relogin_control._windows_process_alive", return_value=True
+        ) as windows_probe, patch("info_kierowca_notifier.auth.relogin_control.os.kill") as kill:
             self.assertTrue(relogin_control.process_alive(123))
         windows_probe.assert_called_once_with(123)
         kill.assert_not_called()

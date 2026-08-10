@@ -8,8 +8,8 @@ import http.server
 import json
 import socketserver
 
-from localization import LOCALIZATION_SCRIPT
-from paths import STATUS_FILE, empty_status
+from info_kierowca_notifier.web.localization import LOCALIZATION_SCRIPT
+from info_kierowca_notifier.paths import STATUS_FILE, empty_status
 
 HOST = "127.0.0.1"
 PORT = 8787

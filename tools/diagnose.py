@@ -26,9 +26,9 @@ import traceback
 from datetime import datetime
 from pathlib import Path
 
-import auto_refresh_session as ars
-import cdp_client
-import paths
+from info_kierowca_notifier.auth import session as ars
+from info_kierowca_notifier.browser import cdp as cdp_client
+from info_kierowca_notifier import paths
 
 REPORT_LINES = []
 
@@ -286,7 +286,7 @@ def main():
     report_processes()
     inspect_profile_dir("auto-refresh (login/QR)", ars.PROFILE_DIR)
     try:
-        import open_logged_in_browser as olb
+        from info_kierowca_notifier.booking import reschedule as olb
         inspect_profile_dir("open-logged-in-browser (reschedule)", olb.PROFILE_DIR)
     except Exception as e:
         log(f"could not inspect open_logged_in_browser profile dir: {e!r}")

@@ -21,15 +21,15 @@ import urllib.request
 import webbrowser
 from datetime import date, datetime, timedelta
 
-import auto_refresh_session
-import credential_store
-import sms_provider
-import dashboard_server
-import notifier
-import open_logged_in_browser
-import tls_transport
-from paths import CATEGORIES_FILE, WORD_CENTERS_FILE
-from templates import LOGIN_PAGE, TOOLBAR_HTML, WIZARD_PAGE
+from info_kierowca_notifier.auth import session as auto_refresh_session
+from info_kierowca_notifier.auth import credentials as credential_store
+from info_kierowca_notifier.auth import sms as sms_provider
+from info_kierowca_notifier.web import server as dashboard_server
+from info_kierowca_notifier import notifier
+from info_kierowca_notifier.booking import reschedule as open_logged_in_browser
+from info_kierowca_notifier import tls_transport
+from info_kierowca_notifier.paths import CATEGORIES_FILE, WORD_CENTERS_FILE
+from info_kierowca_notifier.web.templates import LOGIN_PAGE, TOOLBAR_HTML, WIZARD_PAGE
 
 HOST = dashboard_server.HOST
 PORT = dashboard_server.PORT

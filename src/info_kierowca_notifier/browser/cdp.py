@@ -21,7 +21,7 @@ import urllib.request
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
-from paths import CONFIG_DIR, SESSION_FILE
+from info_kierowca_notifier.paths import CONFIG_DIR, SESSION_FILE
 
 COOKIE_NAMES = {"__Secure-PUDOJT", "__Secure-PUDOJTMD"}
 DOMAIN_SUFFIX = "info-kierowca.pl"

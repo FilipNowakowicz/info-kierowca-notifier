@@ -5,9 +5,9 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-import cdp_client
-import open_logged_in_browser as browser
-import reschedule_transaction as rt
+from info_kierowca_notifier.browser import cdp as cdp_client
+from info_kierowca_notifier.booking import reschedule as browser
+from info_kierowca_notifier.booking import transaction as rt
 
 
 def card(status="Potwierdzona", exam="Egzamin praktyczny", date="10/08/2026", time="12:30"):

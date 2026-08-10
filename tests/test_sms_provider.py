@@ -4,8 +4,8 @@ from datetime import datetime
 from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
-import cdp_client
-from sms_provider import GoogleMessagesWebProvider
+from info_kierowca_notifier.browser import cdp as cdp_client
+from info_kierowca_notifier.auth.sms import GoogleMessagesWebProvider
 
 
 class SMSProviderTests(unittest.TestCase):
@@ -14,7 +14,7 @@ class SMSProviderTests(unittest.TestCase):
         self.provider = GoogleMessagesWebProvider("h", 1, cdp_client.PageTarget("m", "https://messages.google.com/web", "", "ws"), wall_clock=lambda: self.now)
 
     def scan(self, result, after=None):
-        with patch("sms_provider.cdp_client.get_page_target", return_value=self.provider.target), patch("sms_provider.cdp_client.call_function_in_target", return_value=result):
+        with patch("info_kierowca_notifier.auth.sms.cdp_client.get_page_target", return_value=self.provider.target), patch("info_kierowca_notifier.auth.sms.cdp_client.call_function_in_target", return_value=result):
             return self.provider.get_latest_pz_code(after or self.now - 60)
 
     def test_latest_valid_code(self):
@@ -32,8 +32,8 @@ class SMSProviderTests(unittest.TestCase):
         self.assertEqual((result.status, result.code), ("found", "12345678"))
 
     def test_preexisting_code_is_rejected_inside_tolerance(self):
-        with patch("sms_provider.cdp_client.get_page_target", return_value=self.provider.target), \
-             patch("sms_provider.cdp_client.call_function_in_target", return_value={
+        with patch("info_kierowca_notifier.auth.sms.cdp_client.get_page_target", return_value=self.provider.target), \
+             patch("info_kierowca_notifier.auth.sms.cdp_client.call_function_in_target", return_value={
                  "status": "candidates", "candidates": [
                      {"date": "09.08.2026", "time": "12:00:55", "code": "12345678"}
                  ],
@@ -91,16 +91,16 @@ class SMSProviderTests(unittest.TestCase):
             "https://messages.google.com.evil.example/web",
         ):
             with self.subTest(url=url), patch(
-                "sms_provider.cdp_client.get_page_target",
+                "info_kierowca_notifier.auth.sms.cdp_client.get_page_target",
                 return_value=cdp_client.PageTarget("m", url, "", "ws"),
-            ), patch("sms_provider.cdp_client.call_function_in_target") as scan:
+            ), patch("info_kierowca_notifier.auth.sms.cdp_client.call_function_in_target") as scan:
                 result = self.provider.get_latest_pz_code(self.now - 60)
             self.assertEqual(result.status, "unexpected_messages_origin")
             scan.assert_not_called()
 
     def test_valid_messages_origin_is_scanned(self):
-        with patch("sms_provider.cdp_client.get_page_target", return_value=self.provider.target), \
-             patch("sms_provider.cdp_client.call_function_in_target",
+        with patch("info_kierowca_notifier.auth.sms.cdp_client.get_page_target", return_value=self.provider.target), \
+             patch("info_kierowca_notifier.auth.sms.cdp_client.call_function_in_target",
                    return_value={"status": "no_current_otp", "candidates": []}) as scan:
             self.assertEqual(
                 self.provider.get_latest_pz_code(self.now - 60).status,

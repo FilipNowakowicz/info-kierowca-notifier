@@ -56,8 +56,9 @@ RESCHEDULE_DIAGNOSTICS_DIR = STATE_DIR / "reschedule-diagnostics"
 AUTO_REFRESH_LOG_FILE = STATE_DIR / "auto-refresh.log"
 
 # Static data shipped alongside the code (and bundled into the frozen build).
-WORD_CENTERS_FILE = Path(__file__).parent / "word_centers.json"
-CATEGORIES_FILE = Path(__file__).parent / "categories.json"
+DATA_DIR = Path(__file__).parent / "data"
+WORD_CENTERS_FILE = DATA_DIR / "word_centers.json"
+CATEGORIES_FILE = DATA_DIR / "categories.json"
 
 
 def empty_status():

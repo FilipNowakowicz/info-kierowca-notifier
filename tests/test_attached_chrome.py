@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-import auto_refresh_session
+from info_kierowca_notifier.auth import session as auto_refresh_session
 
 
 class Clock:
@@ -26,21 +26,21 @@ class AttachedChromeTests(unittest.TestCase):
 
     def test_wait_returns_when_browser_is_already_gone(self):
         clock = Clock()
-        with patch("auto_refresh_session.cdp_client.browser_ws_url",
+        with patch("info_kierowca_notifier.auth.session.cdp_client.browser_ws_url",
                    side_effect=ConnectionError):
             self.assertEqual(self.attached(clock).wait(timeout=5), 0)
         self.assertEqual(clock.now, 0)
 
     def test_wait_polls_until_browser_disappears(self):
         clock = Clock()
-        with patch("auto_refresh_session.cdp_client.browser_ws_url",
+        with patch("info_kierowca_notifier.auth.session.cdp_client.browser_ws_url",
                    side_effect=["ws://live", "ws://live", ConnectionError()]):
             self.assertEqual(self.attached(clock).wait(timeout=5), 0)
         self.assertGreaterEqual(clock.now, 0.2)
 
     def test_wait_raises_timeout_while_browser_remains_live(self):
         clock = Clock()
-        with patch("auto_refresh_session.cdp_client.browser_ws_url",
+        with patch("info_kierowca_notifier.auth.session.cdp_client.browser_ws_url",
                    return_value="ws://live"):
             with self.assertRaises(subprocess.TimeoutExpired):
                 self.attached(clock).wait(timeout=0.25)
@@ -50,7 +50,7 @@ class AttachedChromeTests(unittest.TestCase):
         clock = Clock()
         chrome = self.attached(clock)
         released = Mock()
-        with patch("auto_refresh_session.cdp_client.browser_ws_url",
+        with patch("info_kierowca_notifier.auth.session.cdp_client.browser_ws_url",
                    return_value="ws://live"):
             with self.assertRaises(subprocess.TimeoutExpired):
                 chrome.wait(timeout=0.2)
@@ -83,11 +83,11 @@ class AttachedChromeTests(unittest.TestCase):
         target = Mock()
         provider = Mock()
         provider.find_or_create_target.return_value = target
-        with patch("auto_refresh_session.cdp_client.wait_for_debug_port"), \
-             patch("auto_refresh_session.sms_provider.GoogleMessagesWebProvider",
+        with patch("info_kierowca_notifier.auth.session.cdp_client.wait_for_debug_port"), \
+             patch("info_kierowca_notifier.auth.session.sms_provider.GoogleMessagesWebProvider",
                    return_value=provider), \
-             patch("auto_refresh_session.cdp_client.bring_target_to_front"), \
-             patch("auto_refresh_session.subprocess.Popen") as launch:
+             patch("info_kierowca_notifier.auth.session.cdp_client.bring_target_to_front"), \
+             patch("info_kierowca_notifier.auth.session.subprocess.Popen") as launch:
             self.assertIs(auto_refresh_session.open_google_messages_pairing(), target)
         launch.assert_not_called()
 

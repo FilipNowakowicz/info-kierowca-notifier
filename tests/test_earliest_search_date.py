@@ -7,8 +7,8 @@ from datetime import date
 from pathlib import Path
 from unittest.mock import patch
 
-import app
-import notifier
+import info_kierowca_notifier.app as app
+from info_kierowca_notifier import notifier
 
 
 def payload(**overrides):
@@ -45,7 +45,7 @@ class SearchStartDateTests(unittest.TestCase):
         self.assertEqual(config["search_start_date"], "")
 
     def test_config_accepts_a_date_and_rejects_an_invalid_one(self):
-        with patch("app.datetime") as mocked_datetime:
+        with patch("info_kierowca_notifier.app.datetime") as mocked_datetime:
             mocked_datetime.now.return_value.date.return_value = date(2026, 8, 9)
             mocked_datetime.fromisoformat.side_effect = __import__("datetime").datetime.fromisoformat
             config = app.build_config(payload(search_start_date="2026-08-20"))
@@ -54,7 +54,7 @@ class SearchStartDateTests(unittest.TestCase):
             app.build_config(payload(search_start_date="20/08/2026"))
 
     def test_config_rejects_a_search_start_on_or_after_current_booking(self):
-        with patch("app.datetime") as mocked_datetime:
+        with patch("info_kierowca_notifier.app.datetime") as mocked_datetime:
             mocked_datetime.now.return_value.date.return_value = date(2026, 8, 9)
             mocked_datetime.fromisoformat.side_effect = __import__("datetime").datetime.fromisoformat
             for search_start in ("2026-08-25", "2026-08-26"):

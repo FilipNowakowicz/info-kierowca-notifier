@@ -4,8 +4,8 @@ import time
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
-import cdp_client
-from sms_provider import OTP_RE
+from info_kierowca_notifier.browser import cdp as cdp_client
+from info_kierowca_notifier.auth.sms import OTP_RE
 
 
 class PZState(enum.Enum):

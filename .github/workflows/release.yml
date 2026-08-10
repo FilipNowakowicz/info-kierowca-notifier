@@ -36,7 +36,7 @@ jobs:
           from pathlib import Path
 
           forbidden = ("_create_unverified_context", "CERT_NONE")
-          for path in Path(".").glob("*.py"):
+          for path in [*Path("src").rglob("*.py"), *Path("tools").glob("*.py")]:
               source = path.read_text(encoding="utf-8")
               if any(token in source for token in forbidden):
                   raise SystemExit(f"insecure TLS API found in {path}")

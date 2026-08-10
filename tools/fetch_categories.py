@@ -7,7 +7,7 @@ user picks "B — car" instead of guessing the bare numeric id the API wants
 Like fetch_word_centers.py, this refreshes a repo-baked snapshot by hand
 using your own already-logged-in session.json:
 
-    python fetch_categories.py
+    uv run python tools/fetch_categories.py
 
 Two live sources, both read-only GETs to info-kierowca.pl:
 
@@ -27,16 +27,15 @@ Two live sources, both read-only GETs to info-kierowca.pl:
 Nothing is sent anywhere except info-kierowca.pl itself.
 """
 import json
-from pathlib import Path
-
-import notifier
+from info_kierowca_notifier import notifier
+from info_kierowca_notifier.paths import CATEGORIES_FILE
 
 # Applications-service base (from the site's /assets/config.json
 # `applicationApiUrl`), where the licence-category dictionary lives. Note this
 # is a *different* base from fetch_word_centers.py's `dictionaryApiUrl`
 # (/bknd/config/api/v1) — the category catalog is served by Applications.
 GROUPS_URL = f"{notifier.BASE}/bknd/Applications/api/v1/dictionary/licence-category-groups"
-OUTPUT_FILE = Path(__file__).parent / "categories.json"
+OUTPUT_FILE = CATEGORIES_FILE
 
 # Code -> numeric id the exam-search API expects. Mirrored verbatim from the
 # frontend JS bundle (search `B:5`). This is the authoritative mapping; the

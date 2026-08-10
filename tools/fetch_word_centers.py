@@ -9,19 +9,18 @@ the wizard itself), which is why this list is baked into the repo instead.
 Run this by hand only when you suspect the site added/renamed/closed a
 center, using your own already-logged-in session.json:
 
-    python fetch_word_centers.py
+    uv run python tools/fetch_word_centers.py
 
 Read-only: a single GET to info-kierowca.pl's own reference-data endpoint —
 the same one the real site's own center picker calls. Nothing is sent
 anywhere else.
 """
 import json
-from pathlib import Path
-
-import notifier
+from info_kierowca_notifier import notifier
+from info_kierowca_notifier.paths import WORD_CENTERS_FILE
 
 DICT_URL = f"{notifier.BASE}/bknd/config/api/v1/dict/words"
-OUTPUT_FILE = Path(__file__).parent / "word_centers.json"
+OUTPUT_FILE = WORD_CENTERS_FILE
 
 
 def main():

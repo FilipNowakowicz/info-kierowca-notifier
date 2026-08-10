@@ -3,12 +3,12 @@ import urllib.error
 import unittest
 from unittest import mock
 
-import app
-import auto_refresh_session
-import ntfy_transport
-import notifier
-import open_logged_in_browser
-import tls_transport
+import info_kierowca_notifier.app as app
+from info_kierowca_notifier.auth import session as auto_refresh_session
+from info_kierowca_notifier import ntfy_transport
+from info_kierowca_notifier import notifier
+from info_kierowca_notifier.booking import reschedule as open_logged_in_browser
+from info_kierowca_notifier import tls_transport
 
 
 class _Response:
@@ -24,7 +24,7 @@ class _Response:
 
 class NtfyTransportTests(unittest.TestCase):
     def test_success_requires_a_2xx_response(self):
-        with mock.patch("ntfy_transport.tls_transport.urlopen", return_value=_Response(201)) as urlopen:
+        with mock.patch("info_kierowca_notifier.ntfy_transport.tls_transport.urlopen", return_value=_Response(201)) as urlopen:
             outcome = ntfy_transport.push_ntfy("private-topic", "Title", "Body", priority="urgent")
 
         self.assertTrue(outcome.ok)
@@ -34,7 +34,7 @@ class NtfyTransportTests(unittest.TestCase):
         self.assertEqual(request.get_header("Priority"), "urgent")
 
     def test_non_2xx_response_is_not_a_success(self):
-        with mock.patch("ntfy_transport.tls_transport.urlopen", return_value=_Response(503)):
+        with mock.patch("info_kierowca_notifier.ntfy_transport.tls_transport.urlopen", return_value=_Response(503)):
             outcome = ntfy_transport.push_ntfy("private-topic", "Title", "Body")
 
         self.assertFalse(outcome.ok)
@@ -43,7 +43,7 @@ class NtfyTransportTests(unittest.TestCase):
 
     def test_http_error_has_safe_status_only(self):
         error = urllib.error.HTTPError("https://ntfy.sh/private-topic", 401, "no", {}, None)
-        with mock.patch("ntfy_transport.tls_transport.urlopen", side_effect=error):
+        with mock.patch("info_kierowca_notifier.ntfy_transport.tls_transport.urlopen", side_effect=error):
             outcome = ntfy_transport.push_ntfy("private-topic", "Title", "Body")
 
         self.assertEqual(outcome.kind, ntfy_transport.HTTP_ERROR)
@@ -52,7 +52,7 @@ class NtfyTransportTests(unittest.TestCase):
 
     def test_network_failure_is_distinguished_without_leaking_topic(self):
         failure = urllib.error.URLError("https://ntfy.sh/private-topic refused connection")
-        with mock.patch("ntfy_transport.tls_transport.urlopen", side_effect=failure):
+        with mock.patch("info_kierowca_notifier.ntfy_transport.tls_transport.urlopen", side_effect=failure):
             outcome = ntfy_transport.push_ntfy("private-topic", "Title", "Body")
 
         self.assertEqual(outcome.kind, ntfy_transport.NETWORK_ERROR)
@@ -60,7 +60,7 @@ class NtfyTransportTests(unittest.TestCase):
 
     def test_tls_verification_failure_is_distinguished(self):
         failure = urllib.error.URLError(ssl.SSLCertVerificationError("certificate verify failed"))
-        with mock.patch("ntfy_transport.tls_transport.urlopen", side_effect=failure):
+        with mock.patch("info_kierowca_notifier.ntfy_transport.tls_transport.urlopen", side_effect=failure):
             outcome = ntfy_transport.push_ntfy("private-topic", "Title", "Body")
 
         self.assertEqual(outcome.kind, ntfy_transport.TLS_ERROR)
@@ -68,7 +68,7 @@ class NtfyTransportTests(unittest.TestCase):
 
     def test_tls_configuration_failure_is_actionable(self):
         with mock.patch(
-            "ntfy_transport.tls_transport.urlopen",
+            "info_kierowca_notifier.ntfy_transport.tls_transport.urlopen",
             side_effect=tls_transport.TLSConfigurationError("/private/ca.pem"),
         ):
             outcome = ntfy_transport.push_ntfy("private-topic", "Title", "Body")
@@ -79,7 +79,7 @@ class NtfyTransportTests(unittest.TestCase):
     def test_notifier_logs_safe_structured_failure(self):
         logger = mock.Mock()
         with mock.patch(
-            "notifier.ntfy_transport.push_ntfy",
+            "info_kierowca_notifier.notifier.ntfy_transport.push_ntfy",
             return_value=ntfy_transport.NotificationOutcome(ntfy_transport.NETWORK_ERROR, "safe detail"),
         ):
             outcome = notifier.push_ntfy(logger, "private-topic", "Title", "PKK 123")
@@ -91,14 +91,14 @@ class NtfyTransportTests(unittest.TestCase):
 
     def test_other_notification_callers_delegate_to_shared_transport(self):
         success = ntfy_transport.NotificationOutcome(ntfy_transport.SUCCESS, "ok", 200)
-        with mock.patch("auto_refresh_session.ntfy_transport.push_ntfy", return_value=success) as refresh_push:
+        with mock.patch("info_kierowca_notifier.auth.session.ntfy_transport.push_ntfy", return_value=success) as refresh_push:
             config_file = mock.Mock()
             config_file.read_text.return_value = '{"ntfy_topic": "topic"}'
-            with mock.patch("auto_refresh_session.CONFIG_FILE", config_file):
+            with mock.patch("info_kierowca_notifier.auth.session.CONFIG_FILE", config_file):
                 self.assertIs(auto_refresh_session.push_ntfy("Title", "Body"), success)
         refresh_push.assert_called_once()
 
-        with mock.patch("open_logged_in_browser.ntfy_transport.push_ntfy", return_value=success) as browser_push:
+        with mock.patch("info_kierowca_notifier.booking.reschedule.ntfy_transport.push_ntfy", return_value=success) as browser_push:
             self.assertIs(open_logged_in_browser.push_ntfy("topic", "Title", "Body"), success)
         browser_push.assert_called_once()
 
@@ -113,7 +113,7 @@ class TestPushApiTests(unittest.TestCase):
     def test_api_reports_success_only_after_delivery(self):
         handler = self._handler({"topic": "private-topic"})
         with mock.patch(
-            "app.notifier.push_ntfy",
+            "info_kierowca_notifier.app.notifier.push_ntfy",
             return_value=ntfy_transport.NotificationOutcome(ntfy_transport.SUCCESS, "accepted", 200),
         ):
             handler._handle_test_push()
@@ -125,7 +125,7 @@ class TestPushApiTests(unittest.TestCase):
         outcome = ntfy_transport.NotificationOutcome(
             ntfy_transport.TLS_ERROR, "TLS certificate verification failed. Check your system trust settings."
         )
-        with mock.patch("app.notifier.push_ntfy", return_value=outcome):
+        with mock.patch("info_kierowca_notifier.app.notifier.push_ntfy", return_value=outcome):
             handler._handle_test_push()
 
         handler._send_json.assert_called_once_with(
