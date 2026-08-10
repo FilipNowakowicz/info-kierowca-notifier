@@ -22,16 +22,22 @@ anywhere; see browser.cdp's docstring for the debug-port security note.
 """
 import argparse
 import json
-import os
-import re
-import shutil
 import signal
 import subprocess
 import sys
 import time
-from pathlib import Path
 
 from info_kierowca_notifier.browser import cdp as cdp_client
+from info_kierowca_notifier.browser.chrome import (
+    AttachedChrome,
+    chrome_debugging_args,
+    ensure_private_profile_dir,
+    find_chrome,
+)
+from info_kierowca_notifier.browser.clicking import (
+    CLICKABLE_HELPERS_JS,
+    sanitize_click_diagnostics,
+)
 from info_kierowca_notifier.auth import providers as auth_providers
 from info_kierowca_notifier.auth import credentials as credential_store
 from info_kierowca_notifier.auth import sms as sms_provider
@@ -56,114 +62,6 @@ DEFAULT_URL = "https://info-kierowca.pl/login"
 DEFAULT_TIMEOUT = None
 
 
-class AttachedChrome:
-    """Process-like owner for a pairing browser already on our dedicated port."""
-    def __init__(self, host, port, *, monotonic=None, sleep=None):
-        self.host, self.port = host, port
-        self.monotonic = monotonic or time.monotonic
-        self.sleep = sleep or time.sleep
-    def poll(self):
-        try:
-            cdp_client.browser_ws_url(self.host, self.port)
-            return None
-        except Exception:
-            return 0
-    def terminate(self):
-        try: cdp_client.close_browser(self.host, self.port)
-        except Exception: pass
-    def wait(self, timeout=None):
-        deadline = None if timeout is None else self.monotonic() + timeout
-        while self.poll() is None:
-            if deadline is not None and self.monotonic() >= deadline:
-                raise subprocess.TimeoutExpired(
-                    f"Chrome CDP endpoint {self.host}:{self.port}", timeout
-                )
-            delay = 0.1 if deadline is None else min(
-                0.1, max(0, deadline - self.monotonic())
-            )
-            self.sleep(delay)
-        return 0
-    def kill(self): self.terminate()
-
-
-def ensure_private_profile_dir(path, *, platform=None, chmod=None):
-    """Create only the dedicated profile and make it owner-only on POSIX."""
-    path.mkdir(parents=True, exist_ok=True)
-    platform = sys.platform if platform is None else platform
-    if platform != "win32":
-        (chmod or os.chmod)(path, 0o700)
-    return path
-
-
-def chrome_debugging_args(port, profile_dir):
-    return [
-        "--remote-debugging-address=127.0.0.1",
-        f"--remote-debugging-port={port}",
-        f"--user-data-dir={profile_dir}",
-    ]
-
-# Edge is Chromium-based and supports the same --remote-debugging-port CDP
-# flag, so it's included as a fallback — it's preinstalled on all Windows
-# machines, unlike Chrome, which matters for a "no setup needed" install.
-CHROME_CANDIDATES = [
-    "google-chrome", "google-chrome-stable", "chromium", "chromium-browser",
-    "msedge", "microsoft-edge", "microsoft-edge-stable",
-]
-CHROME_MAC_PATH = Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
-# CHROME_MAC_PATH only covers the common system-wide install location — the
-# same class of gap CHROME_WIN_PATHS had on Windows before the registry
-# lookup below existed, and by the same reasoning it would miss Chrome
-# installed to ~/Applications (no-admin-rights install) or anywhere else.
-# _chrome_from_macos_spotlight() is checked first for exactly that reason.
-# UNVERIFIED as of 2026-07-22 — written without a live Mac to test on;
-# CHROME_MAC_PATH remains as a fallback for the common case if this doesn't
-# pan out or mdfind is unavailable/disabled.
-# CHROME_CANDIDATES' PATH-based names ("google-chrome" etc.) are a Linux/Mac
-# convention — a Windows Chrome install never puts chrome.exe on PATH under
-# any of those names, so without these explicit paths find_chrome() always
-# fell through to EDGE_WIN_PATHS below even on a machine with Chrome
-# installed (confirmed live: Edge opened instead of the user's own Chrome).
-# %LOCALAPPDATA% covers the common non-admin/per-user install; the two
-# Program Files paths cover a machine-wide install (matching EDGE_WIN_PATHS'
-# own x86/64 pair).
-CHROME_WIN_PATHS = [
-    Path(os.environ.get("LOCALAPPDATA", ""))
-    / "Google" / "Chrome" / "Application" / "chrome.exe",
-    Path(r"C:\Program Files\Google\Chrome\Application\chrome.exe"),
-    Path(r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe"),
-]
-EDGE_WIN_PATHS = [
-    Path(r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"),
-    Path(r"C:\Program Files\Microsoft\Edge\Application\msedge.exe"),
-]
-
-
-def _chrome_from_windows_registry():
-    """Look up Chrome's install path via the "App Paths" registry key —
-    the same mechanism Windows itself uses to resolve a bare "chrome.exe"
-    (e.g. from the Run dialog or `start chrome`). Every normal Chrome
-    installer (per-user or per-machine) writes this key regardless of which
-    drive/folder it installed to, so it's more robust than guessing fixed
-    paths like CHROME_WIN_PATHS above — those only cover the default
-    locations and silently miss anything installed elsewhere. winreg only
-    exists on Windows; the ImportError there makes this a clean no-op on
-    Linux/Mac.
-    """
-    try:
-        import winreg
-    except ImportError:
-        return None
-    key_path = r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\chrome.exe"
-    for hive in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
-        try:
-            with winreg.OpenKey(hive, key_path) as key:
-                path, _ = winreg.QueryValueEx(key, None)
-        except OSError:
-            continue
-        if path and Path(path).exists():
-            return path
-    return None
-
 # The login click-path: info-kierowca.pl -> (maybe) "Zaloguj się" -> a PWPW
 # identity-provider chooser with a "gov.pl" tile -> a login.gov.pl chooser
 # with an "Aplikacja mObywatel" tile -> QR code. Checked in this order (most
@@ -173,158 +71,6 @@ def _chrome_from_windows_registry():
 # matching, you can still click through by hand while the script waits.
 AUTO_CLICK_TARGETS = ["Aplikacja mObywatel", "gov.pl", "Zaloguj się"]
 
-
-def sanitize_click_diagnostics(result):
-    """Keep browser click diagnostics useful without recording personal codes."""
-    if not isinstance(result, dict):
-        return result
-    safe = dict(result)
-    matched = str(safe.get("matched_text", ""))
-    if re.search(r"\b(?:pkk|pesel|otp|one[ -]?time|kod(?:\s+sms)?)\b", matched, re.I) or re.search(
-        r"\b\d{6,}\b", matched
-    ):
-        safe["matched_text"] = "[redacted sensitive text]"
-    for key in ("page_url", "href"):
-        if safe.get(key):
-            safe[key] = re.split(r"[?#]", str(safe[key]), maxsplit=1)[0]
-    return safe
-
-# Shared by both scripts below: find eligible elements anywhere on the page
-# whose text contains one of `targets` (checked in that order) and resolve
-# them to the nearest real clickable ancestor — login-page rows are often a
-# plain <div> wrapping an icon + label, not a bare <button>/<a>. Matching
-# descendants resolving to the same control are deduplicated; one uniquely
-# exact control wins, while multiple distinct plausible controls fail safely.
-# Once targets[0] (the most specific/downstream one, "Aplikacja mObywatel" — the
-# tile that lands on the QR page itself) gets clicked, a sessionStorage flag
-# is set so neither this function nor its callers try again: sessionStorage
-# survives same-origin navigations (including the browser back button), so
-# if you back out of the QR page to pick a different login method, this
-# won't force you straight back to it. Origin-scoped only — it resets on a
-# genuine cross-origin hop, which matches the one place that's actually
-# wanted: a fresh run of this script (new profile) should auto-click again.
-# The "is this thing clickable" heuristic, shared verbatim with
-# booking.reschedule's own click-by-text helper. This is the most
-# site-fragile code in the project — when info-kierowca.pl reshuffles its
-# markup it gets edited under pressure, so it lives in exactly one place
-# rather than in two copies that can silently drift apart.
-CLICKABLE_HELPERS_JS = r"""
-function __ikw_isVisible(el) {
-  var style = window.getComputedStyle(el);
-  if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
-  return el.offsetWidth > 0 || el.offsetHeight > 0 || el.getClientRects().length > 0;
-}
-function __ikw_isClickable(el) {
-  if (!el) return false;
-  var style = window.getComputedStyle(el);
-  return el.tagName === 'BUTTON' || el.tagName === 'A' ||
-    el.getAttribute('role') === 'button' || style.cursor === 'pointer';
-}
-function __ikw_clickableAncestor(el) {
-  var cur = el;
-  for (var i = 0; i < 6 && cur; i++) {
-    if (__ikw_isClickable(cur)) return cur;
-    cur = cur.parentElement;
-  }
-  return el;
-}
-function __ikw_text(el) {
-  return (el.innerText || el.textContent || '').replace(/\\s+/g, ' ').trim();
-}
-function __ikw_pageIsKnownError() {
-  var body = __ikw_text(document.body).toLowerCase();
-  return !!document.querySelector('.alertPage, [class*="alertPage"], .wkProcessUsed') ||
-    body.indexOf('wkprocessused') !== -1 ||
-    body.indexOf('został już użyty') !== -1 || body.indexOf('zostal juz uzyty') !== -1 ||
-    body.indexOf('strona błędu') !== -1 || body.indexOf('strona bledu') !== -1;
-}
-function __ikw_hasExcludedStructure(el) {
-  var cur = el;
-  for (var i = 0; i < 8 && cur; i++, cur = cur.parentElement) {
-    var tag = (cur.tagName || '').toLowerCase();
-    var identity = ((cur.id || '') + ' ' + (cur.className || '') + ' ' +
-      (cur.getAttribute('role') || '') + ' ' + (cur.getAttribute('aria-label') || '')).toLowerCase();
-    if (tag === 'header' || tag === 'footer' || tag === 'nav' || tag === 'app-logo' ||
-        tag === 'app-wk-footer' || tag === 'app-wk-language-switcher' ||
-        /(^|[ _-])(logo|footer|header|navigation|nav|language|lang|go-back|back|help|policy|terms)([ _-]|$)/.test(identity)) {
-      return true;
-    }
-  }
-  return false;
-}
-function __ikw_hasExcludedText(el) {
-  var text = __ikw_text(el).toLowerCase();
-  return /\b(wstecz|powrót|powrot|back|cofnij|język|jezyk|language)\b/.test(text) ||
-    /\b(załóż konto|zaloz konto|utwórz konto|utworz konto|create account|przypomnij hasło|przypomnij haslo|password reminder|forgot password|nie pamiętam hasła|nie pamietam hasla|polityka|privacy|pomoc|help|regulamin|terms)\b/.test(text);
-}
-function __ikw_hasUnrelatedGovHref(el) {
-  var href = (el && (el.href || el.getAttribute('href')) || '').toLowerCase();
-  if (!href) return false;
-  try {
-    var host = new URL(href, location.href).hostname.toLowerCase();
-    return (host === 'gov.pl' || host.endsWith('.gov.pl')) &&
-      host !== 'login.gov.pl' && !host.endsWith('.login.gov.pl');
-  } catch (e) { return false; }
-}
-function __ikw_isExcludedControl(candidate, clickable) {
-  clickable = clickable || __ikw_clickableAncestor(candidate);
-  return __ikw_hasExcludedStructure(candidate) ||
-    (clickable !== candidate && __ikw_hasExcludedStructure(clickable)) ||
-    __ikw_hasExcludedText(candidate) ||
-    (clickable !== candidate && __ikw_hasExcludedText(clickable)) ||
-    __ikw_hasUnrelatedGovHref(clickable);
-}
-function __ikw_diagnostics(label, matched, el, reason) {
-  var href = el ? (el.href || el.getAttribute('href') || '') : '';
-  var safeHref = href;
-  try { safeHref = new URL(href, location.href).origin + new URL(href, location.href).pathname; } catch (e) {}
-  return {
-    clicked: false, reason: reason || 'not_found', requested_label: label || '',
-    matched_text: __ikw_safeMatchedText(matched || ''), page_url: String(location.origin || '') + String(location.pathname || ''),
-    page_host: String(location.hostname || ''), tag: el ? el.tagName : '',
-    element_id: el ? (el.id || '') : '', element_class: el ? String(el.className || '') : '',
-    href: safeHref
-  };
-}
-function __ikw_safeMatchedText(text) {
-  if (/\b(pkk|pesel|otp|one[ -]?time|kod\s+sms)\b/i.test(text) || /\b\d{6,}\b/.test(text)) {
-    return '[redacted sensitive text]';
-  }
-  return text;
-}
-function __ikw_clickByText(label, selector, exact, requireEnabled) {
-  if (__ikw_pageIsKnownError()) return __ikw_diagnostics(label, '', null, 'known_error_page');
-  var all = document.querySelectorAll(selector), candidates = [];
-  var wanted = label.toLowerCase();
-  for (var i = 0; i < all.length; i++) {
-    var el = all[i], matched = __ikw_text(el);
-    if (!__ikw_isVisible(el) || !matched) continue;
-    if ((exact && matched !== label) || (!exact && matched.toLowerCase().indexOf(wanted) === -1)) continue;
-    if (requireEnabled && (el.disabled || el.getAttribute('aria-disabled') === 'true')) continue;
-    var clickable = __ikw_clickableAncestor(el);
-    if (!clickable || __ikw_isExcludedControl(el, clickable)) continue;
-    var duplicate = false;
-    for (var c = 0; c < candidates.length; c++) {
-      if (candidates[c][0] === clickable) {
-        if (matched.toLowerCase() === wanted || matched.length < candidates[c][1].length) {
-          candidates[c] = [clickable, matched, matched.toLowerCase() === wanted];
-        }
-        duplicate = true; break;
-      }
-    }
-    if (!duplicate) candidates.push([clickable, matched, matched.toLowerCase() === wanted]);
-  }
-  if (!candidates.length) return __ikw_diagnostics(label, '', null, 'not_found');
-  var exactCandidates = candidates.filter(function(candidate) { return candidate[2]; });
-  if (exactCandidates.length === 1) {
-    candidates = exactCandidates;
-  } else if (candidates.length > 1) {
-    return __ikw_diagnostics(label, '', null, 'ambiguous_match');
-  }
-  var best = candidates[0], result = __ikw_diagnostics(label, best[1], best[0], 'clicked');
-  best[0].click(); result.clicked = true; return result;
-}
-"""
 
 CLICK_LOGIC_JS = """
 var __IKW_STOP_KEY = '__ikw_auto_click_stopped';
@@ -472,72 +218,6 @@ def try_auto_click(host, port, target=None):
         # AUTO_REFRESH_LOG_FILE after the fact.
         print(f"try_auto_click error: {e!r}")
         return None
-
-
-def _chrome_from_macos_spotlight():
-    """macOS analog of _chrome_from_windows_registry() above: `mdfind`
-    (Spotlight) looks Chrome up by bundle identifier, which finds it
-    regardless of install location — /Applications, ~/Applications, or
-    anywhere else — unlike the fixed CHROME_MAC_PATH guess. Returns None on
-    any failure (wrong OS, mdfind missing/disabled, nothing indexed) so
-    CHROME_MAC_PATH stays a working fallback for the common case.
-
-    UNVERIFIED as of 2026-07-22 — written without a live Mac to test on.
-    """
-    if sys.platform != "darwin":
-        return None
-    try:
-        out = subprocess.check_output(
-            ["mdfind", "kMDItemCFBundleIdentifier == 'com.google.Chrome'"],
-            text=True, stderr=subprocess.DEVNULL, timeout=5,
-        )
-    except Exception:
-        return None
-    for line in out.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        binary = Path(line) / "Contents" / "MacOS" / "Google Chrome"
-        if binary.exists():
-            return str(binary)
-    return None
-
-
-def find_chrome():
-    for name in CHROME_CANDIDATES:
-        path = shutil.which(name)
-        if path:
-            return path
-    macos_path = _chrome_from_macos_spotlight()
-    if macos_path:
-        return macos_path
-    if CHROME_MAC_PATH.exists():
-        return str(CHROME_MAC_PATH)
-    registry_path = _chrome_from_windows_registry()
-    if registry_path:
-        return registry_path
-    for path in CHROME_WIN_PATHS:
-        if path.exists():
-            return str(path)
-    for path in EDGE_WIN_PATHS:
-        if path.exists():
-            return str(path)
-    raise SystemExit("Couldn't find a Chrome/Chromium/Edge binary on PATH.")
-
-
-def chrome_available():
-    """Whether find_chrome() would succeed, without raising. Used by
-    notifier.trigger_auto_refresh()/trigger_open_browser() to detect a
-    missing Chromium browser (e.g. a Mac with only Safari installed)
-    synchronously, before spawning the detached subprocess whose own
-    find_chrome() failure would otherwise be invisible — its stdout/stderr
-    go to DEVNULL since the launch is fire-and-forget.
-    """
-    try:
-        find_chrome()
-        return True
-    except SystemExit:
-        return False
 
 
 def open_google_messages_pairing(host="127.0.0.1", port=DEFAULT_PORT):

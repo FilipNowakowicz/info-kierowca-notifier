@@ -9,11 +9,12 @@ from unittest.mock import patch
 from info_kierowca_notifier.auth import session as auto_refresh_session
 from info_kierowca_notifier.auth import providers as auth_providers
 from info_kierowca_notifier.booking import reschedule as open_logged_in_browser
+from info_kierowca_notifier.browser import clicking
 
 
 class BrowserClickSafetyTests(unittest.TestCase):
     def test_shared_helpers_reject_sensitive_or_unrelated_controls(self):
-        js = auto_refresh_session.CLICKABLE_HELPERS_JS
+        js = clicking.CLICKABLE_HELPERS_JS
         for expected in (
             "tag === 'header'", "tag === 'footer'", "tag === 'nav'",
             "logo|footer|header|navigation|nav|language",
@@ -72,7 +73,7 @@ console.log(JSON.stringify({result: RESULT, clicked}));
         scenario = {"elements": elements, "label": label, "knownError": known_error}
         script = (
             "const SCENARIO = " + json.dumps(scenario, ensure_ascii=False) + ";\n" +
-            auto_refresh_session.CLICKABLE_HELPERS_JS + "\n" + harness
+            clicking.CLICKABLE_HELPERS_JS + "\n" + harness
         )
         completed = subprocess.run(
             ["node", "-e", script], check=True, capture_output=True, text=True
@@ -163,7 +164,7 @@ console.log(JSON.stringify({result: RESULT, clicked}));
         self.assertNotIn("cookie", output.lower())
 
     def test_sensitive_matched_text_is_redacted_before_returning_or_logging(self):
-        result = auto_refresh_session.sanitize_click_diagnostics(
+        result = clicking.sanitize_click_diagnostics(
             {
                 "clicked": True, "matched_text": "PKK 12345678901",
                 "page_url": "https://login.gov.pl/path?otp=123456",
@@ -175,7 +176,7 @@ console.log(JSON.stringify({result: RESULT, clicked}));
         self.assertEqual(result["href"], "https://login.gov.pl/next")
 
     def test_safe_matched_text_is_preserved(self):
-        result = auto_refresh_session.sanitize_click_diagnostics(
+        result = clicking.sanitize_click_diagnostics(
             {"clicked": True, "matched_text": "Aplikacja mObywatel"}
         )
         self.assertEqual(result["matched_text"], "Aplikacja mObywatel")

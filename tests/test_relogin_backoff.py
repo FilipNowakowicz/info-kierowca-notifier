@@ -99,19 +99,19 @@ class TriggerAutoRefreshBackoffTests(unittest.TestCase):
 
     def test_automatic_attempt_stops_during_persisted_cooldown(self):
         RetryBackoff(self.state_path).record_failure("authentication_timeout")
-        with patch("info_kierowca_notifier.notifier.auto_refresh_session.chrome_available") as available:
+        with patch("info_kierowca_notifier.notifier.chrome.chrome_available") as available:
             outcome = notifier.trigger_auto_refresh(self.logger, {})
         self.assertEqual(outcome, notifier.TRIGGER_BACKOFF_ACTIVE)
         available.assert_not_called()
 
     def test_manual_attempt_bypasses_persisted_cooldown(self):
         RetryBackoff(self.state_path).record_failure("authentication_timeout")
-        with patch("info_kierowca_notifier.notifier.auto_refresh_session.chrome_available", return_value=False):
+        with patch("info_kierowca_notifier.notifier.chrome.chrome_available", return_value=False):
             outcome = notifier.trigger_auto_refresh(self.logger, {}, force=True)
         self.assertEqual(outcome, notifier.TRIGGER_NO_BROWSER)
 
     def test_automatic_browser_failure_is_persisted(self):
-        with patch("info_kierowca_notifier.notifier.auto_refresh_session.chrome_available", return_value=False):
+        with patch("info_kierowca_notifier.notifier.chrome.chrome_available", return_value=False):
             outcome = notifier.trigger_auto_refresh(self.logger, {})
         self.assertEqual(outcome, notifier.TRIGGER_NO_BROWSER)
         state = RetryBackoff(self.state_path).state()
@@ -119,7 +119,7 @@ class TriggerAutoRefreshBackoffTests(unittest.TestCase):
         self.assertEqual(state["last_failure_reason"], "browser_unavailable")
 
     def test_automatic_launch_marks_helper_and_records_launch_failure(self):
-        with patch("info_kierowca_notifier.notifier.auto_refresh_session.chrome_available", return_value=True), patch.object(
+        with patch("info_kierowca_notifier.notifier.chrome.chrome_available", return_value=True), patch.object(
             notifier, "AUTO_REFRESH_SCRIPT", Path(__file__)
         ), patch("info_kierowca_notifier.notifier.shutil.which", return_value=None), patch(
             "info_kierowca_notifier.notifier.subprocess.Popen", side_effect=OSError("cannot launch")
@@ -132,7 +132,7 @@ class TriggerAutoRefreshBackoffTests(unittest.TestCase):
 
     def test_automatic_launch_passes_internal_automatic_marker(self):
         process = Mock()
-        with patch("info_kierowca_notifier.notifier.auto_refresh_session.chrome_available", return_value=True), patch.object(
+        with patch("info_kierowca_notifier.notifier.chrome.chrome_available", return_value=True), patch.object(
             notifier, "AUTO_REFRESH_SCRIPT", Path(__file__)
         ), patch("info_kierowca_notifier.notifier.shutil.which", return_value=None), patch(
             "info_kierowca_notifier.notifier.subprocess.Popen", return_value=process
@@ -143,7 +143,7 @@ class TriggerAutoRefreshBackoffTests(unittest.TestCase):
 
     def test_manual_launch_has_explicit_outcome(self):
         process = Mock()
-        with patch("info_kierowca_notifier.notifier.auto_refresh_session.chrome_available", return_value=True), patch.object(
+        with patch("info_kierowca_notifier.notifier.chrome.chrome_available", return_value=True), patch.object(
             notifier, "AUTO_REFRESH_SCRIPT", Path(__file__)
         ), patch("info_kierowca_notifier.notifier.subprocess.Popen", return_value=process):
             outcome = notifier.trigger_auto_refresh(self.logger, {}, force=True)
@@ -151,7 +151,7 @@ class TriggerAutoRefreshBackoffTests(unittest.TestCase):
 
     def test_manual_retry_never_terminates_live_relogin(self):
         self.lock_path.write_text("123", encoding="utf-8")
-        with patch("info_kierowca_notifier.notifier.auto_refresh_session.chrome_available", return_value=True), patch(
+        with patch("info_kierowca_notifier.notifier.chrome.chrome_available", return_value=True), patch(
             "info_kierowca_notifier.notifier.relogin_control.process_alive", return_value=True
         ) as kill, patch("info_kierowca_notifier.notifier.subprocess.Popen") as popen:
             outcome = notifier.trigger_auto_refresh(self.logger, {}, force=True)
@@ -163,7 +163,7 @@ class TriggerAutoRefreshBackoffTests(unittest.TestCase):
     def test_manual_retry_removes_dead_lock_before_launching(self):
         self.lock_path.write_text("123", encoding="utf-8")
         process = Mock()
-        with patch("info_kierowca_notifier.notifier.auto_refresh_session.chrome_available", return_value=True), patch.object(
+        with patch("info_kierowca_notifier.notifier.chrome.chrome_available", return_value=True), patch.object(
             notifier, "AUTO_REFRESH_SCRIPT", Path(__file__)
         ), patch("info_kierowca_notifier.notifier.shutil.which", return_value=None), patch(
             "info_kierowca_notifier.notifier.relogin_control.process_alive", return_value=False
@@ -175,7 +175,7 @@ class TriggerAutoRefreshBackoffTests(unittest.TestCase):
     def test_manual_retry_removes_malformed_lock_before_launching(self):
         self.lock_path.write_text("not-a-pid", encoding="utf-8")
         process = Mock()
-        with patch("info_kierowca_notifier.notifier.auto_refresh_session.chrome_available", return_value=True), patch.object(
+        with patch("info_kierowca_notifier.notifier.chrome.chrome_available", return_value=True), patch.object(
             notifier, "AUTO_REFRESH_SCRIPT", Path(__file__)
         ), patch("info_kierowca_notifier.notifier.shutil.which", return_value=None), patch(
             "info_kierowca_notifier.notifier.subprocess.Popen", return_value=process

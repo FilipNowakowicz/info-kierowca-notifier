@@ -28,11 +28,14 @@ import time
 import uuid
 from datetime import datetime
 
-from info_kierowca_notifier.auth import session as auto_refresh_session
 from info_kierowca_notifier.browser import cdp as cdp_client
+from info_kierowca_notifier.browser.clicking import (
+    CLICKABLE_HELPERS_JS,
+    sanitize_click_diagnostics,
+)
+from info_kierowca_notifier.browser.chrome import find_chrome
 from info_kierowca_notifier import ntfy_transport
 from info_kierowca_notifier.booking import transaction as rt
-from info_kierowca_notifier.auth.session import find_chrome
 
 from info_kierowca_notifier.paths import CONFIG_FILE, RESCHEDULE_CONFIRM_COOLDOWN_FILE, STATE_DIR  # noqa: E402
 
@@ -98,7 +101,7 @@ def click_text_js(text):
     # Deliberately stricter than auth.session's chooser matching
     # (buttons/links only, shorter text cap) — see the module docstring — but
     # the clickability heuristic itself is the shared one.
-    return auto_refresh_session.CLICKABLE_HELPERS_JS + """
+    return CLICKABLE_HELPERS_JS + """
 (function(text) { return __ikw_clickByText(text, 'button, a, [role="button"]', false, false); })(%s)
 """ % json.dumps(text)
 
@@ -130,7 +133,7 @@ def select_slot_js(exam_label, time_str):
     # "Most specific" (shortest matching text) is preferred so a wrapping
     # container that happens to contain the whole date group's text isn't
     # picked over the actual row.
-    return auto_refresh_session.CLICKABLE_HELPERS_JS + """
+    return CLICKABLE_HELPERS_JS + """
 (function(examLabel, timeStr) {
   var all = document.querySelectorAll('button, a, [role="button"], [role="radio"], input[type="radio"], li, tr, div, span');
   var best = null;
@@ -164,7 +167,7 @@ def _poll_until_truthy(host, port, js, timeout=20, target=None):
             result = cdp_client.evaluate_in_page(host, port, js, target=target)
             if result is True or (isinstance(result, dict) and result.get("clicked")):
                 if isinstance(result, dict):
-                    result = auto_refresh_session.sanitize_click_diagnostics(result)
+                    result = sanitize_click_diagnostics(result)
                     print(
                         "browser click result "
                         f"label={result.get('requested_label')!r} "
@@ -203,7 +206,7 @@ def click_enabled_button_js(text):
     # button labels are short, specific, and known exactly from screenshots,
     # and an exact match is the safer choice given what CONFIRM_SUMMARY_TEXT
     # actually does.
-    return auto_refresh_session.CLICKABLE_HELPERS_JS + """
+    return CLICKABLE_HELPERS_JS + """
 (function(text) { return __ikw_clickByText(text, 'button, [role="button"]', true, true); })(%s)
 """ % json.dumps(text)
 
