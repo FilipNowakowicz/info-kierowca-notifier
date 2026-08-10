@@ -17,7 +17,7 @@ Two live sources, both read-only GETs to info-kierowca.pl:
      which returns e.g. {"DrivingLicense":["Am","A1",...,"B",...], ...}.
 
   2. The *numeric ids* the exam-search endpoint actually wants
-     (organizationId + `category`, see notifier.SEARCH_URL) are NOT served
+     (organizationId + `category`, see client.SEARCH_URL) are NOT served
      by any dictionary endpoint — the frontend hardcodes them as an enum in
      its JS bundle. That enum is mirrored below as CODE_TO_ID. If
      info-kierowca.pl ever adds a category, this map is where to update it:
@@ -27,14 +27,14 @@ Two live sources, both read-only GETs to info-kierowca.pl:
 Nothing is sent anywhere except info-kierowca.pl itself.
 """
 import json
-from info_kierowca_notifier import notifier
-from info_kierowca_notifier.paths import CATEGORIES_FILE
+from info_kierowca_notifier import client
+from info_kierowca_notifier.paths import CATEGORIES_FILE, SESSION_FILE
 
 # Applications-service base (from the site's /assets/config.json
 # `applicationApiUrl`), where the licence-category dictionary lives. Note this
 # is a *different* base from fetch_word_centers.py's `dictionaryApiUrl`
 # (/bknd/config/api/v1) — the category catalog is served by Applications.
-GROUPS_URL = f"{notifier.BASE}/bknd/Applications/api/v1/dictionary/licence-category-groups"
+GROUPS_URL = f"{client.BASE}/bknd/Applications/api/v1/dictionary/licence-category-groups"
 OUTPUT_FILE = CATEGORIES_FILE
 
 # Code -> numeric id the exam-search API expects. Mirrored verbatim from the
@@ -67,7 +67,7 @@ GLOSS = {
 def _live_codes(session):
     """Return the set of category codes the site currently offers, or None."""
     try:
-        status, body, _ = notifier.do_request(GROUPS_URL, session, method="GET")
+        status, body, _ = client.do_request(GROUPS_URL, session, method="GET")
     except Exception as exc:
         print(f"  licence-category-groups request failed ({exc})")
         return None
@@ -90,9 +90,10 @@ def _live_codes(session):
 
 
 def main():
-    if not notifier.SESSION_FILE.exists():
-        raise SystemExit(f"No session.json at {notifier.SESSION_FILE} — log in first.")
-    session = notifier.load_json(notifier.SESSION_FILE)
+    if not SESSION_FILE.exists():
+        raise SystemExit(f"No session.json at {SESSION_FILE} — log in first.")
+    with open(SESSION_FILE) as f:
+        session = json.load(f)
 
     live = _live_codes(session)
     if live is None:

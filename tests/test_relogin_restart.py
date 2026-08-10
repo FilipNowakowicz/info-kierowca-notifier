@@ -4,7 +4,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from info_kierowca_notifier.auth import session as auto_refresh_session
-from info_kierowca_notifier import notifier
+from info_kierowca_notifier.auth import launch as auth_launch
 from info_kierowca_notifier.auth import relogin_control
 
 
@@ -30,9 +30,9 @@ class ReloginRestartTests(unittest.TestCase):
         self.lock = root / "auto-refresh.lock"
         self.request = root / "auto-refresh.restart"
         self.logger = Mock()
-        self.lock_patch = patch.object(notifier, "AUTO_REFRESH_LOCK", self.lock)
+        self.lock_patch = patch.object(auth_launch, "AUTO_REFRESH_LOCK", self.lock)
         self.request_patch = patch.object(
-            notifier, "AUTO_REFRESH_RESTART_REQUEST", self.request
+            auth_launch, "AUTO_REFRESH_RESTART_REQUEST", self.request
         )
         self.lock_patch.start()
         self.request_patch.start()
@@ -41,7 +41,7 @@ class ReloginRestartTests(unittest.TestCase):
 
     def restart(self, clock=None):
         clock = clock or FakeClock()
-        return notifier.restart_auto_refresh(
+        return auth_launch.restart_auto_refresh(
             self.logger, {}, timeout=0.3, clock=clock, wall_clock=clock,
             sleeper=clock.sleep
         )
@@ -49,11 +49,11 @@ class ReloginRestartTests(unittest.TestCase):
     def test_normal_retry_preserves_active_login(self):
         owner = relogin_control.ReloginOwner(123, "known-owner")
         relogin_control.write_lock(self.lock, owner)
-        with patch("info_kierowca_notifier.notifier.chrome.chrome_available", return_value=True), patch(
-            "info_kierowca_notifier.notifier.relogin_control.process_alive", return_value=True
-        ), patch("info_kierowca_notifier.notifier.subprocess.Popen") as popen:
-            outcome = notifier.trigger_auto_refresh(self.logger, {}, force=True)
-        self.assertEqual(outcome, notifier.TRIGGER_ALREADY_RUNNING)
+        with patch("info_kierowca_notifier.auth.launch.chrome.chrome_available", return_value=True), patch(
+            "info_kierowca_notifier.auth.launch.relogin_control.process_alive", return_value=True
+        ), patch("info_kierowca_notifier.auth.launch.subprocess.Popen") as popen:
+            outcome = auth_launch.trigger_auto_refresh(self.logger, {}, force=True)
+        self.assertEqual(outcome, auth_launch.TRIGGER_ALREADY_RUNNING)
         popen.assert_not_called()
         self.assertEqual(relogin_control.read_lock(self.lock), owner)
 
@@ -72,14 +72,14 @@ class ReloginRestartTests(unittest.TestCase):
             alive[0] = False
 
         clock.on_sleep = acknowledge
-        with patch("info_kierowca_notifier.notifier.chrome.chrome_available", return_value=True), patch(
-            "info_kierowca_notifier.notifier.relogin_control.process_alive", side_effect=lambda _pid: alive[0]
+        with patch("info_kierowca_notifier.auth.launch.chrome.chrome_available", return_value=True), patch(
+            "info_kierowca_notifier.auth.launch.relogin_control.process_alive", side_effect=lambda _pid: alive[0]
         ), patch(
-            "info_kierowca_notifier.notifier.trigger_auto_refresh",
-            return_value=notifier.TRIGGER_MANUAL_RETRY_LAUNCHED,
+            "info_kierowca_notifier.auth.launch.trigger_auto_refresh",
+            return_value=auth_launch.TRIGGER_MANUAL_RETRY_LAUNCHED,
         ) as launch:
             outcome = self.restart(clock)
-        self.assertEqual(outcome, notifier.TRIGGER_RESTART_LAUNCHED)
+        self.assertEqual(outcome, auth_launch.TRIGGER_RESTART_LAUNCHED)
         self.assertEqual(request_seen, [True])
         launch.assert_called_once_with(self.logger, {}, force=True, notify_phone=False)
         self.assertFalse(self.request.exists())
@@ -88,25 +88,25 @@ class ReloginRestartTests(unittest.TestCase):
         relogin_control.write_lock(
             self.lock, relogin_control.ReloginOwner(123, "dead-owner")
         )
-        with patch("info_kierowca_notifier.notifier.chrome.chrome_available", return_value=True), patch(
-            "info_kierowca_notifier.notifier.relogin_control.process_alive", return_value=False
+        with patch("info_kierowca_notifier.auth.launch.chrome.chrome_available", return_value=True), patch(
+            "info_kierowca_notifier.auth.launch.relogin_control.process_alive", return_value=False
         ), patch(
-            "info_kierowca_notifier.notifier.trigger_auto_refresh",
-            return_value=notifier.TRIGGER_MANUAL_RETRY_LAUNCHED,
+            "info_kierowca_notifier.auth.launch.trigger_auto_refresh",
+            return_value=auth_launch.TRIGGER_MANUAL_RETRY_LAUNCHED,
         ) as launch:
             outcome = self.restart()
-        self.assertEqual(outcome, notifier.TRIGGER_RESTART_LAUNCHED)
+        self.assertEqual(outcome, auth_launch.TRIGGER_RESTART_LAUNCHED)
         self.assertFalse(self.lock.exists())
         launch.assert_called_once()
 
     def test_malformed_lock_is_cleaned_before_restart_launch(self):
         self.lock.write_text("not a lock", encoding="utf-8")
-        with patch("info_kierowca_notifier.notifier.chrome.chrome_available", return_value=True), patch(
-            "info_kierowca_notifier.notifier.trigger_auto_refresh",
-            return_value=notifier.TRIGGER_MANUAL_RETRY_LAUNCHED,
+        with patch("info_kierowca_notifier.auth.launch.chrome.chrome_available", return_value=True), patch(
+            "info_kierowca_notifier.auth.launch.trigger_auto_refresh",
+            return_value=auth_launch.TRIGGER_MANUAL_RETRY_LAUNCHED,
         ) as launch:
             outcome = self.restart()
-        self.assertEqual(outcome, notifier.TRIGGER_RESTART_LAUNCHED)
+        self.assertEqual(outcome, auth_launch.TRIGGER_RESTART_LAUNCHED)
         self.assertFalse(self.lock.exists())
         launch.assert_called_once()
 
@@ -114,22 +114,22 @@ class ReloginRestartTests(unittest.TestCase):
         relogin_control.write_lock(
             self.lock, relogin_control.ReloginOwner(123, "stuck-owner")
         )
-        with patch("info_kierowca_notifier.notifier.chrome.chrome_available", return_value=True), patch(
-            "info_kierowca_notifier.notifier.relogin_control.process_alive", return_value=True
-        ), patch("info_kierowca_notifier.notifier.trigger_auto_refresh") as launch:
+        with patch("info_kierowca_notifier.auth.launch.chrome.chrome_available", return_value=True), patch(
+            "info_kierowca_notifier.auth.launch.relogin_control.process_alive", return_value=True
+        ), patch("info_kierowca_notifier.auth.launch.trigger_auto_refresh") as launch:
             outcome = self.restart()
-        self.assertEqual(outcome, notifier.TRIGGER_SHUTDOWN_FAILED)
+        self.assertEqual(outcome, auth_launch.TRIGGER_SHUTDOWN_FAILED)
         launch.assert_not_called()
         self.assertTrue(self.lock.exists())
         self.assertFalse(self.request.exists())
 
     def test_live_legacy_pid_lock_is_not_used_as_kill_authority(self):
         self.lock.write_text("123", encoding="utf-8")
-        with patch("info_kierowca_notifier.notifier.chrome.chrome_available", return_value=True), patch(
-            "info_kierowca_notifier.notifier.relogin_control.process_alive", return_value=True
-        ), patch("info_kierowca_notifier.notifier.trigger_auto_refresh") as launch:
+        with patch("info_kierowca_notifier.auth.launch.chrome.chrome_available", return_value=True), patch(
+            "info_kierowca_notifier.auth.launch.relogin_control.process_alive", return_value=True
+        ), patch("info_kierowca_notifier.auth.launch.trigger_auto_refresh") as launch:
             outcome = self.restart()
-        self.assertEqual(outcome, notifier.TRIGGER_RESTART_UNAVAILABLE)
+        self.assertEqual(outcome, auth_launch.TRIGGER_RESTART_UNAVAILABLE)
         launch.assert_not_called()
 
     def test_helper_only_accepts_its_own_restart_token(self):
@@ -160,10 +160,10 @@ class ReloginRestartTests(unittest.TestCase):
         owner = relogin_control.ReloginOwner(123, "stuck-owner")
         relogin_control.write_lock(self.lock, owner)
         clock = FakeClock()
-        with patch("info_kierowca_notifier.notifier.chrome.chrome_available", return_value=True), patch(
-            "info_kierowca_notifier.notifier.relogin_control.process_alive", return_value=True
+        with patch("info_kierowca_notifier.auth.launch.chrome.chrome_available", return_value=True), patch(
+            "info_kierowca_notifier.auth.launch.relogin_control.process_alive", return_value=True
         ):
-            self.assertEqual(self.restart(clock), notifier.TRIGGER_SHUTDOWN_FAILED)
+            self.assertEqual(self.restart(clock), auth_launch.TRIGGER_SHUTDOWN_FAILED)
         self.assertFalse(relogin_control.restart_requested(self.request, owner, clock=clock))
 
     def test_replacement_launch_failure_leaves_no_actionable_request(self):
@@ -177,12 +177,12 @@ class ReloginRestartTests(unittest.TestCase):
             alive[0] = False
 
         clock.on_sleep = acknowledge
-        with patch("info_kierowca_notifier.notifier.chrome.chrome_available", return_value=True), patch(
-            "info_kierowca_notifier.notifier.relogin_control.process_alive", side_effect=lambda _pid: alive[0]
+        with patch("info_kierowca_notifier.auth.launch.chrome.chrome_available", return_value=True), patch(
+            "info_kierowca_notifier.auth.launch.relogin_control.process_alive", side_effect=lambda _pid: alive[0]
         ), patch(
-            "info_kierowca_notifier.notifier.trigger_auto_refresh", return_value=notifier.TRIGGER_LAUNCH_FAILED
+            "info_kierowca_notifier.auth.launch.trigger_auto_refresh", return_value=auth_launch.TRIGGER_LAUNCH_FAILED
         ):
-            self.assertEqual(self.restart(clock), notifier.TRIGGER_LAUNCH_FAILED)
+            self.assertEqual(self.restart(clock), auth_launch.TRIGGER_LAUNCH_FAILED)
         self.assertFalse(self.request.exists())
 
     def test_owner_change_cancels_old_request_and_does_not_launch(self):
@@ -191,11 +191,11 @@ class ReloginRestartTests(unittest.TestCase):
         relogin_control.write_lock(self.lock, owner)
         clock = FakeClock()
         clock.on_sleep = lambda: relogin_control.write_lock(self.lock, replacement)
-        with patch("info_kierowca_notifier.notifier.chrome.chrome_available", return_value=True), patch(
-            "info_kierowca_notifier.notifier.relogin_control.process_alive", return_value=True
-        ), patch("info_kierowca_notifier.notifier.trigger_auto_refresh") as launch:
+        with patch("info_kierowca_notifier.auth.launch.chrome.chrome_available", return_value=True), patch(
+            "info_kierowca_notifier.auth.launch.relogin_control.process_alive", return_value=True
+        ), patch("info_kierowca_notifier.auth.launch.trigger_auto_refresh") as launch:
             outcome = self.restart(clock)
-        self.assertEqual(outcome, notifier.TRIGGER_SHUTDOWN_FAILED)
+        self.assertEqual(outcome, auth_launch.TRIGGER_SHUTDOWN_FAILED)
         self.assertFalse(self.request.exists())
         launch.assert_not_called()
 

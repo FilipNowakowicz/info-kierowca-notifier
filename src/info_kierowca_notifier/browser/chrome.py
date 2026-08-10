@@ -169,7 +169,7 @@ def find_chrome():
 
 def chrome_available():
     """Whether find_chrome() would succeed, without raising. Used by
-    notifier.trigger_auto_refresh()/trigger_open_browser() to detect a
+    auth.launch.trigger_auto_refresh()/booking.launch.trigger_open_browser() to detect a
     missing Chromium browser (e.g. a Mac with only Safari installed)
     synchronously, before spawning the detached subprocess whose own
     find_chrome() failure would otherwise be invisible — its stdout/stderr
@@ -180,5 +180,4 @@ def chrome_available():
         return True
     except SystemExit:
         return False
-
 

@@ -12,7 +12,7 @@ Run by hand:
     python -m info_kierowca_notifier.auth.session
 
 or invoked automatically by notifier.py (see trigger_auto_refresh() in
-notifier.py) whenever a check comes back auth_expired. A lock file at
+auth.launch) whenever a check comes back auth_expired. A lock file at
 ~/.local/state/info-kierowca-notifier/auto-refresh.lock stops it firing
 more than once concurrently — delete that file if a previous run crashed
 without cleaning up.
@@ -407,7 +407,7 @@ def main():
     signal.signal(signal.SIGTERM, _terminate)
 
     # stdout/stderr are redirected to a plain file (AUTO_REFRESH_LOG_FILE) when
-    # launched via notifier.trigger_auto_refresh(), which fully-buffers by
+    # launched via auth.launch.trigger_auto_refresh(), which fully-buffers by
     # default for a non-tty — without this, prints below (including
     # try_auto_click's failure logging) wouldn't actually land in the file
     # until the process exits, which could be hours into an unattended wait.

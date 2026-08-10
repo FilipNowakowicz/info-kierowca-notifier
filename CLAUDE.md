@@ -35,6 +35,8 @@ automation. Regenerate the static snapshots with `tools/fetch_word_centers.py` /
 
 - `src/info_kierowca_notifier/notifier.py` — the poller. Run standalone with `--loop`, or once per invocation (systemd
   oneshot service).
+  HTTP/session-cookie mechanics live in `src/info_kierowca_notifier/client.py`; detached helper
+  lifecycle lives in `auth/launch.py` and `booking/launch.py`.
   - Outcome vocabulary written to `status.json` via `update_status()`, and what
     `src/info_kierowca_notifier/web/server.py`'s frontend branches on: `slot_found`, `no_slot`, `auth_expired`,
     `network_error`, `unexpected`, `setup_incomplete`. `"outcome=unparseable"`/`"outcome=crash"`
@@ -43,7 +45,7 @@ automation. Regenerate the static snapshots with `tools/fetch_word_centers.py` /
     outcome). `no_chromium_browser` is an unrelated return value from
     `trigger_auto_refresh()`/`trigger_open_browser()` (browser-launch probing) — not a
     `run_check()`/`status.json` outcome at all.
-  - `network_error` (request never reached the server — `do_request` returns `status is None` on
+  - `network_error` (request never reached the server — `client.do_request` returns `status is None` on
     `URLError`) and `setup_incomplete` (no `config.json`; normal during first-run and right after
     Reset account, while the poll thread keeps ticking under the login screen) are both
     deliberately silent — no notification, no red state — so an outage or the login screen doesn't
@@ -62,7 +64,7 @@ automation. Regenerate the static snapshots with `tools/fetch_word_centers.py` /
     just an API detail: `src/info_kierowca_notifier/app.py`'s center picker enforces `MAX_CENTERS = 5` (a JS literal) and
     `build_config()` rejects more server-side too, both against `notifier.SEARCH_ORG_ID_COUNT` —
     update all three if the API's count ever moves.
-  - `fetch_pkk_profiles()`/`PKK_PROFILES_URL` (`GET /bknd/status/api/v1/pkk/get_profiles`, traced
+  - `client.fetch_pkk_profiles()`/`client.PKK_PROFILES_URL` (`GET /bknd/status/api/v1/pkk/get_profiles`, traced
     from the site's own `main-*.js` `pkkProfilesResource()`, confirmed live 2026-07-18) lets
     `src/info_kierowca_notifier/app.py`'s setup wizard prefill the PKK number and license category right after QR login
     instead of asking blind. Also returns `pesel`/`firstName`/`lastName`/`birthDate`, which are
@@ -144,12 +146,12 @@ automation. Regenerate the static snapshots with `tools/fetch_word_centers.py` /
   (`__ikw_isVisible`) and, among equal-length matches, prefers the deeper/more specific element
   (`querySelectorAll` document order would otherwise let a wrapping `<div>` win over its own label).
   Then waits **indefinitely** for you to scan the QR and captures cookies the moment they appear.
-  Auto-triggered by `src/info_kierowca_notifier/notifier.py` on `auth_expired` (`trigger_auto_refresh()`); guarded by a lock
+  Auto-triggered by `src/info_kierowca_notifier/notifier.py` on `auth_expired` (`auth.launch.trigger_auto_refresh()`); guarded by a lock
   file at `~/.local/state/info-kierowca-notifier/auto-refresh.lock` so it won't relaunch while
   one's already in flight. Disable via `auto_refresh_chrome: false` in `config.json`.
-  `trigger_auto_refresh()` launches it with stdout/stderr going to `paths.AUTO_REFRESH_LOG_FILE`
+  `auth.launch.trigger_auto_refresh()` launches it with stdout/stderr going to `paths.AUTO_REFRESH_LOG_FILE`
   (append mode) rather than `DEVNULL` — same rationale, and same separate-plain-file-not-`LOG_FILE`
-  reasoning, as `trigger_open_browser()`'s `RESCHEDULE_LOG_FILE` below: a detached, auto-triggered
+  reasoning, as `booking.launch.trigger_open_browser()`'s `RESCHEDULE_LOG_FILE` below: a detached, auto-triggered
   run's own `print()`s (which browser binary got picked, any exception inside `try_auto_click()`,
   which target it clicked) were previously unreachable. `main()` reconfigures stdout/stderr to
   line-buffered on startup so those prints actually land in the file promptly instead of sitting in
@@ -164,6 +166,8 @@ automation. Regenerate the static snapshots with `tools/fetch_word_centers.py` /
   `src/info_kierowca_notifier/auth/session.py`, and `src/info_kierowca_notifier/booking/reschedule.py` (cookie reads *and* writes via
   `Storage.getCookies`/`setCookies`, JS eval in the page, navigation, and registering a script to
   run on every future document via `Page.addScriptToEvaluateOnNewDocument`).
+- `src/info_kierowca_notifier/browser/chrome.py` and `browser/clicking.py` — shared Chrome discovery/lifecycle and
+  conservative click-safety primitives consumed by both auth and booking; neither module imports a domain flow.
 - `src/info_kierowca_notifier/booking/reschedule.py` — launches Chrome in its own dedicated profile (port `9555`, distinct
   from `src/info_kierowca_notifier/auth/session.py`'s and from a regular browsing profile) and injects the cookies
   already saved in `session.json` via `cdp_client.set_cookies()` before navigating to `/cases`, so
@@ -188,7 +192,7 @@ automation. Regenerate the static snapshots with `tools/fetch_word_centers.py` /
     disabled "Przejdź do podsumowania" button — nothing about the booking has changed. Goes no
     further by default: picking the new date, the summary step, and any confirm past that stay
     real clicks from you; no reservation/booking call happens in this file. Reuses `find_chrome()`
-    from `src/info_kierowca_notifier/auth/session.py` rather than duplicating it.
+    from `src/info_kierowca_notifier/browser/chrome.py` rather than duplicating it.
   - `--target-slot` is the one opt-in exception, gated behind config's experimental, default-off
     `auto_select_slot` flag (Settings → Automation toggle, off by default — hand-editing
     `config.json` still works too)
@@ -253,7 +257,7 @@ automation. Regenerate the static snapshots with `tools/fetch_word_centers.py` /
     told to check/update it by hand — this never guesses at a new date.
   - Two follow-up fixes address the auto-triggered path writing all its outcomes nowhere and being
     able to re-fire before a prior attempt's own outcome was even known:
-    - `notifier.trigger_open_browser()` launches this file with stdout/stderr going to
+    - `booking.launch.trigger_open_browser()` launches this file with stdout/stderr going to
       `paths.RESCHEDULE_LOG_FILE` (append mode) instead of `DEVNULL` — otherwise every `print()` in
       `try_select_target_slot()` is unreachable on the auto-triggered path (visible only when run by
       hand from a terminal); the log file makes it inspectable after the fact.
@@ -353,7 +357,7 @@ automation. Regenerate the static snapshots with `tools/fetch_word_centers.py` /
     (`{"ready": SESSION_FILE.exists(), "in_progress": auto_refresh_in_progress()}`) every 2s and
     redirects to `/` once ready.
   - Once `session.json` exists but `config.json` still doesn't, `/` renders the wizard with
-    `build_pkk_prefill()`'s result — calls `notifier.fetch_pkk_profiles()` and maps each profile's
+    `build_pkk_prefill()`'s result — calls `client.fetch_pkk_profiles()` and maps each profile's
     `categoryName` to a `categories.json` id via `pkk_category_id()`, dropping any that don't map
     rather than guessing (an emptied list falls back to today's plain manual fields with no
     special-casing needed). With prefill data, the wizard shows a linked "pkkNumber — category"
@@ -437,7 +441,7 @@ automation. Regenerate the static snapshots with `tools/fetch_word_centers.py` /
   needs a session (confirmed: 401 without cookies). Regenerate with `tools/fetch_word_centers.py`.
 - `tools/fetch_word_centers.py` — maintenance script, run by hand (using your own `session.json`) to
   refresh `word_centers.json` if info-kierowca.pl adds/renames/closes a center. Reuses
-  `notifier.BASE`/`SESSION_FILE`/`do_request()` rather than duplicating cookie/request logic.
+  `client.BASE`/`SESSION_FILE`/`client.do_request()` rather than duplicating cookie/request logic.
 - `categories.json` — static snapshot (id, code, label) of all 17 license categories (A=1 …
   B=5 … PT=17), used by the setup wizard's "License category" dropdown so the user picks "B — car"
   instead of the bare numeric id the API wants. The wizard also keeps an "Other — enter number"

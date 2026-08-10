@@ -8,7 +8,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 import info_kierowca_notifier.app as app
-from info_kierowca_notifier import notifier
+from info_kierowca_notifier import client, notifier
+from info_kierowca_notifier.booking import launch as booking_launch
 
 
 def payload(**overrides):
@@ -109,10 +110,10 @@ class SearchStartDateTests(unittest.TestCase):
             with patch.object(notifier, "CONFIG_FILE", config_file), \
                  patch.object(notifier, "SESSION_FILE", session_file), \
                  patch.object(notifier, "PAUSE_FILE", root / "pause"), \
-                 patch.object(notifier, "do_request", side_effect=request), \
+                 patch.object(client, "do_request", side_effect=request), \
                  patch.object(notifier, "datetime", FixedDateTime), \
                  patch.object(notifier, "build_search_organization_ids", return_value=[26] * 5), \
-                 patch.object(notifier, "trigger_open_browser"), \
+                 patch.object(booking_launch, "trigger_open_browser"), \
                  patch.object(notifier, "push_ntfy"):
                 status = {"paused": False}
                 notifier.run_check(logging.getLogger("test"), status)

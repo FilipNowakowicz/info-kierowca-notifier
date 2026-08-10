@@ -38,7 +38,7 @@ AUTO_REFRESH_RESTART_REQUEST = STATE_DIR / "auto-refresh.restart"
 RELOGIN_BACKOFF_FILE = STATE_DIR / "relogin-backoff.json"
 
 # Both added 2026-07-20 for booking.reschedule's experimental
-# auto_confirm_reschedule flow (see notifier.trigger_open_browser() and
+# auto_confirm_reschedule flow (see booking.launch.trigger_open_browser() and
 # booking.reschedule.try_select_target_slot()). RESCHEDULE_LOG_FILE is
 # separate from LOG_FILE rather than shared with it: that one's written via
 # a RotatingFileHandler from notifier.py's own process, and a detached
