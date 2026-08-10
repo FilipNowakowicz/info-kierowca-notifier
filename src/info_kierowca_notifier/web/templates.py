@@ -686,6 +686,14 @@ WIZARD_PAGE = """<!doctype html>
         <div class="hint">Required for automatic Profil Zaufany login: pairing lets the app read the one-time SMS code from Google Messages.</div>
         <button type="button" class="cat-more" id="settings-pair-messages">Pair Google Messages Web</button>
         <div class="hint" id="settings-messages-status"></div>
+        <div class="divider"></div>
+        <div class="toggle-row">
+          <div class="toggle-text">
+            <div class="tt-title">Run automatic Profil Zaufany login in the background</div>
+            <div class="tt-sub">Starts Chrome headlessly so no window pops up. Google Messages must already be paired.</div>
+          </div>
+          <div class="switch" id="headless_pz_login" role="switch" aria-checked="false" tabindex="0"></div>
+        </div>
       </div>
     </fieldset>
     <fieldset>
@@ -1055,6 +1063,7 @@ function applyNtfyDim() {
 }
 wireSwitch(phoneAlertsSwitch, applyNtfyDim);
 wireSwitch(phoneAlertsReloginSwitch, applyNtfyDim);
+wireSwitch(document.getElementById('headless_pz_login'));
 wireSwitch(document.getElementById('auto_open_browser'));
 
 // auto_confirm_reschedule requires auto_select_slot — dim/disable it (and
@@ -1466,6 +1475,7 @@ if (EXISTING_CONFIG) {
   setTimeWindow(EXISTING_CONFIG.earliest_slot_hour, EXISTING_CONFIG.latest_slot_hour);
   setSwitch(phoneAlertsSwitch, EXISTING_CONFIG.phone_alerts !== false);
   setSwitch(phoneAlertsReloginSwitch, EXISTING_CONFIG.phone_alerts_relogin !== false);
+  setSwitch(document.getElementById('headless_pz_login'), EXISTING_CONFIG.headless_pz_login === true);
   setSwitch(document.getElementById('auto_open_browser'), EXISTING_CONFIG.auto_open_browser !== false);
   setSwitch(autoSelectSlotSwitch, EXISTING_CONFIG.auto_select_slot === true);
   setSwitch(autoConfirmSwitch, EXISTING_CONFIG.auto_confirm_reschedule === true);
@@ -1572,6 +1582,7 @@ document.getElementById('form').addEventListener('submit', async (e) => {
       latest_slot_hour: parseInt(timeToHidden.value, 10),
       phone_alerts: switchOn('phone-alerts'),
       phone_alerts_relogin: switchOn('phone-alerts-relogin'),
+      headless_pz_login: switchOn('headless_pz_login'),
       auto_open_browser: switchOn('auto_open_browser'),
       auto_select_slot: switchOn('auto_select_slot'),
       auto_confirm_reschedule: switchOn('auto_confirm_reschedule'),

@@ -1,23 +1,46 @@
 # info-kierowca-notifier
 
-[Polski](README.pl.md) · [English](README.md)
+### Wolne terminy egzaminu na prawo jazdy — powiadomienia i automatyczna zmiana rezerwacji
 
-A slot checker for [info-kierowca.pl](https://info-kierowca.pl), the Polish driving exam booking
-portal. It watches for open exam slots and alerts you — on a dashboard and your phone — the moment
-one appears. Checking is always read-only. Optionally, if you already have a paid booking and want
-to move it earlier, it can also open a browser that's already logged in and click through to the
-reschedule date picker for you. By default, picking the new date and every confirm step after that
-is still a click you make yourself; nothing gets rebooked automatically. Two experimental,
-off-by-default toggles in Settings → Automation go further and can pick the matching slot and
-submit the reservation change with no clicks from you at all — see
-[How it works](#how-it-works) and [docs/ADVANCED.md](docs/ADVANCED.md) before turning those on.
+[Pełna dokumentacja po polsku](README.pl.md) · [English](README.md)
+
+**Po polsku:** Bezpłatna i otwartoźródłowa alternatywa dla aplikacji takich jak
+Złap Termin, PrawkoBot, PrawkoSniper, Szybki Egzamin i SzybkiePrawko. Wyszukuje
+wolne, wcześniejsze terminy egzaminu na prawo jazdy w WORD, wysyła powiadomienia
+i może automatycznie zmienić termin istniejącej rezerwacji w info-kierowca.pl.
+Działa na Twoim komputerze, bez abonamentu i przekazywania sesji zewnętrznemu
+operatorowi. Logujesz się raz przez Profil Zaufany, a kolejne logowania i
+odnawianie sesji odbywają się automatycznie.
+
+Find earlier Polish driving exam dates and automatically reschedule your existing booking on
+[info-kierowca.pl](https://info-kierowca.pl). Sign in once with Profil Zaufany, and the app keeps
+your session active, monitors your chosen exam centers, and alerts you on the dashboard and your
+phone when a suitable slot appears. If you already have a paid booking, you can either complete the
+date change yourself or enable automatic rebooking so the app selects the matching slot, verifies
+its details, and submits the change for you.
+
+## Features
+
+- **Sign in once:** Profil Zaufany login and session renewal can run automatically.
+- **Find the right slot:** monitor selected WORD centers, exam types, dates, and times.
+- **Get notified immediately:** see matches on the dashboard and receive optional phone alerts.
+- **Reschedule automatically:** let the app select, verify, and confirm an earlier matching slot.
+- **Keep control of your data:** credentials and session stay on your computer.
+- **Use it for free:** open source, MIT-licensed, and subscription-free.
+
+## Download
+
+| Windows | macOS | Linux |
+|---|---|---|
+| [Download `.exe`](../../releases/latest/download/info-kierowca-notifier-windows.exe) | [Download](../../releases/latest/download/info-kierowca-notifier-macos) | [Download](../../releases/latest/download/info-kierowca-notifier-linux) |
+
+[View all releases and release notes](../../releases)
 
 ![Dashboard showing a found slot](docs/dashboard.png)
 
 ## Get started
 
-1. Download the build for your OS from the [Releases page](../../releases) — no installer, no
-   Python install, nothing else gets set up on your machine.
+1. Download the build for your OS above — no installer or Python installation required.
 2. Run it. A browser tab opens automatically.
 3. Choose **Profil Zaufany** (recommended), enter your username and password, and pair Google
    Messages Web when prompted. This lets the app complete both the initial login and later
@@ -58,18 +81,18 @@ If you turn on the reschedule assist (on by default, toggle with `auto_open_brow
 slot also opens a Chrome window already logged in with your session, and clicks through to the
 "change date" screen for your existing booking. By default it stops there, on an empty date-range
 picker with nothing submitted — picking the new date and confirming is always done by you, by hand.
-Settings → Automation has two more toggles for this, both off by default: one pre-selects the
+Settings → Automation has two optional toggles for this, both off by default: one pre-selects the
 matching slot and reaches the summary screen, the other — requiring the first, and its own
 confirm dialog before it'll switch on — also confirms it, actually submitting the reservation
 change with no click from you at all. See [docs/ADVANCED.md](docs/ADVANCED.md) for exactly what
-each one clicks and why, and confirm the slot-selection step works reliably before ever turning
-on the second.
+each one clicks and the safeguards around the final change.
 
 The info-kierowca.pl session still expires after roughly an hour. With Profil Zaufany configured,
 the app starts refreshing it five minutes before the estimated expiry: it opens its dedicated
 Chrome profile, submits the securely stored credentials, reads the fresh PZePUAP verification
-code from the paired Google Messages Web tab, and restores the session automatically. With
-mObywatel selected, it waits for actual expiry, then opens the QR screen for you to scan. See
+code from the paired Google Messages Web tab, and restores the session automatically. Settings
+can run this browser headlessly so no window appears during automatic renewal. With mObywatel
+selected, it waits for actual expiry, then opens the QR screen for you to scan. See
 [Auto-relogin on session expiry](docs/ADVANCED.md#auto-relogin-on-session-expiry) for requirements,
 fallback behavior, and troubleshooting.
 

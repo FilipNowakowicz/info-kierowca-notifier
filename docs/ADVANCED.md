@@ -99,6 +99,7 @@ extra setup.
    | `phone_alerts` *(optional, default `true`)* | Whether a slot that beats your booked date sends a phone push at all. Set to `false` to just watch the dashboard silently; the dashboard's red/gray colouring and `auto_open_browser` still work. |
    | `phone_alerts_relogin` *(optional, default `true`)* | Whether login recovery may send a phone push. With mObywatel this asks for a QR scan; with Profil Zaufany it reports an automatic-login failure that needs attention. Independent of slot-alert pushes. |
    | `auto_refresh_chrome` *(optional, app-managed as `true`)* | Whether an `auth_expired` outcome should automatically launch `src/info_kierowca_notifier/auth/session.py` (see below). The app keeps this enabled: mObywatel reopens the QR screen, while Profil Zaufany logs in automatically. Advanced headless setups may set it to `false` directly to require manual relogin. |
+   | `headless_pz_login` *(optional, default `false`)* | Run automatic Profil Zaufany relogin in headless Chrome so no window appears. Google Messages Web must first be paired in the dedicated profile. This does not apply to the mObywatel QR flow. |
    | `auto_open_browser` *(optional, default `true`)* | Whether a found slot that beats your booked date should also launch `src/info_kierowca_notifier/booking/reschedule.py` (see [Reschedule assist](#reschedule-assist) below). Set to `false` to disable. |
 
    Slots are only ever considered within 31 days out — that's a hard line on info-kierowca.pl
@@ -218,10 +219,11 @@ launches the replacement. If shutdown cannot be confirmed, no second browser is 
 PID-only lock left by an older app version cannot be restarted this way; close that old Chrome
 window normally and retry.
 
-**A real desktop/GUI session is still required for both methods** because authentication runs in
-Chrome, even though Profil Zaufany needs no interaction once configured. If
-`info-kierowca-notifier.service` runs on a headless box or before a desktop login, disable
-automatic browser recovery (`auto_refresh_chrome: false`) and populate `session.json` manually.
+By default Chrome remains visible. Enable **Run automatic Profil Zaufany login in the background**
+in Settings (`headless_pz_login: true`) to run that flow without opening a window. Pair Google
+Messages Web in the dedicated profile first; pairing itself remains a visible, interactive step.
+mObywatel still requires a visible QR code. Headless Profil Zaufany can also run without a desktop
+session, although the OS credential vault and user service must still be available.
 
 For Profil Zaufany, keep the dedicated Chrome profile paired with Google Messages Web and leave
 the PZePUAP conversation available. Use **Pair Google Messages Web** in Settings after a
@@ -235,6 +237,7 @@ watcher process survives after the triggering oneshot `info-kierowca-notifier.se
 systemd default). `systemd-run --user` needs the same graphical-session environment
 (`DISPLAY`/`WAYLAND_DISPLAY`) imported into your systemd user manager that any GUI app launched
 from a `systemd --user` unit would need; most desktop environments do this automatically at login.
+Headless Profil Zaufany relogin does not require those display variables.
 If Chrome never appears, check `journalctl --user -u info-kierowca-auto-refresh -n 20 --no-pager`.
 
 ## Reschedule assist
@@ -253,9 +256,9 @@ It launches Chrome in its own dedicated profile (a separate `--remote-debugging-
 opens straight into `/cases` already logged in, and suppresses the cookie-consent banner by
 pre-setting the same cookie the real banner would write on "necessary only". It then clicks
 "Zmień termin" on your booking, then "Zmień termin rezerwacji" in the confirm modal that opens —
-and stops there, on the date-range picker, with nothing about the booking changed yet. Picking the
-actual new date, the summary step, and any final confirm past that are always real clicks from
-you; no code in this project selects a date or submits a reservation change on its own.
+and, with the default settings, stops there on the date-range picker with nothing about the booking
+changed yet. You can finish the change manually or enable the options below to select and confirm
+the matching slot automatically.
 
 Skipped automatically if something's already listening on its debug port (`9555`), so a slot that
 keeps reappearing under a new signature won't pile up duplicate Chrome windows. Disable with
@@ -266,7 +269,7 @@ that's already `Potwierdzony` (confirmed) — if you don't have one, there's not
 this to click, and it'll just report that it couldn't find the button. The app reschedules the
 booking you already hold; it cannot create a new one.
 
-### Experimental: auto-selecting the matching slot and reaching the summary screen
+### Auto-selecting the matching slot and reaching the summary screen
 
 Turn on "Auto-select the matching slot" in Settings → Automation (or add `"auto_select_slot": true`
 to `config.json` by hand) to go further: after landing on the empty date-range picker, it also expands the date group that
@@ -279,11 +282,10 @@ With just this flag on, it stops there, unconditionally, on the summary/review s
 that click is automated, whether or not a matching slot was found (someone else may have taken it
 in the few seconds since the check that triggered this).
 
-**This is unverified.** It was written from screenshots of the picker, not confirmed against the
-live DOM the way the rest of this flow was, so treat it as experimental until you've watched it
-select the right row and reach the summary screen yourself. Off by default for exactly that reason.
+This option is off by default, so enabling it is an explicit choice to go beyond the manual
+reschedule-assist workflow.
 
-### Experimental: auto-confirming the reservation change
+### Auto-confirming the reservation change
 
 The summary screen (the "Potwierdź wybrany egzamin" modal — exam type, category, date/time, and
 price, with no separate payment step) has its own confirm button, "Potwierdź i przejdź dalej".
@@ -303,9 +305,8 @@ screen for you to finish by hand instead of guessing.
 
 **This is the single highest-stakes automated action in this project.** Every earlier step in the
 reschedule flow can be undone just by closing the Chrome window; this one can't — it submits a real
-change to an already-paid exam booking. It's unverified against the live DOM (written from a
-screenshot, like the slot-selection step above) and off by default for exactly that reason. Don't
-turn it on until you've confirmed the slot-selection step alone works correctly and reliably first.
+change to an already-paid exam booking. It remains off by default and requires an explicit
+confirmation when you enable it.
 
 After clicking confirm, it also reloads `/cases` and checks whether the booking now actually shows
 your slot with a confirmed status. If — and only if — that check succeeds, it updates

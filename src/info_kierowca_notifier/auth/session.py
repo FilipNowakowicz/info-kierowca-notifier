@@ -62,6 +62,22 @@ DEFAULT_URL = "https://info-kierowca.pl/login"
 DEFAULT_TIMEOUT = None
 
 
+def authentication_chrome_args(port, profile_dir, *, headless=False):
+    """Build the dedicated authentication-browser command-line arguments."""
+    # Smaller widths can make the login page replace its QR image with a
+    # numeric backup code, so preserve a desktop-sized viewport in both modes.
+    args = [
+        *chrome_debugging_args(port, profile_dir),
+        "--no-first-run",
+        "--no-default-browser-check",
+        "--window-size=900,850",
+        "--app=about:blank",
+    ]
+    if headless:
+        args.append("--headless=new")
+    return args
+
+
 # The login click-path: info-kierowca.pl -> (maybe) "Zaloguj się" -> a PWPW
 # identity-provider chooser with a "gov.pl" tile -> a login.gov.pl chooser
 # with an "Aplikacja mObywatel" tile -> QR code. Checked in this order (most
@@ -431,6 +447,10 @@ def main():
         except Exception:
             config = {}
         login_method = config.get("login_method", "mobywatel")
+        headless = (
+            login_method == "profil_zaufany"
+            and config.get("headless_pz_login", False)
+        )
         password = None
         if login_method == "profil_zaufany":
             username, password = load_pz_credentials(config)
@@ -445,19 +465,7 @@ def main():
             chrome_proc = subprocess.Popen(
                 [
                 chrome,
-                *chrome_debugging_args(args.port, PROFILE_DIR),
-                "--no-first-run",
-                "--no-default-browser-check",
-                # Both 460px and 600px wide clipped the login page below
-                # whatever breakpoint swaps its QR image for a plain numeric
-                # backup code (confirmed live 2026-07-22, twice). There's no
-                # real reason to keep this narrow/phone-ish — it's a login
-                # page in a desktop browser, not a phone screen — so this
-                # goes well past any plausible responsive breakpoint
-                # (common ones sit around 480/600/768px) instead of tuning
-                # the width by trial and error again.
-                "--window-size=900,850",
-                "--app=about:blank",
+                *authentication_chrome_args(args.port, PROFILE_DIR, headless=headless),
                 ],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,

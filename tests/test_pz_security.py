@@ -64,6 +64,25 @@ class PZSecurityTests(unittest.TestCase):
         self.assertNotIn('id="auto_refresh_chrome"', page)
         self.assertNotIn("Reopen Chrome to log back in", page)
 
+    def test_headless_pz_login_is_opt_in_and_rendered_in_settings(self):
+        config = app.build_config(self.payload())
+        self.assertFalse(config["headless_pz_login"])
+        submitted = self.payload()
+        submitted["headless_pz_login"] = True
+        config = app.build_config(submitted)
+        self.assertTrue(config["headless_pz_login"])
+        page = app.render_wizard(config).decode()
+        self.assertIn('id="headless_pz_login"', page)
+        self.assertIn("EXISTING_CONFIG.headless_pz_login === true", page)
+
+    def test_headless_chrome_flag_is_opt_in(self):
+        headed = auto_refresh_session.authentication_chrome_args(9333, "/profile")
+        headless = auto_refresh_session.authentication_chrome_args(
+            9333, "/profile", headless=True
+        )
+        self.assertNotIn("--headless=new", headed)
+        self.assertIn("--headless=new", headless)
+
     def test_config_cannot_forge_credential_present_marker(self):
         submitted = self.payload()
         submitted["pz_credential_present"] = True
