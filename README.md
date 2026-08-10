@@ -1,8 +1,8 @@
-# info-kierowca-notifier
+# Info-Kierowca Notifier — wolne terminy egzaminu na prawo jazdy
 
-### Wolne terminy egzaminu na prawo jazdy — powiadomienia i automatyczna zmiana rezerwacji
+### Powiadomienia i automatyczna zmiana rezerwacji
 
-[Pełna dokumentacja po polsku](README.pl.md) · [English](README.md)
+[Pełna dokumentacja po polsku](README.pl.md) · English
 
 **Po polsku:** Bezpłatna i otwartoźródłowa alternatywa dla aplikacji takich jak
 Złap Termin, PrawkoBot, PrawkoSniper, Szybki Egzamin i SzybkiePrawko. Wyszukuje
