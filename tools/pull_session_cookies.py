@@ -34,7 +34,7 @@ launching Chrome and running this script by hand.
 """
 import argparse
 
-import cdp_client
+from info_kierowca_notifier.browser import cdp as cdp_client
 
 
 def main():

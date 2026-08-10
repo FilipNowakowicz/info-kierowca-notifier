@@ -3,8 +3,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock
 
-import app
-import credential_store
+import info_kierowca_notifier.app as app
+from info_kierowca_notifier.auth import credentials as credential_store
 
 
 class Store:

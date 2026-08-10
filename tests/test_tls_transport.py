@@ -11,7 +11,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from unittest import mock
 
-import tls_transport
+from info_kierowca_notifier import tls_transport
 
 
 class _OKHandler(BaseHTTPRequestHandler):
@@ -403,7 +403,7 @@ class TLSSourcePolicyTests(unittest.TestCase):
             "CERT_NONE",
             "check_hostname = False",
         )
-        for path in [*root.glob("*.py"), *root.glob("tests/*.py")]:
+        for path in [*root.glob("src/**/*.py"), *root.glob("tools/*.py"), *root.glob("tests/*.py")]:
             if path == Path(__file__):
                 continue
             source = path.read_text(encoding="utf-8")

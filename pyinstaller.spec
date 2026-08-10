@@ -2,21 +2,22 @@
 """PyInstaller spec for the single-file, no-console info-kierowca-notifier app.
 
 Build with: pyinstaller pyinstaller.spec
-(equivalent to `pyinstaller --onefile --windowed --name info-kierowca-notifier app.py`,
+(equivalent to `pyinstaller --onefile --windowed --name info-kierowca-notifier src/info_kierowca_notifier/app.py`,
 kept as a spec file so the release workflow and any manual build use identical
 settings on every platform.)
 """
 from PyInstaller.utils.hooks import collect_data_files
 
 a = Analysis(
-    ["app.py"],
-    pathex=[],
+    ["src/info_kierowca_notifier/app.py"],
+    pathex=["src"],
     binaries=[],
-    # word_centers.json / categories.json are loaded at runtime via
-    # Path(__file__).parent — PyInstaller only auto-bundles Python imports, so these
-    # data files need listing explicitly or the wizard silently ends up with an empty
-    # center list / a categories dropdown missing everything but the B fallback.
-    datas=[("word_centers.json", "."), ("categories.json", ".")] + collect_data_files("certifi"),
+    # The snapshots are package data. PyInstaller does not infer non-Python
+    # resources, so preserve their installed package-relative paths explicitly.
+    datas=[
+        ("src/info_kierowca_notifier/data/word_centers.json", "info_kierowca_notifier/data"),
+        ("src/info_kierowca_notifier/data/categories.json", "info_kierowca_notifier/data"),
+    ] + collect_data_files("certifi"),
     hiddenimports=[
         "truststore", "certifi", "keyring.backends.Windows",
         "keyring.backends.macOS", "keyring.backends.SecretService",

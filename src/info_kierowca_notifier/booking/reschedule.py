@@ -5,7 +5,7 @@ step entirely.
 
 Run by hand:
 
-    python open_logged_in_browser.py
+    python -m info_kierowca_notifier.booking.reschedule
 
 Uses a dedicated throwaway profile (separate from your regular browsing and
 from auto_refresh_session.py's own profile) so it never fights over a
@@ -28,13 +28,13 @@ import time
 import uuid
 from datetime import datetime
 
-import auto_refresh_session
-import cdp_client
-import ntfy_transport
-import reschedule_transaction as rt
-from auto_refresh_session import find_chrome
+from info_kierowca_notifier.auth import session as auto_refresh_session
+from info_kierowca_notifier.browser import cdp as cdp_client
+from info_kierowca_notifier import ntfy_transport
+from info_kierowca_notifier.booking import transaction as rt
+from info_kierowca_notifier.auth.session import find_chrome
 
-from paths import CONFIG_FILE, RESCHEDULE_CONFIRM_COOLDOWN_FILE, STATE_DIR  # noqa: E402
+from info_kierowca_notifier.paths import CONFIG_FILE, RESCHEDULE_CONFIRM_COOLDOWN_FILE, STATE_DIR  # noqa: E402
 
 PROFILE_DIR = STATE_DIR / "chrome-reschedule-profile"
 
@@ -599,14 +599,14 @@ def main():
     if not cdp_client.SESSION_FILE.exists():
         raise SystemExit(
             f"No session found at {cdp_client.SESSION_FILE} — log in first "
-            "(see auto_refresh_session.py or pull_session_cookies.py)."
+            "(see the login flow or tools/pull_session_cookies.py)."
         )
     session = json.loads(cdp_client.SESSION_FILE.read_text())
     cookies = session.get("cookies", {})
     missing = cdp_client.COOKIE_NAMES - cookies.keys()
     if missing:
         raise SystemExit(
-            f"session.json is missing {sorted(missing)} — run auto_refresh_session.py "
+            f"session.json is missing {sorted(missing)} — run the login flow "
             "to log in again."
         )
 

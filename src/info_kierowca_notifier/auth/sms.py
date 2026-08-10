@@ -6,7 +6,7 @@ from datetime import datetime
 from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 
-import cdp_client
+from info_kierowca_notifier.browser import cdp as cdp_client
 
 MESSAGES_URL = "https://messages.google.com/web"
 OTP_RE = re.compile(r"\b(\d{8})\b")

@@ -1,6 +1,6 @@
 import unittest
 
-import notifier
+from info_kierowca_notifier import notifier
 
 
 class ProactiveReloginTests(unittest.TestCase):

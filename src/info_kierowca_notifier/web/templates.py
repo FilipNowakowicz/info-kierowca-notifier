@@ -6,7 +6,7 @@ bulk of that file's line count. app.py still owns all rendering logic
 dashboard_server.PAGE, etc.) — this module only holds the literal strings.
 """
 
-from localization import LOCALIZATION_SCRIPT
+from info_kierowca_notifier.web.localization import LOCALIZATION_SCRIPT
 
 TOOLBAR_HTML = """
 <style>

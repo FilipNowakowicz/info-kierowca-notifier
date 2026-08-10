@@ -2,11 +2,11 @@ import json
 import unittest
 from unittest.mock import patch
 
-import app
-import auto_refresh_session
-import cdp_client
-import credential_store
-import templates
+import info_kierowca_notifier.app as app
+from info_kierowca_notifier.auth import session as auto_refresh_session
+from info_kierowca_notifier.browser import cdp as cdp_client
+from info_kierowca_notifier.auth import credentials as credential_store
+from info_kierowca_notifier.web import templates
 
 
 class PZSecurityTests(unittest.TestCase):
@@ -105,9 +105,9 @@ class PZSecurityTests(unittest.TestCase):
             calls.append((req_id, method, params))
             if method == "Runtime.evaluate": return {"result": {"objectId": "global"}}
             return {"result": {"value": True}}
-        with patch("cdp_client.get_page_target", return_value=target), \
-             patch("cdp_client.cdp_socket") as socket_context, \
-             patch("cdp_client.cdp_call", side_effect=fake_call):
+        with patch("info_kierowca_notifier.browser.cdp.get_page_target", return_value=target), \
+             patch("info_kierowca_notifier.browser.cdp.cdp_socket") as socket_context, \
+             patch("info_kierowca_notifier.browser.cdp.cdp_call", side_effect=fake_call):
             socket_context.return_value.__enter__.return_value = object()
             cdp_client.call_function_in_target("h", 1, target, "function(password){return true}", ["SUPER_SECRET_PZ_PASSWORD_123"])
         call = calls[-1][2]

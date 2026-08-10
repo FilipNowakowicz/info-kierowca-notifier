@@ -1,9 +1,9 @@
 import io
 import logging
 import unittest
-import auth_providers
-from auth_providers import AuthenticationFailure, PZState, ProfilZaufanyProvider
-from sms_provider import SMSResult
+from info_kierowca_notifier.auth import providers as auth_providers
+from info_kierowca_notifier.auth.providers import AuthenticationFailure, PZState, ProfilZaufanyProvider
+from info_kierowca_notifier.auth.sms import SMSResult
 
 
 class FakeClock:
@@ -136,7 +136,7 @@ class PZAuthenticationTests(unittest.TestCase):
             "profil_zaufany_inactive",
         )
     def test_auth_target_disappears(self):
-        import cdp_client
+        from info_kierowca_notifier.browser import cdp as cdp_client
         self.assertEqual(self.reason(FakeBrowser(form=cdp_client.StaleTargetError("gone"))), "auth_target_lost")
     def test_browser_closing(self): self.assertEqual(self.reason(FakeBrowser(closed=True)), "browser_closed")
     def test_redirect_timeout(self): self.assertEqual(self.reason(FakeBrowser(redirect=None)), "auth_redirect_timeout")
@@ -170,23 +170,23 @@ class OriginTests(unittest.TestCase):
         self.assertFalse(auth_providers.allowed_pz_origin("https://notpz.gov.pl/x"))
 
     def test_credentials_and_otp_are_never_injected_on_unexpected_origin(self):
-        import cdp_client
+        from info_kierowca_notifier.browser import cdp as cdp_client
         from unittest.mock import Mock, patch
         target = cdp_client.PageTarget("auth", "https://unrelated.example/", "", "ws")
         browser = auth_providers.CDPProfilZaufanyBrowser("h", 1, target, Mock(), "https://info-kierowca.pl/login")
-        with patch("auth_providers.cdp_client.get_page_target", return_value=target), \
-             patch("auth_providers.cdp_client.call_function_in_target") as call:
+        with patch("info_kierowca_notifier.auth.providers.cdp_client.get_page_target", return_value=target), \
+             patch("info_kierowca_notifier.auth.providers.cdp_client.call_function_in_target") as call:
             self.assertRaises(AuthenticationFailure, browser.submit_credentials, "user", "secret")
             self.assertRaises(AuthenticationFailure, browser.enter_otp, "87654321")
             call.assert_not_called()
 
     def test_identity_provider_uses_live_gov_card_on_explicit_auth_target(self):
-        import cdp_client
+        from info_kierowca_notifier.browser import cdp as cdp_client
         from unittest.mock import Mock, patch
         target = cdp_client.PageTarget("auth", "https://info-kierowca.pl/login", "", "ws")
         browser = auth_providers.CDPProfilZaufanyBrowser("h", 1, target, Mock(), target.url)
-        with patch("auth_providers.cdp_client.get_page_target", return_value=target), \
-             patch("auth_providers.cdp_client.call_function_in_target", return_value={"clicked": True}) as call:
+        with patch("info_kierowca_notifier.auth.providers.cdp_client.get_page_target", return_value=target), \
+             patch("info_kierowca_notifier.auth.providers.cdp_client.call_function_in_target", return_value={"clicked": True}) as call:
             self.assertEqual(browser.select_identity_provider(), {"clicked": True})
         self.assertEqual(call.call_args.args[2].id, "auth")
         self.assertIn("mat-card.auth-card", call.call_args.args[3])
@@ -198,14 +198,14 @@ class OriginTests(unittest.TestCase):
         self.assertIn("var root=form || document", auth_providers.SUBMIT_CREDENTIALS_FUNCTION)
 
     def test_credentials_are_typed_into_the_retained_auth_target(self):
-        import cdp_client
+        from info_kierowca_notifier.browser import cdp as cdp_client
         from unittest.mock import Mock, call, patch
         target = cdp_client.PageTarget("auth", "https://pz.gov.pl/ui/au/login", "", "ws")
         browser = auth_providers.CDPProfilZaufanyBrowser("h", 1, target, Mock(), target.url)
-        with patch("auth_providers.cdp_client.get_page_target", return_value=target), \
-             patch("auth_providers.cdp_client.call_function_in_target",
+        with patch("info_kierowca_notifier.auth.providers.cdp_client.get_page_target", return_value=target), \
+             patch("info_kierowca_notifier.auth.providers.cdp_client.call_function_in_target",
                    side_effect=["ready", "ready", "submitted"]), \
-             patch("auth_providers.cdp_client.insert_text_in_target") as insert:
+             patch("info_kierowca_notifier.auth.providers.cdp_client.insert_text_in_target") as insert:
             browser.submit_credentials("FilipNowakowicz", "secret")
         self.assertEqual(insert.call_args_list, [
             call("h", 1, target, "FilipNowakowicz"),
@@ -213,21 +213,21 @@ class OriginTests(unittest.TestCase):
         ])
 
     def test_otp_is_typed_and_verified_in_the_retained_auth_target(self):
-        import cdp_client
+        from info_kierowca_notifier.browser import cdp as cdp_client
         from unittest.mock import Mock, patch
         target = cdp_client.PageTarget("auth", "https://pz.gov.pl/ui/au/login", "", "ws")
         browser = auth_providers.CDPProfilZaufanyBrowser("h", 1, target, Mock(), target.url)
-        with patch("auth_providers.cdp_client.get_page_target", return_value=target), \
-             patch("auth_providers.cdp_client.call_function_in_target",
+        with patch("info_kierowca_notifier.auth.providers.cdp_client.get_page_target", return_value=target), \
+             patch("info_kierowca_notifier.auth.providers.cdp_client.call_function_in_target",
                    side_effect=["ready", "ready", "submitted"]), \
-             patch("auth_providers.cdp_client.insert_text_in_target") as insert:
+             patch("info_kierowca_notifier.auth.providers.cdp_client.insert_text_in_target") as insert:
             browser.enter_otp("87654321")
             browser.confirm_otp("87654321")
         insert.assert_called_once_with("h", 1, target, "87654321")
         self.assertIn("i.value !== code", auth_providers.SUBMIT_OTP_FUNCTION)
 
     def test_live_no_profile_alert_url_is_classified_without_waiting(self):
-        import cdp_client
+        from info_kierowca_notifier.browser import cdp as cdp_client
         from unittest.mock import Mock, patch
         target = cdp_client.PageTarget(
             "auth",
@@ -235,35 +235,35 @@ class OriginTests(unittest.TestCase):
             "", "ws",
         )
         browser = auth_providers.CDPProfilZaufanyBrowser("h", 1, target, Mock(), target.url)
-        with patch("auth_providers.cdp_client.get_page_target", return_value=target), \
-             patch("auth_providers.cdp_client.call_function_in_target") as evaluate:
+        with patch("info_kierowca_notifier.auth.providers.cdp_client.get_page_target", return_value=target), \
+             patch("info_kierowca_notifier.auth.providers.cdp_client.call_function_in_target") as evaluate:
             self.assertEqual(browser.redirect_status(), "no_valid_profile")
         evaluate.assert_not_called()
 
     def test_profil_chooser_waits_during_allowed_cross_origin_navigation(self):
-        import cdp_client
+        from info_kierowca_notifier.browser import cdp as cdp_client
         from unittest.mock import Mock, patch
         target = cdp_client.PageTarget("auth", "https://info-kierowca.pl/login", "", "ws")
         browser = auth_providers.CDPProfilZaufanyBrowser("h", 1, target, Mock(), target.url)
-        with patch("auth_providers.cdp_client.get_page_target", return_value=target), \
-             patch("auth_providers.cdp_client.call_function_in_target") as call:
+        with patch("info_kierowca_notifier.auth.providers.cdp_client.get_page_target", return_value=target), \
+             patch("info_kierowca_notifier.auth.providers.cdp_client.call_function_in_target") as call:
             self.assertIsNone(browser.select_profil_zaufany())
             call.assert_not_called()
 
     def test_identity_provider_waits_for_initial_target_navigation(self):
-        import cdp_client
+        from info_kierowca_notifier.browser import cdp as cdp_client
         from unittest.mock import Mock, patch
         target = cdp_client.PageTarget("auth", "chrome://newtab/", "", "ws")
         browser = auth_providers.CDPProfilZaufanyBrowser(
             "h", 1, target, Mock(), "https://info-kierowca.pl/login"
         )
-        with patch("auth_providers.cdp_client.get_page_target", return_value=target), \
-             patch("auth_providers.cdp_client.call_function_in_target") as call:
+        with patch("info_kierowca_notifier.auth.providers.cdp_client.get_page_target", return_value=target), \
+             patch("info_kierowca_notifier.auth.providers.cdp_client.call_function_in_target") as call:
             self.assertIsNone(browser.select_identity_provider())
             call.assert_not_called()
 
         empty_target = cdp_client.PageTarget("auth", "", "", "ws")
-        with patch("auth_providers.cdp_client.get_page_target", return_value=empty_target), \
-             patch("auth_providers.cdp_client.call_function_in_target") as call:
+        with patch("info_kierowca_notifier.auth.providers.cdp_client.get_page_target", return_value=empty_target), \
+             patch("info_kierowca_notifier.auth.providers.cdp_client.call_function_in_target") as call:
             self.assertIsNone(browser.select_identity_provider())
             call.assert_not_called()

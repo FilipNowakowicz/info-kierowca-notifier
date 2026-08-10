@@ -3,31 +3,42 @@
 Slot checker for info-kierowca.pl (Polish driving exam booking). Polls two endpoints on a timer;
 on a matching hit it can also open a pre-authenticated browser and click through to the reschedule
 date-picker for your existing booking, but stops there — picking the new date and every confirm
-step past that is always a real click from you (see `open_logged_in_browser.py`). Runtime HTTPS
+step past that is always a real click from you (see `src/info_kierowca_notifier/booking/reschedule.py`). Runtime HTTPS
 trust uses `truststore` (Python 3.10+) and `certifi`; source runs install these from
 `pyproject.toml` with `uv sync`, while release binaries bundle both.
 
 ## Commands
 
 ```bash
-uv run python app.py                 # zero-setup entry point: loop thread + wizard/dashboard + auto-opens browser
-uv run python notifier.py --loop     # poller standalone, long-running (systemd oneshot omits --loop)
-uv run python notifier.py --interval 60   # fallback interval, only until config.json has poll_interval_seconds
+uv run python -m info_kierowca_notifier                 # zero-setup entry point: loop thread + wizard/dashboard + auto-opens browser
+uv run python -m info_kierowca_notifier.notifier --loop     # poller standalone, long-running (systemd oneshot omits --loop)
+uv run python -m info_kierowca_notifier.notifier --interval 60   # fallback interval, only until config.json has poll_interval_seconds
 uv run pyinstaller pyinstaller.spec  # build the single-file, no-console release binary
 ```
 
-Run `uv run python -m unittest discover -s tests -v` and `uv run python -m pyflakes *.py` before
+Run `uv run python -m unittest discover -s tests -v` and `uv run python -m pyflakes src tools tests` before
 changes are published; the live-site and frozen-build checks below remain important for browser
-automation. Regenerate the static snapshots with `fetch_word_centers.py` / `fetch_categories.py`.
+automation. Regenerate the static snapshots with `tools/fetch_word_centers.py` / `tools/fetch_categories.py`.
+
+## Repository layout
+
+- `src/info_kierowca_notifier/` — installable application package. The package root owns the
+  composed app, polling engine, paths, and the small TLS/ntfy helpers.
+- `auth/`, `browser/`, `booking/`, and `web/` — domain modules. Keep dependencies pointed from
+  app/orchestration toward these domains and from them toward shared browser/path infrastructure.
+- `src/info_kierowca_notifier/data/` — JSON snapshots bundled as package resources and PyInstaller data.
+- `tools/` — manually invoked maintenance and diagnostic utilities; these import the installed package.
+- `tests/` — intentionally flat because the filenames already identify domains and flat discovery works
+  consistently across supported Python versions.
 
 ## Files
 
-- `notifier.py` — the poller. Run standalone with `--loop`, or once per invocation (systemd
+- `src/info_kierowca_notifier/notifier.py` — the poller. Run standalone with `--loop`, or once per invocation (systemd
   oneshot service).
   - Outcome vocabulary written to `status.json` via `update_status()`, and what
-    `dashboard_server.py`'s frontend branches on: `slot_found`, `no_slot`, `auth_expired`,
+    `src/info_kierowca_notifier/web/server.py`'s frontend branches on: `slot_found`, `no_slot`, `auth_expired`,
     `network_error`, `unexpected`, `setup_incomplete`. `"outcome=unparseable"`/`"outcome=crash"`
-    are `notifier.py` log labels only, never actually written to `status.json` (an unparseable
+    are `src/info_kierowca_notifier/notifier.py` log labels only, never actually written to `status.json` (an unparseable
     response is reported as `unexpected`; a crash in `loop()` leaves `status.json` on its prior
     outcome). `no_chromium_browser` is an unrelated return value from
     `trigger_auto_refresh()`/`trigger_open_browser()` (browser-launch probing) — not a
@@ -48,20 +59,20 @@ automation. Regenerate the static snapshots with `fetch_word_centers.py` / `fetc
     confirmed live 2026-07-18). `build_search_organization_ids()` pads `config["organization_ids"]`
     to 5 with random real ids from `word_centers.json`; results from centers outside the config are
     discarded afterward, so which fillers land doesn't matter. This makes 5 a hard ceiling, not
-    just an API detail: `app.py`'s center picker enforces `MAX_CENTERS = 5` (a JS literal) and
+    just an API detail: `src/info_kierowca_notifier/app.py`'s center picker enforces `MAX_CENTERS = 5` (a JS literal) and
     `build_config()` rejects more server-side too, both against `notifier.SEARCH_ORG_ID_COUNT` —
     update all three if the API's count ever moves.
   - `fetch_pkk_profiles()`/`PKK_PROFILES_URL` (`GET /bknd/status/api/v1/pkk/get_profiles`, traced
     from the site's own `main-*.js` `pkkProfilesResource()`, confirmed live 2026-07-18) lets
-    `app.py`'s setup wizard prefill the PKK number and license category right after QR login
+    `src/info_kierowca_notifier/app.py`'s setup wizard prefill the PKK number and license category right after QR login
     instead of asking blind. Also returns `pesel`/`firstName`/`lastName`/`birthDate`, which are
     dropped — only `pkkNumber`/`categoryName` are kept, matching this project's minimal-footprint
     PII stance. Returns `[]` on any failure, so a fetch hiccup just falls back to manual entry.
-  - Poll interval is `config.json`'s `poll_interval_seconds` (set via `app.py`'s Settings),
+  - Poll interval is `config.json`'s `poll_interval_seconds` (set via `src/info_kierowca_notifier/app.py`'s Settings),
     re-read fresh every cycle by `configured_poll_interval()` and clamped to
     `[MIN_POLL_INTERVAL_SECONDS, MAX_POLL_INTERVAL_SECONDS]` = `[15, 1800]` — the 15s floor is a
     deliberate good-citizen limit, lowered from 60s by explicit user request. `loop()`'s `interval`
-    arg (from `--interval`/`app.py`'s `INTERVAL`) is only the fallback for before `config.json` has
+    arg (from `--interval`/`src/info_kierowca_notifier/app.py`'s `INTERVAL`) is only the fallback for before `config.json` has
     a `poll_interval_seconds` yet. Every wait also goes through `jittered_wait()`, which adds up to
     `POLL_JITTER_FRACTION` (15%) extra delay — never subtracted, so the effective cadence never
     beats what's configured — expressed as a fraction of the interval so the randomness scales with
@@ -77,33 +88,33 @@ automation. Regenerate the static snapshots with `fetch_word_centers.py` / `fetc
     `dash_status["next_check_at"]` (an absolute timestamp) before sleeping — this is what both
     dashboards' next-check countdown reads instead of re-deriving an estimate from the base
     interval, so the countdown shown is the *exact* resolved time, jitter included.
-  - `loop()` also takes a `wake_event` — `app.py`'s `/setup` handler sets it right after saving a
+  - `loop()` also takes a `wake_event` — `src/info_kierowca_notifier/app.py`'s `/setup` handler sets it right after saving a
     new `poll_interval_seconds` so the loop's current sleep (which could otherwise be up to the
     *old* interval long) is cut short immediately: the loop wakes, clears the event, re-checks, and
     recomputes `next_check_at` from the just-saved config. This replaced an earlier design where
     the `/setup` handler spawned a second, independent `run_check()` thread for the same "apply
     immediately" purpose — waking the one real loop thread instead removes the resulting race on
     `dash_status`/`status.json` between two threads checking concurrently.
-- `paths.py` — the single owner of every config/state file location (`CONFIG_FILE`, `SESSION_FILE`,
+- `src/info_kierowca_notifier/paths.py` — the single owner of every config/state file location (`CONFIG_FILE`, `SESSION_FILE`,
   `STATUS_FILE`, `PAUSE_FILE`, `AUTO_REFRESH_LOCK`, …). Imports nothing from the project so it can
-  sit at the bottom of the import graph; `notifier.py` re-exports the names it used to define, so
+  sit at the bottom of the import graph; `src/info_kierowca_notifier/notifier.py` re-exports the names it used to define, so
   `notifier.STATUS_FILE` and friends still resolve. These were previously re-spelled in six places
-  across five modules — the promise that a frozen build and a `python app.py` run share the same
+  across five modules — the promise that a frozen build and a `python -m info_kierowca_notifier` run share the same
   config/session/history holds only while every copy agrees, and a typo would have split state
   silently rather than failing loudly.
-- `dashboard_server.py` — stdlib HTTP server, binds `127.0.0.1:8787`, serves `status.json` state.
+- `src/info_kierowca_notifier/web/server.py` — stdlib HTTP server, binds `127.0.0.1:8787`, serves `status.json` state.
   History entries carry only the fastest hit (`{"seen_at", "fastest"}`), not the whole hits list —
   the only field either dashboard renders, and a busy check returning dozens of hits would
   otherwise be rewritten every cycle and re-parsed by the page every 5s. Entries written before
   that narrowing still carry `hits`; the page reads `entry.fastest || fastestOf(entry.hits)`, so
   don't drop that fallback while anyone's `status.json` predates it. The next-check countdown reads
-  `status.json`'s `next_check_at` directly (jitter already baked in — see `notifier.py` above):
+  `status.json`'s `next_check_at` directly (jitter already baked in — see `src/info_kierowca_notifier/notifier.py` above):
   `poll()` parses it into a page-level epoch-ms value, and `tickCountdown()` just diffs that against
   `Date.now()` every second — no client-side interval constant involved, so the display can't drift
   out of sync with a Settings-page interval change or the actual post-jitter wait.
-- `pull_session_cookies.py` — pulls session cookies from a running Chrome via remote-debugging
+- `tools/pull_session_cookies.py` — pulls session cookies from a running Chrome via remote-debugging
   port; writes them into `session.json`. Manual: you launch Chrome and log in first.
-- `auto_refresh_session.py` — launches Chrome (via `find_chrome()`: `CHROME_CANDIDATES` PATH names
+- `src/info_kierowca_notifier/auth/session.py` — launches Chrome (via `find_chrome()`: `CHROME_CANDIDATES` PATH names
   first, then `_chrome_from_macos_spotlight()`, then `CHROME_MAC_PATH`, then
   `_chrome_from_windows_registry()`, then `CHROME_WIN_PATHS`, then `EDGE_WIN_PATHS` last as the
   fallback for a Windows machine with no Chrome — preinstalled there, unlike Chrome). Both
@@ -133,7 +144,7 @@ automation. Regenerate the static snapshots with `fetch_word_centers.py` / `fetc
   (`__ikw_isVisible`) and, among equal-length matches, prefers the deeper/more specific element
   (`querySelectorAll` document order would otherwise let a wrapping `<div>` win over its own label).
   Then waits **indefinitely** for you to scan the QR and captures cookies the moment they appear.
-  Auto-triggered by `notifier.py` on `auth_expired` (`trigger_auto_refresh()`); guarded by a lock
+  Auto-triggered by `src/info_kierowca_notifier/notifier.py` on `auth_expired` (`trigger_auto_refresh()`); guarded by a lock
   file at `~/.local/state/info-kierowca-notifier/auto-refresh.lock` so it won't relaunch while
   one's already in flight. Disable via `auto_refresh_chrome: false` in `config.json`.
   `trigger_auto_refresh()` launches it with stdout/stderr going to `paths.AUTO_REFRESH_LOG_FILE`
@@ -143,18 +154,18 @@ automation. Regenerate the static snapshots with `fetch_word_centers.py` / `fetc
   which target it clicked) were previously unreachable. `main()` reconfigures stdout/stderr to
   line-buffered on startup so those prints actually land in the file promptly instead of sitting in
   a full buffer for however long the QR wait takes. `notify_desktop()` (the local best-effort
-  desktop toast alongside the ntfy phone push — same function name duplicated in `notifier.py` as
+  desktop toast alongside the ntfy phone push — same function name duplicated in `src/info_kierowca_notifier/notifier.py` as
   `notify()`, for the same circular-import reason as elsewhere in this project) used `notify-send`
   only, which is Linux-only and silently no-ops elsewhere; both now branch to `osascript` on macOS
   (`sys.platform == "darwin"`), quoting the summary/body via `json.dumps()` as safe AppleScript
   string literals rather than interpolating them raw. **UNVERIFIED as of 2026-07-22** — no live Mac
   to test on; worst case it silently no-ops there exactly as before.
-- `cdp_client.py` — shared Chrome DevTools Protocol helpers used by `pull_session_cookies.py`,
-  `auto_refresh_session.py`, and `open_logged_in_browser.py` (cookie reads *and* writes via
+- `src/info_kierowca_notifier/browser/cdp.py` — shared Chrome DevTools Protocol helpers used by `tools/pull_session_cookies.py`,
+  `src/info_kierowca_notifier/auth/session.py`, and `src/info_kierowca_notifier/booking/reschedule.py` (cookie reads *and* writes via
   `Storage.getCookies`/`setCookies`, JS eval in the page, navigation, and registering a script to
   run on every future document via `Page.addScriptToEvaluateOnNewDocument`).
-- `open_logged_in_browser.py` — launches Chrome in its own dedicated profile (port `9555`, distinct
-  from `auto_refresh_session.py`'s and from a regular browsing profile) and injects the cookies
+- `src/info_kierowca_notifier/booking/reschedule.py` — launches Chrome in its own dedicated profile (port `9555`, distinct
+  from `src/info_kierowca_notifier/auth/session.py`'s and from a regular browsing profile) and injects the cookies
   already saved in `session.json` via `cdp_client.set_cookies()` before navigating to `/cases`, so
   it opens already authenticated. `set_cookies()` deliberately sets `httpOnly: False` — confirmed
   live that the site's own frontend reads session cookies via `document.cookie` to decide its
@@ -163,7 +174,7 @@ automation. Regenerate the static snapshots with `fetch_word_centers.py` / `fetc
   pre-sets a `CookieScriptConsent` cookie (`consent_cookie()`, defaulting "necessary only" — same
   minimal-footprint stance) shaped like what the real cookie-consent banner writes, so that banner
   never renders either.
-  - Runnable by hand, and auto-triggered by `notifier.py` on a matching urgent slot hit
+  - Runnable by hand, and auto-triggered by `src/info_kierowca_notifier/notifier.py` on a matching urgent slot hit
     (`trigger_open_browser()`, called alongside the ntfy push in `run_check()`) — skipped if
     something's already listening on port `9555` so a slot that keeps reappearing doesn't pile up
     duplicate Chrome windows. Disable via `auto_open_browser: false` in `config.json`.
@@ -177,7 +188,7 @@ automation. Regenerate the static snapshots with `fetch_word_centers.py` / `fetc
     disabled "Przejdź do podsumowania" button — nothing about the booking has changed. Goes no
     further by default: picking the new date, the summary step, and any confirm past that stay
     real clicks from you; no reservation/booking call happens in this file. Reuses `find_chrome()`
-    from `auto_refresh_session.py` rather than duplicating it.
+    from `src/info_kierowca_notifier/auth/session.py` rather than duplicating it.
   - `--target-slot` is the one opt-in exception, gated behind config's experimental, default-off
     `auto_select_slot` flag (Settings → Automation toggle, off by default — hand-editing
     `config.json` still works too)
@@ -235,7 +246,7 @@ automation. Regenerate the static snapshots with `fetch_word_centers.py` / `fetc
     the change — this is the actual signal `update_current_slot_date()` is allowed to act on. On a
     match, it does a minimal, config.json-scoped read-modify-write (`current_slot_date` only, not
     the whole file — see its own docstring for why: this runs in a detached subprocess well after
-    `notifier.py`'s own config read for the cycle that triggered it, so the file may have picked up
+    `src/info_kierowca_notifier/notifier.py`'s own config read for the cycle that triggered it, so the file may have picked up
     unrelated Settings edits since) so `notifier.is_urgent()`'s very next comparison reflects the
     change immediately — see that function's own bullet above for why this matters alongside the
     exclusive-urgency change. On no match within timeout, config is left untouched and the user is
@@ -247,7 +258,7 @@ automation. Regenerate the static snapshots with `fetch_word_centers.py` / `fetc
       `try_select_target_slot()` is unreachable on the auto-triggered path (visible only when run by
       hand from a terminal); the log file makes it inspectable after the fact.
       Deliberately a separate plain file, not shared with `notifier.LOG_FILE`: that one's written by
-      a `RotatingFileHandler` from `notifier.py`'s own process, and a detached subprocess writing raw
+      a `RotatingFileHandler` from `src/info_kierowca_notifier/notifier.py`'s own process, and a detached subprocess writing raw
       stdout into the same path could straddle a rotation and silently write into an
       already-renamed file.
     - `push_ntfy()` (in this file — duplicated from `notifier.push_ntfy()`, same circular-import
@@ -271,15 +282,15 @@ automation. Regenerate the static snapshots with `fetch_word_centers.py` / `fetc
       runs normally (just without `--confirm-reschedule`) — only the actual submit step is held
       back.
   - A `--no-auto-click` flag skips both clicks and just leaves the logged-in `/cases` tab open —
-    used by `app.py`'s "Open browser" toolbar button (`trigger_open_browser(auto_click=False)`) so
+    used by `src/info_kierowca_notifier/app.py`'s "Open browser" toolbar button (`trigger_open_browser(auto_click=False)`) so
     a manual troubleshooting click doesn't also kick off the reschedule flow; the automatic
     urgent-slot-hit trigger keeps the default `auto_click=True` since that click-through is the
     entire point there.
-- `app.py` — the composed, zero-setup entry point: runs `notifier.loop()` in a background thread,
+- `src/info_kierowca_notifier/app.py` — the composed, zero-setup entry point: runs `notifier.loop()` in a background thread,
   serves the first-run setup wizard + the dashboard + `POST /shutdown` (Quit button; hard-exits via
   `os._exit(0)`) from one stdlib HTTP server, and auto-opens the browser. This is what the packaged
   release binaries (`pyinstaller.spec`, built `--windowed`, no console window) actually run; shares
-  `paths.py`'s `CONFIG_DIR`/`STATE_DIR` with the source/systemd path so switching between "ran the
+  `src/info_kierowca_notifier/paths.py`'s `CONFIG_DIR`/`STATE_DIR` with the source/systemd path so switching between "ran the
   binary" and "ran from source" never loses config/session/history. Detects an already-running
   instance on the dashboard port and just opens a browser tab at it instead of binding twice.
   - `POST /test-push` sends a one-off ntfy message so the user can confirm their topic works;
@@ -318,10 +329,10 @@ automation. Regenerate the static snapshots with `fetch_word_centers.py` / `fetc
     `setPollIntervalSeconds()`) prefills both from `EXISTING_CONFIG`, defaulting to the full day
     (`0`/`24`) when absent. `build_config()` validates `0 <= earliest < latest <= 24` server-side
     independently of the slider, same pattern as the check-frequency slider above. Feeds
-    `notifier.py`'s hit filter — see its own bullet above — this file only decides what gets
+    `src/info_kierowca_notifier/notifier.py`'s hit filter — see its own bullet above — this file only decides what gets
     submitted, not what it does downstream.
   - "Automation" also has two toggles for the experimental
-    `auto_select_slot`/`auto_confirm_reschedule` flags documented on `open_logged_in_browser.py`
+    `auto_select_slot`/`auto_confirm_reschedule` flags documented on `src/info_kierowca_notifier/booking/reschedule.py`
     above — both default off in the markup itself (no `on` class), matching the flags' own
     config-file default. `auto_confirm_reschedule`'s toggle only does anything once
     `auto_select_slot`'s is also on: `applyAutoConfirmDim()` dims its row and force-clears it via
@@ -356,29 +367,29 @@ automation. Regenerate the static snapshots with `fetch_word_centers.py` / `fetc
     still triggers `trigger_auto_refresh()` on submit exactly like every first run did before this
     existed.
   - Inside a frozen build, neither `trigger_auto_refresh()` nor `trigger_open_browser()` (both in
-    `notifier.py`) can shell out to their respective `.py` files (they don't exist on disk, and
+    `src/info_kierowca_notifier/notifier.py`) can shell out to their respective `.py` files (they don't exist on disk, and
     `sys.executable` is the bundled binary itself) — each re-invokes the binary with its own hidden
-    flag instead (`--internal-auto-refresh`/`--internal-open-browser`), which `app.py`'s
+    flag instead (`--internal-auto-refresh`/`--internal-open-browser`), which `src/info_kierowca_notifier/app.py`'s
     `run_internal_auto_refresh()`/`run_internal_open_browser()` dispatch straight to
     `auto_refresh_session.main()`/`open_logged_in_browser.main()`. These frozen-only paths can only
-    be verified against an actual build, not `python app.py` — re-test both (delete `session.json`,
+    be verified against an actual build, not `python -m info_kierowca_notifier` — re-test both (delete `session.json`,
     confirm Chrome/Edge still opens for relogin; then, separately, confirm a slot hit still opens a
     logged-in tab) after any change here before tagging a release.
-  - The dashboard's chrome is split across two files by design: `dashboard_server.py`'s `PAGE` owns
+  - The dashboard's chrome is split across two files by design: `src/info_kierowca_notifier/web/server.py`'s `PAGE` owns
     the structural markup (`#headline-wrap`/`#headline-icon`/`#headline-hint`, and the `poll()` loop
     that fills them in) but leaves it inert — no cursor, no hover styling — since that file alone is
     also served read-only, with no `/pause`/`/settings`/`/manual-login`/`/shutdown` behind it.
-    `TOOLBAR_HTML` (in `templates.py`, appended before `</body>` by `app.py`) layers the actual
+    `TOOLBAR_HTML` (in `src/info_kierowca_notifier/web/templates.py`, appended before `</body>` by `src/info_kierowca_notifier/app.py`) layers the actual
     interactivity on top, so
     the plain systemd-dashboard path never shows an affordance it can't back up:
     - **Pause/Resume** is a click (or Enter/Space) on the headline itself, not a separate button.
       Writes `notifier.PAUSE_FILE` (`POST /pause`/`/resume`) — a flag file rather than a config
-      field, checked at the top of `run_check()`, so it behaves identically under `app.py`'s
+      field, checked at the top of `run_check()`, so it behaves identically under `src/info_kierowca_notifier/app.py`'s
       in-process loop and a systemd timer tick, and survives a settings resave. Pausing
       deliberately leaves `status.json`'s `outcome`/`message` alone (so Resume falls straight back
       to the last real result instead of being stuck on "Paused" until a fresh check); the handlers
       write `paused` synchronously and return it, read by `TOOLBAR_HTML` via the top-level
-      `isPaused` `dashboard_server.py` declares (the two `<script>` tags share one global scope) —
+      `isPaused` `src/info_kierowca_notifier/web/server.py` declares (the two `<script>` tags share one global scope) —
       so the icon flips on click rather than lagging a whole interval.
     - **Open browser / Settings / Quit** are icon-only buttons in a toolbar that stays hidden until
       the pointer nears the top of the screen or it takes keyboard focus; a low-opacity dot keeps it
@@ -387,7 +398,7 @@ automation. Regenerate the static snapshots with `fetch_word_centers.py` / `fetc
       backdrop) containing `#ikw-settings-frame`, an `<iframe>` pointed at `/settings` — rather than
       the old full-page navigation. An iframe was chosen over merging templates because it keeps
       `WIZARD_PAGE` and `dashboard_server.PAGE` fully independent (each still works loaded on its
-      own — direct `/settings` visit, first-run `/setup`, the read-only `dashboard_server.py`-only
+      own — direct `/settings` visit, first-run `/setup`, the read-only `src/info_kierowca_notifier/web/server.py`-only
       path); the tradeoff is the form scrolls in its own inner viewport rather than the page's.
       `ikwOpenSettingsModal()` always sets `iframe.src` fresh from `about:blank` (which
       `ikwCloseSettingsModal()` resets it back to on every close) so the form is never stale without
@@ -412,35 +423,35 @@ automation. Regenerate the static snapshots with `fetch_word_centers.py` / `fetc
       so the date-picker is ready the moment the push lands. Here `force=True` only bypasses
       persisted automatic backoff; a live QR-login lock still returns "already_running".
       `trigger_open_browser()` has no equivalent because it does not have automatic retry backoff.
-- `templates.py` — holds `TOOLBAR_HTML`, `LOGIN_PAGE`, and `WIZARD_PAGE`: the three big HTML/JS
-  strings `app.py` serves, moved out verbatim since they made up the bulk of that file's line
+- `src/info_kierowca_notifier/web/templates.py` — holds `TOOLBAR_HTML`, `LOGIN_PAGE`, and `WIZARD_PAGE`: the three big HTML/JS
+  strings `src/info_kierowca_notifier/app.py` serves, moved out verbatim since they made up the bulk of that file's line
   count (~1180 of ~1750 lines) with none of its request-handling logic. Plain string
-  constants only — no rendering logic, no imports of its own; `app.py` still owns everything that
+  constants only — no rendering logic, no imports of its own; `src/info_kierowca_notifier/app.py` still owns everything that
   touches them (`WIZARD_PAGE.replace("__CENTERS_JSON__", ...)`, splicing `TOOLBAR_HTML` into
-  `dashboard_server.PAGE`, etc.), so read `app.py`'s own notes above for what each template does at
+  `dashboard_server.PAGE`, etc.), so read `src/info_kierowca_notifier/app.py`'s own notes above for what each template does at
   runtime — this file is just where their markup lives.
 - `word_centers.json` — static snapshot (id, name, location) of every active DORD/WORD/MORD/
-  PORD/ZORD exam center, used by `app.py`'s setup wizard to show real, searchable center names
+  PORD/ZORD exam center, used by `src/info_kierowca_notifier/app.py`'s setup wizard to show real, searchable center names
   instead of bare numeric IDs. Baked in rather than fetched live because the wizard has to work
   before the user has ever logged in, and the source endpoint (`/bknd/config/api/v1/dict/words`)
-  needs a session (confirmed: 401 without cookies). Regenerate with `fetch_word_centers.py`.
-- `fetch_word_centers.py` — maintenance script, run by hand (using your own `session.json`) to
+  needs a session (confirmed: 401 without cookies). Regenerate with `tools/fetch_word_centers.py`.
+- `tools/fetch_word_centers.py` — maintenance script, run by hand (using your own `session.json`) to
   refresh `word_centers.json` if info-kierowca.pl adds/renames/closes a center. Reuses
   `notifier.BASE`/`SESSION_FILE`/`do_request()` rather than duplicating cookie/request logic.
 - `categories.json` — static snapshot (id, code, label) of all 17 license categories (A=1 …
   B=5 … PT=17), used by the setup wizard's "License category" dropdown so the user picks "B — car"
   instead of the bare numeric id the API wants. The wizard also keeps an "Other — enter number"
-  escape hatch. Regenerate with `fetch_categories.py`.
-- `fetch_categories.py` — maintenance script like `fetch_word_centers.py`, run by hand with your
+  escape hatch. Regenerate with `tools/fetch_categories.py`.
+- `tools/fetch_categories.py` — maintenance script like `tools/fetch_word_centers.py`, run by hand with your
   own `session.json`. Categories are a two-source join: the **codes** (Am, A1, B, C1E, …) come from
   the Applications service's `GET /bknd/Applications/api/v1/dictionary/licence-category-groups`
-  (note: a *different* base from `fetch_word_centers.py`'s `/bknd/config/api/v1` — the category
+  (note: a *different* base from `tools/fetch_word_centers.py`'s `/bknd/config/api/v1` — the category
   catalog lives under Applications, and there is **no `/dict/categories` endpoint**), but the
   **numeric ids** the exam-search `category` field wants are not served by any endpoint — the
   frontend hardcodes a code→id enum in its JS bundle, mirrored here as `CODE_TO_ID` (search `B:5`
   in `main-*.js` to re-derive it if the site ever adds a category). Verified against the live API
   on 2026-07-18: writes all 17 categories.
-- `pyinstaller.spec` — builds `app.py` into the single-file, no-console release binary; used by
+- `pyinstaller.spec` — builds `src/info_kierowca_notifier/app.py` into the single-file, no-console release binary; used by
   `.github/workflows/release.yml` (matrix over Windows/macOS/Linux, triggered on `v*` tags) and
   identical for manual local builds (`pyinstaller pyinstaller.spec`). PyInstaller is a build-time
   only dependency — doesn't change the "zero *runtime* dependencies" claim in the README.
@@ -457,7 +468,7 @@ automation. Regenerate the static snapshots with `fetch_word_centers.py` / `fetc
 - `~/.local/state/info-kierowca-notifier/status.json` — current status + history, what the
   dashboard reads and serves at `GET /status.json`.
 - `~/.local/state/info-kierowca-notifier/auto-refresh.log` — plain append-only log of
-  `auto_refresh_session.py`'s own `print()`s when auto-triggered (see `auto_refresh_session.py`
+  `src/info_kierowca_notifier/auth/session.py`'s own `print()`s when auto-triggered (see `src/info_kierowca_notifier/auth/session.py`
   above); check this first when a relogin gets stuck partway through the login click-through.
 
 ## systemd units (Linux)
@@ -486,7 +497,7 @@ timestamp, not `-`/`n/a`.
 
 ### Known gotcha: auto-relogin (auto_refresh_session.py) needs a real GUI session
 
-Triggered automatically by `notifier.py` on `auth_expired` via `systemd-run --user`
+Triggered automatically by `src/info_kierowca_notifier/notifier.py` on `auth_expired` via `systemd-run --user`
 (`trigger_auto_refresh()`), specifically so the launched Chrome + cookie-watcher survives after the
 triggering oneshot `info-kierowca-notifier.service` run exits — a plain child process would
 otherwise die with it under systemd's default `KillMode=control-group`. `systemd-run --user` still
@@ -496,7 +507,7 @@ appears, check `journalctl --user -u info-kierowca-auto-refresh -n 20 --no-pager
 `auto_refresh_chrome: false` in `config.json` to disable and fall back to manual relogin.
 
 The gov.pl → "Aplikacja mObywatel" click-through is text-based (`AUTO_CLICK_TARGETS` in
-`auto_refresh_session.py`) — if info-kierowca.pl or gov.pl ever change that UI's copy or the login
+`src/info_kierowca_notifier/auth/session.py`) — if info-kierowca.pl or gov.pl ever change that UI's copy or the login
 click-path, the script will just sit on whatever screen it landed on without erring; it's still
 safe to click through by hand while it waits (it never times out — see `DEFAULT_TIMEOUT`), but the
 target list will need updating to restore full automation.
@@ -513,7 +524,7 @@ instead of closing a login someone may be completing.
 
 That forgotten-window case is a real reported bug, not a hypothetical: `AUTO_REFRESH_LOCK` has no
 timeout (the script waits indefinitely for a QR scan) and the process is detached, so it outlives
-an `app.py` restart — one observed live held the lock for ~10 hours, silently no-opping every later
+an `src/info_kierowca_notifier/app.py` restart — one observed live held the lock for ~10 hours, silently no-opping every later
 `trigger_auto_refresh()` call including the next launch, with nothing to indicate why. That is why
 both automatic and deliberate retries preserve a live QR-login process. A manual `force=True`
 only bypasses persisted automatic-failure backoff; it does not SIGTERM the lock holder. Dead or
@@ -522,9 +533,9 @@ fighting over the same `--user-data-dir` as an active process.
 
 ### Known gotcha: a sandboxed app.py silently hands your curls to the real instance
 
-`HOME=/tmp/fake-home python app.py` looks isolated but isn't, for a second reason beyond the
+`HOME=/tmp/fake-home python -m info_kierowca_notifier` looks isolated but isn't, for a second reason beyond the
 `systemd-run` one below: `already_running()` probes `127.0.0.1:8787` *before* binding, and if
-anything answers there — your own normal `app.py`, left running from earlier — the sandboxed
+anything answers there — your own normal `src/info_kierowca_notifier/app.py`, left running from earlier — the sandboxed
 process just opens a browser tab and exits. Its `HOME` override then applies to nothing, and every
 subsequent `curl http://127.0.0.1:8787/...` in the test talks to the **real** instance against the
 **real** config/session/status. Confirmed live 2026-07-18: a test run's `POST /pause` +
@@ -536,7 +547,7 @@ state directory was never even created. Tell: the sandbox `HOME`'s
 
 ### Known gotcha: dashboard port-in-use crash loop
 
-`dashboard_server.py` binds `127.0.0.1:8787`. If a stale process (e.g. one started manually outside
+`src/info_kierowca_notifier/web/server.py` binds `127.0.0.1:8787`. If a stale process (e.g. one started manually outside
 systemd, or a previous crashed instance) is still holding the port,
 `info-kierowca-dashboard.service` fails fast with `OSError: Address already in use`, retries a few
 times, then systemd gives up (`start-limit-hit`). Find/kill whatever holds the port, then
@@ -548,9 +559,9 @@ times, then systemd gives up (`start-limit-hit`). Find/kill whatever holds the p
 `trigger_auto_refresh()` prefers `systemd-run --user` specifically so the Chrome+QR process
 survives the triggering process exiting. That hand-off runs under the systemd user manager's own
 environment, **not** the environment of the process that called `systemd-run` — so a sandboxed
-`HOME` override (e.g. `HOME=/tmp/fake-home python app.py`) does *not* propagate into the launched
-`auto_refresh_session.py`, which falls back to the real `~/.config`/`~/.local/state` paths
-regardless. Confirmed live: a sandboxed `app.py` test run's QR scan ended up refreshing the real
+`HOME` override (e.g. `HOME=/tmp/fake-home python -m info_kierowca_notifier`) does *not* propagate into the launched
+`src/info_kierowca_notifier/auth/session.py`, which falls back to the real `~/.config`/`~/.local/state` paths
+regardless. Confirmed live: a sandboxed `src/info_kierowca_notifier/app.py` test run's QR scan ended up refreshing the real
 production `session.json`, not the sandboxed one — harmless (same account, just a fresh session),
 but surprising if you're not expecting it. To test the auto-refresh trigger itself in real
 isolation, set `auto_refresh_chrome: false` in the sandboxed `config.json` first.
@@ -558,13 +569,13 @@ isolation, set `auto_refresh_chrome: false` in the sandboxed `config.json` first
 ## Constraints to respect when changing this code
 
 - Polling/checking stays strictly read-only. The one deliberate exception is
-  `open_logged_in_browser.py`'s reschedule assist. By explicit user request, the policy ceiling was
+  `src/info_kierowca_notifier/booking/reschedule.py`'s reschedule assist. By explicit user request, the policy ceiling was
   raised to allow fuller automation in future. By default the build still stops
   at the date-range picker: it clicks only "Zmień termin" and "Zmień termin rezerwacji" and lands on
   the empty "Wybierz datę początkową dla nowego terminu" screen with nothing selected. Picking the
   new date is implemented too, but only as an experimental, default-off
   opt-in (`auto_select_slot`, toggleable in Settings → Automation — see below —
-  or by hand in `config.json`; unverified against the live site — see `open_logged_in_browser.py`
+  or by hand in `config.json`; unverified against the live site — see `src/info_kierowca_notifier/booking/reschedule.py`
   bullet above); with it on, it also clicks "Przejdź do
   podsumowania" and lands on the "Potwierdź wybrany egzamin" summary modal.
   **`auto_confirm_reschedule`** — a second, separate flag, added by explicit user
@@ -580,6 +591,6 @@ isolation, set `auto_refresh_chrome: false` in the sandboxed `config.json` first
 - Don't lower `notifier.MIN_POLL_INTERVAL_SECONDS` (15s, itself already lowered once from 60s by
   explicit user request) further without being asked again; the interval is
   user-adjustable within `[MIN_POLL_INTERVAL_SECONDS, MAX_POLL_INTERVAL_SECONDS]`
-  (`poll_interval_seconds`, see `notifier.py`/`app.py` above) but the floor itself is a hard-coded
+  (`poll_interval_seconds`, see `src/info_kierowca_notifier/notifier.py`/`src/info_kierowca_notifier/app.py` above) but the floor itself is a hard-coded
   design choice to stay a good citizen of an undocumented API, not just a UI default.
 - Session cookies / PKK number must never be sent anywhere except info-kierowca.pl itself.

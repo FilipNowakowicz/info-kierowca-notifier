@@ -22,13 +22,13 @@ import urllib.request
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
-import auto_refresh_session
-import ntfy_transport
-import open_logged_in_browser
-import relogin_control
-import tls_transport
-from relogin_backoff import RetryBackoff
-from paths import (  # noqa: F401  (re-exported: other modules read these off notifier)
+from info_kierowca_notifier.auth import session as auto_refresh_session
+from info_kierowca_notifier import ntfy_transport
+from info_kierowca_notifier.booking import reschedule as open_logged_in_browser
+from info_kierowca_notifier.auth import relogin_control
+from info_kierowca_notifier import tls_transport
+from info_kierowca_notifier.auth.relogin_backoff import RetryBackoff
+from info_kierowca_notifier.paths import (  # noqa: F401  (re-exported: other modules read these off notifier)
     AUTO_REFRESH_LOG_FILE,
     AUTO_REFRESH_RESTART_REQUEST,
     CONFIG_FILE,
@@ -316,7 +316,7 @@ def push_ntfy(logger, topic, title, message, priority="default", tags=None):
     return outcome
 
 
-AUTO_REFRESH_SCRIPT = Path(__file__).parent / "auto_refresh_session.py"
+AUTO_REFRESH_SCRIPT = Path(auto_refresh_session.__file__)
 AUTO_REFRESH_LOCK = auto_refresh_session.LOCK_FILE
 
 
@@ -530,7 +530,7 @@ def auto_refresh_in_progress():
     return pid is not None and relogin_control.process_alive(pid)
 
 
-OPEN_BROWSER_SCRIPT = Path(__file__).parent / "open_logged_in_browser.py"
+OPEN_BROWSER_SCRIPT = Path(open_logged_in_browser.__file__)
 OPEN_BROWSER_PORT = open_logged_in_browser.DEFAULT_PORT
 
 # How long after an attempted final-confirm click (see

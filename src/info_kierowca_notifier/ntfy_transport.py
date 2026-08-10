@@ -12,7 +12,7 @@ import urllib.error
 import urllib.request
 from typing import Optional
 
-import tls_transport
+from info_kierowca_notifier import tls_transport
 
 
 NTFY_URL = "https://ntfy.sh"

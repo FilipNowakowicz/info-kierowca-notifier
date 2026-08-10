@@ -91,6 +91,9 @@ works? See [docs/ADVANCED.md](docs/ADVANCED.md).
 ## Contributing
 
 Issues and PRs welcome — this is a small, single-purpose tool, so please keep changes focused.
+Runtime code lives in the installable `src/info_kierowca_notifier/` package, manually run
+maintenance utilities live in `tools/`, and the flat `tests/` directory is discovered with
+`uv run python -m unittest discover -s tests -v`.
 
 ## License
 

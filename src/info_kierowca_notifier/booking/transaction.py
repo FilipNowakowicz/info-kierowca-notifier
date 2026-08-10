@@ -8,8 +8,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from urllib.parse import urlsplit, urlunsplit
 
-import cdp_client
-from paths import RESCHEDULE_DIAGNOSTICS_DIR
+from info_kierowca_notifier.browser import cdp as cdp_client
+from info_kierowca_notifier.paths import RESCHEDULE_DIAGNOSTICS_DIR
 
 VERIFIED_SUCCESS = "VERIFIED_SUCCESS"
 VERIFIED_UNCHANGED = "VERIFIED_UNCHANGED"

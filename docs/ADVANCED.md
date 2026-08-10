@@ -37,7 +37,7 @@ extra setup.
    ```
    (no `chmod` equivalent needed — the folder is already private to your Windows user account)
 
-3. Get your session cookies into `session.json`. The recommended route is to run `app.py` in
+3. Get your session cookies into `session.json`. The recommended route is to run `src/info_kierowca_notifier/app.py` in
    step 5 and use its first-run **Profil Zaufany** setup. It stores the password in the operating
    system credential vault, pairs the dedicated Chrome profile with Google Messages Web, performs
    the login, and writes `session.json` automatically. Do not put a Profil Zaufany password in
@@ -45,16 +45,16 @@ extra setup.
 
    **Option A — app wizard (recommended, automatic Profil Zaufany):**
    ```
-   uv run python app.py
+   uv run python -m info_kierowca_notifier
    ```
    Select Profil Zaufany, enter the username and password, and pair Google Messages Web before
    completing login. Pairing is required so the app can read the one-time SMS code. The password is saved only through the OS
    credential backend. If no supported secure backend is available, setup stops without falling
    back to plaintext storage.
 
-   **Option B — `auto_refresh_session.py` (uses the method already saved by the app):**
+   **Option B — `src/info_kierowca_notifier/auth/session.py` (uses the method already saved by the app):**
    ```
-   uv run python auto_refresh_session.py
+   uv run python -m info_kierowca_notifier.auth.session
    ```
    It launches the app's dedicated Chrome profile and reads `login_method` from `config.json`.
    For `profil_zaufany`, it retrieves the saved password from the OS vault and reads the fresh
@@ -62,12 +62,12 @@ extra setup.
    waits indefinitely for a scan. Either route captures the resulting session cookies and writes
    `session.json`.
 
-   **Option C — `pull_session_cookies.py` (Chrome/Chromium, manual):** quit Chrome completely,
+   **Option C — `tools/pull_session_cookies.py` (Chrome/Chromium, manual):** quit Chrome completely,
    relaunch it with its remote-debugging port open, log in to info-kierowca.pl, then run the
    script:
    ```
    google-chrome --remote-debugging-port=9222   # macOS: .../Google Chrome.app/Contents/MacOS/Google Chrome
-   uv run python pull_session_cookies.py
+   uv run python tools/pull_session_cookies.py
    ```
    It talks to Chrome over that debug port on `127.0.0.1` only, pulls the `__Secure-PUDOJT` and
    `__Secure-PUDOJTMD` cookies for info-kierowca.pl, and writes them straight to `session.json`.
@@ -98,28 +98,28 @@ extra setup.
    | `earliest_slot_hour` / `latest_slot_hour` *(optional, default `0` / `24`)* | Preferred time-of-day window in whole hours, `latest` exclusive. A slot outside `[earliest, latest)` is ignored entirely — no push, no dashboard entry, nothing in history. Defaults span the whole day. Set with the dashboard's dual-handle time slider. |
    | `phone_alerts` *(optional, default `true`)* | Whether a slot that beats your booked date sends a phone push at all. Set to `false` to just watch the dashboard silently; the dashboard's red/gray colouring and `auto_open_browser` still work. |
    | `phone_alerts_relogin` *(optional, default `true`)* | Whether login recovery may send a phone push. With mObywatel this asks for a QR scan; with Profil Zaufany it reports an automatic-login failure that needs attention. Independent of slot-alert pushes. |
-   | `auto_refresh_chrome` *(optional, app-managed as `true`)* | Whether an `auth_expired` outcome should automatically launch `auto_refresh_session.py` (see below). The app keeps this enabled: mObywatel reopens the QR screen, while Profil Zaufany logs in automatically. Advanced headless setups may set it to `false` directly to require manual relogin. |
-   | `auto_open_browser` *(optional, default `true`)* | Whether a found slot that beats your booked date should also launch `open_logged_in_browser.py` (see [Reschedule assist](#reschedule-assist) below). Set to `false` to disable. |
+   | `auto_refresh_chrome` *(optional, app-managed as `true`)* | Whether an `auth_expired` outcome should automatically launch `src/info_kierowca_notifier/auth/session.py` (see below). The app keeps this enabled: mObywatel reopens the QR screen, while Profil Zaufany logs in automatically. Advanced headless setups may set it to `false` directly to require manual relogin. |
+   | `auto_open_browser` *(optional, default `true`)* | Whether a found slot that beats your booked date should also launch `src/info_kierowca_notifier/booking/reschedule.py` (see [Reschedule assist](#reschedule-assist) below). Set to `false` to disable. |
 
    Slots are only ever considered within 31 days out — that's a hard line on info-kierowca.pl
    itself, not something this project can (or needs to) make configurable.
 
 5. Run it — pick whichever fits your OS:
 
-   **Option A — `app.py` (the same all-in-one wizard + dashboard + Quit button the downloaded
+   **Option A — `src/info_kierowca_notifier/app.py` (the same all-in-one wizard + dashboard + Quit button the downloaded
    binaries run, just from source):**
    ```
-   uv run python app.py
+   uv run python -m info_kierowca_notifier
    ```
    Opens a browser tab automatically; if `config.json` doesn't exist yet it replaces steps 1-3
    above with an in-browser setup wizard (using real WORD center names — see `word_centers.json` /
-   `fetch_word_centers.py` — and license-category names from `categories.json` /
-   `fetch_categories.py`). No console window management needed here either — use the page's Quit
+   `tools/fetch_word_centers.py` — and license-category names from `categories.json` /
+   `tools/fetch_categories.py`). No console window management needed here either — use the page's Quit
    button, not Ctrl+C.
 
    **Option B — built-in loop (works on Windows, macOS, Linux):**
    ```
-   uv run python notifier.py --loop
+   uv run python -m info_kierowca_notifier.notifier --loop
    ```
    Leave this running in a terminal, or set your OS to start it in the background for you (e.g. a
    Windows Task Scheduler task running at log-on, or a macOS `launchd` agent). It checks on
@@ -144,7 +144,7 @@ extra setup.
 6. If you used Option A, the dashboard is already running — skip this step. Otherwise, start it
    separately (same command on every OS — plain Python, no extra setup):
    ```
-   uv run python dashboard_server.py
+   uv run python -m info_kierowca_notifier.web.server
    ```
    Then open `http://127.0.0.1:8787` for a local read-only view of the current status and history.
    It's bound to localhost only. On Linux you can instead run this as the included
@@ -178,7 +178,7 @@ such an error by disabling certificate verification.
 extends the token — it doesn't touch a separate, absolute session ceiling of about 3600 seconds
 from the last full login. Once that ceiling passes, the next check comes back `auth_expired`
 regardless of how healthy the refreshes were. Profil Zaufany can complete the new login
-automatically; mObywatel still requires a new QR scan. For the manual mObywatel path, `app.py`'s
+automatically; mObywatel still requires a new QR scan. For the manual mObywatel path, `src/info_kierowca_notifier/app.py`'s
 dashboard shows an estimated-expiry countdown and a reset control. The estimate comes from
 `session.json`'s `captured_at`, stamped on every fresh login.
 
@@ -188,7 +188,7 @@ normal 1-minute and 2-minute retry cooldowns before the current session expires.
 also retains the expiry fallback: whenever a check comes back `auth_expired` — a 401, 403, 404,
 or 500 on the refresh call, or a 401/403/500 on the search call, all of which have in practice
 turned out to be the same underlying cookie-expiry problem — it launches
-`auto_refresh_session.py` in the background. It opens Chrome to the login page in the app's
+`src/info_kierowca_notifier/auth/session.py` in the background. It opens Chrome to the login page in the app's
 dedicated profile and follows the `login_method` saved by the setup wizard:
 
 - **Profil Zaufany (recommended):** retrieves the password from the OS credential vault, navigates
@@ -239,17 +239,17 @@ If Chrome never appears, check `journalctl --user -u info-kierowca-auto-refresh 
 
 ## Reschedule assist
 
-If you already have a paid booking and just want to move it to a fresher date, `notifier.py` can
+If you already have a paid booking and just want to move it to a fresher date, `src/info_kierowca_notifier/notifier.py` can
 open a browser for you the moment a matching slot beats your booked date (same gating as the phone push —
 see `current_slot_date`), pre-authenticated with your saved session, and click
 through the first two steps of changing that booking's date:
 
 ```
-uv run python open_logged_in_browser.py   # or let a slot hit trigger it automatically
+uv run python -m info_kierowca_notifier.booking.reschedule   # or let a slot hit trigger it automatically
 ```
 
 It launches Chrome in its own dedicated profile (a separate `--remote-debugging-port` from
-`auto_refresh_session.py`'s, so the two never collide), injects your `session.json` cookies so it
+`src/info_kierowca_notifier/auth/session.py`'s, so the two never collide), injects your `session.json` cookies so it
 opens straight into `/cases` already logged in, and suppresses the cookie-consent banner by
 pre-setting the same cookie the real banner would write on "necessary only". It then clicks
 "Zmień termin" on your booking, then "Zmień termin rezerwacji" in the confirm modal that opens —
@@ -293,7 +293,7 @@ matching slot" is already on — **in addition to** that toggle. (Or set both
 `"auto_select_slot": true` and `"auto_confirm_reschedule": true` in `config.json` by hand.) It
 clicks that button too — actually submitting the reservation date change. `auto_confirm_reschedule`
 alone, without `auto_select_slot`, does nothing: without it, the flow never reaches the summary
-screen to confirm on — the wizard enforces this by dimming/disabling the toggle, and `app.py`
+screen to confirm on — the wizard enforces this by dimming/disabling the toggle, and `src/info_kierowca_notifier/app.py`
 enforces it again server-side regardless of what a saved `config.json` says.
 
 Before that click, it re-checks the summary screen's own text actually shows the date, time, and
@@ -334,14 +334,14 @@ without this cooldown the very next check finding some other nearby slot could i
 
 ## Pausing / resuming
 
-**`app.py`:** click the headline on the dashboard — it toggles pause/resume (hover it and a
+**`src/info_kierowca_notifier/app.py`:** click the headline on the dashboard — it toggles pause/resume (hover it and a
 pause/play icon appears over the text; Enter or Space works too when it's focused). Checks stop
 until you click again; the last real result stays on screen underneath. This writes a flag file
 (`~/.local/state/info-kierowca-notifier/paused`) rather than a config setting, so it survives
 saving settings and applies to the systemd path too. The **Quit** button in the top toolbar is a
 different thing — it exits the app entirely.
 
-**Loop mode (`notifier.py --loop`):** Ctrl+C and rerun, or `touch`/`rm` the same `paused` flag
+**Loop mode (`python -m info_kierowca_notifier.notifier --loop`):** Ctrl+C and rerun, or `touch`/`rm` the same `paused` flag
 file, which `run_check()` honours on every tick.
 
 **systemd mode:**

@@ -6,9 +6,9 @@ import subprocess
 import unittest
 from unittest.mock import patch
 
-import auto_refresh_session
-import auth_providers
-import open_logged_in_browser
+from info_kierowca_notifier.auth import session as auto_refresh_session
+from info_kierowca_notifier.auth import providers as auth_providers
+from info_kierowca_notifier.booking import reschedule as open_logged_in_browser
 
 
 class BrowserClickSafetyTests(unittest.TestCase):

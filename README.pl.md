@@ -67,6 +67,9 @@ Chcesz uruchomić program ze źródeł, używać go w Linuksie z systemd lub poz
 ## Współpraca
 
 Zgłoszenia i PR-y są mile widziane. To małe narzędzie o jednym celu, dlatego prosimy o skupione zmiany.
+Kod uruchomieniowy znajduje się w instalowalnym pakiecie `src/info_kierowca_notifier/`, ręcznie
+uruchamiane narzędzia utrzymaniowe w `tools/`, a płaski katalog `tests/` jest wykrywany poleceniem
+`uv run python -m unittest discover -s tests -v`.
 
 ## Licencja
 
