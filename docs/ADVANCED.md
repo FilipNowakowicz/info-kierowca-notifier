@@ -256,9 +256,9 @@ It launches Chrome in its own dedicated profile (a separate `--remote-debugging-
 opens straight into `/cases` already logged in, and suppresses the cookie-consent banner by
 pre-setting the same cookie the real banner would write on "necessary only". It then clicks
 "Zmień termin" on your booking, then "Zmień termin rezerwacji" in the confirm modal that opens —
-and stops there, on the date-range picker, with nothing about the booking changed yet. Picking the
-actual new date, the summary step, and any final confirm past that are always real clicks from
-you; no code in this project selects a date or submits a reservation change on its own.
+and, with the default settings, stops there on the date-range picker with nothing about the booking
+changed yet. You can finish the change manually or enable the options below to select and confirm
+the matching slot automatically.
 
 Skipped automatically if something's already listening on its debug port (`9555`), so a slot that
 keeps reappearing under a new signature won't pile up duplicate Chrome windows. Disable with
@@ -269,7 +269,7 @@ that's already `Potwierdzony` (confirmed) — if you don't have one, there's not
 this to click, and it'll just report that it couldn't find the button. The app reschedules the
 booking you already hold; it cannot create a new one.
 
-### Experimental: auto-selecting the matching slot and reaching the summary screen
+### Auto-selecting the matching slot and reaching the summary screen
 
 Turn on "Auto-select the matching slot" in Settings → Automation (or add `"auto_select_slot": true`
 to `config.json` by hand) to go further: after landing on the empty date-range picker, it also expands the date group that
@@ -282,11 +282,10 @@ With just this flag on, it stops there, unconditionally, on the summary/review s
 that click is automated, whether or not a matching slot was found (someone else may have taken it
 in the few seconds since the check that triggered this).
 
-**This is unverified.** It was written from screenshots of the picker, not confirmed against the
-live DOM the way the rest of this flow was, so treat it as experimental until you've watched it
-select the right row and reach the summary screen yourself. Off by default for exactly that reason.
+This option is off by default, so enabling it is an explicit choice to go beyond the manual
+reschedule-assist workflow.
 
-### Experimental: auto-confirming the reservation change
+### Auto-confirming the reservation change
 
 The summary screen (the "Potwierdź wybrany egzamin" modal — exam type, category, date/time, and
 price, with no separate payment step) has its own confirm button, "Potwierdź i przejdź dalej".
@@ -306,9 +305,8 @@ screen for you to finish by hand instead of guessing.
 
 **This is the single highest-stakes automated action in this project.** Every earlier step in the
 reschedule flow can be undone just by closing the Chrome window; this one can't — it submits a real
-change to an already-paid exam booking. It's unverified against the live DOM (written from a
-screenshot, like the slot-selection step above) and off by default for exactly that reason. Don't
-turn it on until you've confirmed the slot-selection step alone works correctly and reliably first.
+change to an already-paid exam booking. It remains off by default and requires an explicit
+confirmation when you enable it.
 
 After clicking confirm, it also reloads `/cases` and checks whether the booking now actually shows
 your slot with a confirmed status. If — and only if — that check succeeds, it updates
