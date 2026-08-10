@@ -15,6 +15,7 @@ import json
 import os
 import socket
 import struct
+import threading
 import time
 import urllib.request
 from dataclasses import dataclass
@@ -148,6 +149,80 @@ def cdp_call(sock, req_id, method, params=None):
                 raise RuntimeError(f"{method} failed: {msg['error']}")
             return msg.get("result", {})
         # else: an unrelated event fired in the meantime — keep reading
+
+
+class NetworkObserver:
+    """Collect bounded, metadata-only Network events for one explicit target."""
+    def __init__(self, host, port, target, monotonic=None):
+        self.host, self.port, self.target = host, port, target
+        self.monotonic = monotonic or time.monotonic
+        self.started = None
+        self.events, self._requests = [], {}
+        self._stop = threading.Event()
+        self._sock = None
+        self._thread = None
+        self._manager = None
+
+    def start(self):
+        current = get_page_target(self.host, self.port, _target_id(self.target))
+        manager = cdp_socket(current.websocket_url)
+        self._manager = manager
+        self._sock = manager.__enter__()
+        cdp_call(self._sock, 1, "Network.enable", {"maxTotalBufferSize": 0})
+        self.started = self.monotonic()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+        return self
+
+    def _safe_url(self, url):
+        p = urlparse(url or "")
+        if p.scheme not in ("http", "https"):
+            return ""
+        return f"{p.scheme}://{p.netloc}{p.path or '/'}"
+
+    def _run(self):
+        while not self._stop.is_set():
+            try: msg = json.loads(ws_recv_message(self._sock))
+            except Exception: break
+            self.process_message(msg)
+
+    def process_message(self, msg):
+        method, params = msg.get("method", ""), msg.get("params", {})
+        rid = params.get("requestId")
+        if method == "Network.requestWillBeSent":
+            request = params.get("request", {})
+            url = self._safe_url(request.get("url"))
+            host = (urlparse(url).hostname or "").lower()
+            if host == DOMAIN_SUFFIX or host.endswith("." + DOMAIN_SUFFIX):
+                item = {"elapsed_seconds": round(self.monotonic()-self.started, 3), "event": "request",
+                        "request_id": rid, "method": request.get("method", ""), "url": url,
+                        "resource_type": params.get("type", "")}
+                redirect = params.get("redirectResponse") or {}
+                if redirect: item["redirect_status"] = redirect.get("status")
+                self._requests[rid] = True
+                self.events.append(item)
+        elif rid in self._requests and method == "Network.responseReceived":
+            response = params.get("response", {})
+            self.events.append({"elapsed_seconds": round(self.monotonic()-self.started, 3), "event": "response",
+                                "request_id": rid, "status": response.get("status"),
+                                "url": self._safe_url(response.get("url")), "resource_type": params.get("type", "")})
+        elif rid in self._requests and method in ("Network.loadingFinished", "Network.loadingFailed"):
+            item = {"elapsed_seconds": round(self.monotonic()-self.started, 3),
+                    "event": "finished" if method.endswith("Finished") else "failed", "request_id": rid}
+            if method.endswith("Failed"):
+                item["error"] = str(params.get("errorText", ""))[:120]
+            self.events.append(item)
+
+    def stop(self):
+        self._stop.set()
+        if self._sock:
+            try: self._sock.shutdown(socket.SHUT_RDWR)
+            except Exception: pass
+        if self._thread: self._thread.join(timeout=1)
+        if self._manager:
+            try: self._manager.__exit__(None, None, None)
+            except Exception: pass
+        return list(self.events)
 
 
 def wait_for_debug_port(host, port, timeout=15):

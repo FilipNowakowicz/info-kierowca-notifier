@@ -553,8 +553,11 @@ def confirm_reschedule_cooldown_active():
     cooldown already elapsed.
     """
     try:
-        last = datetime.fromisoformat(RESCHEDULE_CONFIRM_COOLDOWN_FILE.read_text().strip())
-    except (FileNotFoundError, ValueError):
+        raw = RESCHEDULE_CONFIRM_COOLDOWN_FILE.read_text().strip()
+        if raw.startswith("{"):
+            raw = json.loads(raw)["attempted_at"]
+        last = datetime.fromisoformat(raw)
+    except (FileNotFoundError, ValueError, KeyError, TypeError, json.JSONDecodeError):
         return False
     return (datetime.now() - last).total_seconds() < RESCHEDULE_CONFIRM_COOLDOWN_SECONDS
 
