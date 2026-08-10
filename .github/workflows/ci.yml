@@ -21,3 +21,43 @@ jobs:
       - run: uv run --no-sync python -m compileall -q src tools tests
       - run: uv run --no-sync python -m unittest discover -s tests -v
       - run: uv run --no-sync python -m pyflakes src tools tests
+
+  wheel-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - uses: astral-sh/setup-uv@v6
+      - run: uv build --wheel --out-dir "${RUNNER_TEMP}/dist"
+      - run: uv venv --python 3.13 "${RUNNER_TEMP}/wheel-venv"
+      - run: uv pip install --python "${RUNNER_TEMP}/wheel-venv/bin/python" "${RUNNER_TEMP}"/dist/*.whl
+      - name: Smoke-test installed wheel outside checkout
+        working-directory: ${{ runner.temp }}
+        run: |
+          WHEEL_PYTHON="${RUNNER_TEMP}/wheel-venv/bin/python"
+          "$WHEEL_PYTHON" - <<'PY'
+          import json
+          import subprocess
+          import sys
+          from importlib.metadata import version
+          from pathlib import Path
+
+          import info_kierowca_notifier
+          from info_kierowca_notifier.paths import CATEGORIES_FILE, WORD_CENTERS_FILE
+
+          package_path = Path(info_kierowca_notifier.__file__).resolve()
+          assert "wheel-venv" in package_path.parts, package_path
+          assert version("info-kierowca-notifier") == info_kierowca_notifier.__version__
+          assert json.loads(CATEGORIES_FILE.read_text(encoding="utf-8"))
+          assert json.loads(WORD_CENTERS_FILE.read_text(encoding="utf-8"))
+
+          result = subprocess.run(
+              [sys.executable, "-m", "info_kierowca_notifier.notifier", "--version"],
+              check=True,
+              capture_output=True,
+              text=True,
+          )
+          assert info_kierowca_notifier.__version__ in result.stdout, result.stdout
+          PY

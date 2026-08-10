@@ -495,7 +495,7 @@ point (service had never run), so `systemctl --user start` reported `active` whi
 verify with `systemctl --user list-timers info-kierowca-notifier.timer` that `NEXT` is a real
 timestamp, not `-`/`n/a`.
 
-### Known gotcha: auto-relogin (auto_refresh_session.py) needs a real GUI session
+### Known gotcha: auto-relogin (`auth.session`) needs a real GUI session
 
 Triggered automatically by `src/info_kierowca_notifier/notifier.py` on `auth_expired` via `systemd-run --user`
 (`trigger_auto_refresh()`), specifically so the launched Chrome + cookie-watcher survives after the
@@ -531,7 +531,7 @@ only bypasses persisted automatic-failure backoff; it does not SIGTERM the lock 
 malformed lock files are removed before launching a new process, avoiding a replacement Chrome
 fighting over the same `--user-data-dir` as an active process.
 
-### Known gotcha: a sandboxed app.py silently hands your curls to the real instance
+### Known gotcha: a sandboxed app instance silently hands your curls to the real instance
 
 `HOME=/tmp/fake-home python -m info_kierowca_notifier` looks isolated but isn't, for a second reason beyond the
 `systemd-run` one below: `already_running()` probes `127.0.0.1:8787` *before* binding, and if
@@ -554,7 +554,7 @@ times, then systemd gives up (`start-limit-hit`). Find/kill whatever holds the p
 `systemctl --user reset-failed info-kierowca-dashboard.service` before starting again — a plain
 `start` after `start-limit-hit` is a no-op.
 
-### Known gotcha: testing app.py/auto-refresh in a sandbox on a machine with real units installed
+### Known gotcha: testing the app/auto-refresh in a sandbox on a machine with real units installed
 
 `trigger_auto_refresh()` prefers `systemd-run --user` specifically so the Chrome+QR process
 survives the triggering process exiting. That hand-off runs under the systemd user manager's own

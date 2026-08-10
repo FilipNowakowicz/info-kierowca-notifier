@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Unified entry point: a local web app (first-run setup wizard + dashboard)
 plus the background poller, all in one process — meant to be run directly
-(`python app.py`) or packaged into a single no-console binary (see
+(`python -m info_kierowca_notifier`) or packaged into a single no-console binary (see
 pyinstaller.spec) so someone can just double-click it with zero setup.
 
-Composes notifier.py (poll loop), dashboard_server.py (status page), and
-auto_refresh_session.py (Chrome/QR login) rather than reimplementing any of
+Composes notifier (poll loop), web.server (status page), and auth.session
+(Chrome/QR login) rather than reimplementing any of
 them — see each module's own docstring for what it does on its own.
 """
 import http.server
@@ -253,7 +253,7 @@ def build_config(payload):
         "auto_open_browser": bool(payload.get("auto_open_browser", True)),
     }
     # Both experimental, off-by-default — see notifier.trigger_open_browser()/
-    # open_logged_in_browser.py. auto_confirm_reschedule is meaningless without
+    # booking.reschedule. auto_confirm_reschedule is meaningless without
     # auto_select_slot (trigger_open_browser() only ever passes
     # --confirm-reschedule alongside --target-slot), so it's enforced here too
     # rather than trusting the wizard's own JS-side dependent-toggle dimming —

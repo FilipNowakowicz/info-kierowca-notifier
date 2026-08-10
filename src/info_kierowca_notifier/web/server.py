@@ -46,11 +46,11 @@ PAGE = """<!doctype html>
 
   #main { text-align: center; max-width: 800px; }
 
-  /* The headline doubles as the pause/resume control when app.py's
+  /* The headline doubles as the pause/resume control when the app module's
      toolbar script is present (see TOOLBAR_HTML, which adds the
      .ikw-pausable class plus the click/hover/focus behavior). This
      structure is inert on its own - no cursor, no hover styling - so
-     the plain read-only dashboard (dashboard_server.py run standalone)
+     the plain read-only dashboard (web.server run standalone)
      still renders correctly without implying a click it can't act on.
      The wrap's own top/bottom padding is cancelled out by an equal and
      opposite -0.3rem margin on both sides, so the padding only widens
@@ -82,7 +82,7 @@ PAGE = """<!doctype html>
      are handled the way they are above. */
   #countdown { margin-top: 2rem; font-size: 1rem; min-height: 1.25rem; opacity: 0.6; font-variant-numeric: tabular-nums; }
   #meta { margin-top: 0.4rem; font-size: 0.85rem; opacity: 0.45; }
-  /* #session-refresh-btn stays display:none here - only app.py's
+  /* #session-refresh-btn stays display:none here - only the app module's
      TOOLBAR_HTML (which backs /relogin-now) reveals and styles it, same
      reason #headline-wrap's cursor/hover styling is gated on TOOLBAR_HTML
      adding .ikw-pausable: the plain read-only dashboard has no endpoint

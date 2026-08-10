@@ -18,7 +18,7 @@ more than once concurrently — delete that file if a previous run crashed
 without cleaning up.
 
 Nothing but the two info-kierowca.pl session cookies is read or sent
-anywhere; see cdp_client.py's docstring for the debug-port security note.
+anywhere; see browser.cdp's docstring for the debug-port security note.
 """
 import argparse
 import json
@@ -204,7 +204,7 @@ def sanitize_click_diagnostics(result):
 # genuine cross-origin hop, which matches the one place that's actually
 # wanted: a fresh run of this script (new profile) should auto-click again.
 # The "is this thing clickable" heuristic, shared verbatim with
-# open_logged_in_browser.py's own click-by-text helper. This is the most
+# booking.reschedule's own click-by-text helper. This is the most
 # site-fragile code in the project — when info-kierowca.pl reshuffles its
 # markup it gets edited under pressure, so it lives in exactly one place
 # rather than in two copies that can silently drift apart.

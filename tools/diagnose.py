@@ -7,7 +7,7 @@ slow back-and-forth of "what does X look like on your machine". Built into
 its own console exe (see .github/workflows/diagnostic.yml) so it needs no
 Python install on the target machine.
 
-Reuses auto_refresh_session.py/cdp_client.py/paths.py rather than
+Reuses auth.session/browser.cdp/paths rather than
 duplicating their logic, so this diagnoses the exact same code path the
 real app runs — not a simplified stand-in that could behave differently.
 
@@ -179,7 +179,7 @@ def live_test(profile_dir, port, label, duration=20):
             f"--user-data-dir={profile_dir}",
             "--no-first-run",
             "--no-default-browser-check",
-            "--window-size=900,850",  # see auto_refresh_session.py's own comment on this value
+            "--window-size=900,850",  # see auth.session's own comment on this value
             "--app=about:blank",
         ],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
