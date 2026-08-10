@@ -25,6 +25,7 @@ from pathlib import Path
 from info_kierowca_notifier.auth import session as auto_refresh_session
 from info_kierowca_notifier import ntfy_transport
 from info_kierowca_notifier.booking import reschedule as open_logged_in_browser
+from info_kierowca_notifier.browser import chrome
 from info_kierowca_notifier.auth import relogin_control
 from info_kierowca_notifier import tls_transport
 from info_kierowca_notifier.auth.relogin_backoff import RetryBackoff
@@ -392,7 +393,7 @@ def trigger_auto_refresh(logger, config, force=False, notify_phone=True):
             remaining,
         )
         return TRIGGER_BACKOFF_ACTIVE
-    if not auto_refresh_session.chrome_available():
+    if not chrome.chrome_available():
         logger.info("outcome=auto_refresh_no_browser detail=no_chromium_found")
         if automatic:
             backoff.record_failure("browser_unavailable")
@@ -464,7 +465,7 @@ def restart_auto_refresh(
     """
     if not config.get("auto_refresh_chrome", True):
         return TRIGGER_DISABLED
-    if not auto_refresh_session.chrome_available():
+    if not chrome.chrome_available():
         return TRIGGER_NO_BROWSER
 
     if not AUTO_REFRESH_LOCK.exists():
@@ -629,7 +630,7 @@ def trigger_open_browser(logger, config, auto_click=True, target_hit=None):
     """
     if not config.get("auto_open_browser", True):
         return TRIGGER_DISABLED
-    if not auto_refresh_session.chrome_available():
+    if not chrome.chrome_available():
         logger.info("outcome=open_browser_no_browser detail=no_chromium_found")
         return TRIGGER_NO_BROWSER
     try:
