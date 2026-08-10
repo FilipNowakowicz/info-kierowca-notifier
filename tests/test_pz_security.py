@@ -31,6 +31,23 @@ class PZSecurityTests(unittest.TestCase):
         page = app.render_wizard(app.build_config(self.payload())).decode()
         self.assertIn('id="settings-pz-username" type="text"', page)
 
+    def test_pairing_is_explained_without_an_sms_test_action(self):
+        explanation = "Required for automatic Profil Zaufany login"
+        self.assertIn(explanation, templates.LOGIN_PAGE)
+        self.assertNotIn('id="test-messages"', templates.LOGIN_PAGE)
+        page = app.render_wizard(app.build_config(self.payload())).decode()
+        self.assertIn(explanation, page)
+        self.assertNotIn('id="settings-test-messages"', page)
+
+    def test_session_recovery_is_enabled_without_a_settings_toggle(self):
+        submitted = self.payload()
+        submitted["auto_refresh_chrome"] = False
+        config = app.build_config(submitted)
+        self.assertTrue(config["auto_refresh_chrome"])
+        page = app.render_wizard(config).decode()
+        self.assertNotIn('id="auto_refresh_chrome"', page)
+        self.assertNotIn("Reopen Chrome to log back in", page)
+
     def test_config_cannot_forge_credential_present_marker(self):
         submitted = self.payload()
         submitted["pz_credential_present"] = True
