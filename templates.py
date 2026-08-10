@@ -323,8 +323,8 @@ LOGIN_PAGE = """<!doctype html>
 <div id="card">
   <h1>Connect your account</h1>
   <p class="lead">Choose how the notifier should authenticate. Profil Zaufany can recover expired sessions automatically after setup.</p>
-  <div class="methods"><button id="method-mobywatel" class="on">mObywatel</button><button id="method-pz">Profil Zaufany</button></div>
-  <div id="pz-fields">
+  <div class="methods"><button id="method-pz" class="on">Profil Zaufany</button><button id="method-mobywatel">mObywatel</button></div>
+  <div id="pz-fields" style="display:block">
     <label for="pz-username">Profil Zaufany username</label>
     <div class="reveal">
       <input id="pz-username" type="password" autocomplete="username">
@@ -335,7 +335,7 @@ LOGIN_PAGE = """<!doctype html>
     <button class="secondary" id="pair-messages" type="button">Pair Google Messages Web</button>
     <div id="messages-status"></div>
   </div>
-  <button id="login-btn">Log in with mObywatel</button>
+  <button id="login-btn">Log in with Profil Zaufany</button>
   <div id="hint">A Chrome window should open — scan the QR code in the mObywatel app. This page
   continues on its own once you're logged in.</div>
   <div id="error"></div>
@@ -355,7 +355,7 @@ loginPzUsernameReveal.addEventListener('click', () => {
   syncLoginPzUsernameReveal();
 });
 syncLoginPzUsernameReveal();
-let loginMethod = 'mobywatel';
+let loginMethod = 'profil_zaufany';
 const pzFields = document.getElementById('pz-fields');
 function setMethod(method) {
   loginMethod = method; pzFields.style.display = method === 'profil_zaufany' ? 'block' : 'none';
@@ -674,7 +674,7 @@ WIZARD_PAGE = """<!doctype html>
     <fieldset>
       <legend>Authentication</legend>
       <label for="login_method">Authentication method</label>
-      <select id="login_method"><option value="mobywatel">mObywatel</option><option value="profil_zaufany">Profil Zaufany</option></select>
+      <select id="login_method"><option value="profil_zaufany">Profil Zaufany</option><option value="mobywatel">mObywatel</option></select>
       <div id="settings-pz-fields" style="display:none">
         <label for="settings-pz-username">Profil Zaufany username</label>
         <div class="reveal">
@@ -857,6 +857,7 @@ const loginMethodSelect = document.getElementById('login_method');
 const settingsPzFields = document.getElementById('settings-pz-fields');
 function updateAuthFields() { settingsPzFields.style.display = loginMethodSelect.value === 'profil_zaufany' ? 'block' : 'none'; }
 loginMethodSelect.addEventListener('change', updateAuthFields);
+updateAuthFields();
 document.getElementById('settings-pair-messages').onclick = async () => {
   const d=await (await fetch('/pair-google-messages',{method:'POST'})).json();
   document.getElementById('settings-messages-status').textContent=d.ok?'Google Messages Web opened for pairing.':'Could not open Google Messages Web.';

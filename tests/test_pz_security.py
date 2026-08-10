@@ -33,6 +33,20 @@ class PZSecurityTests(unittest.TestCase):
         self.assertIn('id="settings-pz-username" type="password"', page)
         self.assertIn('id="reveal-pz-username-settings"', page)
 
+    def test_profil_zaufany_is_the_first_run_default(self):
+        self.assertIn('id="method-pz" class="on"', templates.LOGIN_PAGE)
+        self.assertIn("let loginMethod = 'profil_zaufany'", templates.LOGIN_PAGE)
+        self.assertLess(
+            templates.LOGIN_PAGE.index('id="method-pz"'),
+            templates.LOGIN_PAGE.index('id="method-mobywatel"'),
+        )
+        page = app.render_wizard().decode()
+        self.assertLess(
+            page.index('<option value="profil_zaufany">'),
+            page.index('<option value="mobywatel">'),
+        )
+        self.assertIn("updateAuthFields();", page)
+
     def test_pairing_is_explained_without_an_sms_test_action(self):
         explanation = "Required for automatic Profil Zaufany login"
         self.assertIn(explanation, templates.LOGIN_PAGE)
