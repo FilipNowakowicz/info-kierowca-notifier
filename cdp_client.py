@@ -161,6 +161,7 @@ class NetworkObserver:
         self._stop = threading.Event()
         self._sock = None
         self._thread = None
+        self._manager = None
 
     def start(self):
         current = get_page_target(self.host, self.port, _target_id(self.target))
@@ -214,6 +215,9 @@ class NetworkObserver:
 
     def stop(self):
         self._stop.set()
+        if self._sock:
+            try: self._sock.shutdown(socket.SHUT_RDWR)
+            except Exception: pass
         if self._thread: self._thread.join(timeout=1)
         if self._manager:
             try: self._manager.__exit__(None, None, None)

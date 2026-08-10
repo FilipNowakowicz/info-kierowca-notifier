@@ -18,8 +18,10 @@ SLOT_LOST = "SLOT_LOST"
 ERROR = "ERROR"
 UNKNOWN = "UNKNOWN"
 
-CONFIRMED = ("potwierdzona", "confirmed", "aktywna", "active")
-CANCELLED = ("anulowana", "cancelled", "canceled")
+ACTIVE_STATUSES = frozenset(("potwierdzona", "aktywna", "confirmed", "active"))
+INACTIVE_STATUSES = frozenset(("anulowana", "nieaktywna", "cancelled", "canceled", "inactive"))
+UNCHANGED_MIN_ELAPSED_SECONDS = 4
+UNCHANGED_REQUIRED_OBSERVATIONS = 3
 SECRET_KEY = re.compile(r"cookie|authorization|token|secret|password|pesel|pkk|otp|value", re.I)
 LONG_NUMBER = re.compile(r"(?<!\d)\d{8,}(?!\d)")
 TOKENISH = re.compile(r"(?i)\b(?:bearer\s+)?[a-z0-9_-]{24,}\b")
@@ -56,7 +58,7 @@ def sanitize(value, key=""):
 BOOKING_CARDS_JS = r"""
 (function() {
   function visible(e) { var r=e.getBoundingClientRect(), s=getComputedStyle(e); return r.width>0&&r.height>0&&s.display!=='none'&&s.visibility!=='hidden'; }
-  var status=/Potwierdzona|Anulowana|Confirmed|Cancelled|Canceled|Aktywna|Active/i;
+  var status=/\b(?:Potwierdzona|Anulowana|Nieaktywna|Aktywna|Confirmed|Cancelled|Canceled|Inactive|Active)\b/i;
   var nodes=Array.from(document.querySelectorAll('article,[role="article"],[data-testid*="reservation"],[data-testid*="booking"],.card,[class*="card"],[class*="reservation"],[class*="booking"]'));
   var out=[], seen=new Set();
   nodes.forEach(function(el) {
@@ -67,13 +69,36 @@ BOOKING_CARDS_JS = r"""
     if (parent) { var pt=(parent.innerText||'').replace(/\s+/g,' ').trim(); if (status.test(pt)&&pt.length<600&&pt.length>text.length) return; }
     var dates=text.match(/\b\d{2}[/.\-]\d{2}[/.\-]\d{4}\b/g)||[];
     var times=text.match(/\b(?:[01]\d|2[0-3]):[0-5]\d\b/g)||[];
-    var st=(text.match(/Potwierdzona|Anulowana|Confirmed|Cancelled|Canceled|Aktywna|Active/i)||[])[0]||'';
+    var st=(text.match(/\b(?:Potwierdzona|Anulowana|Nieaktywna|Aktywna|Confirmed|Cancelled|Canceled|Inactive|Active)\b/i)||[])[0]||'';
     var exam=(text.match(/Egzamin (?:teoretyczny|praktyczny)|Theoretical|Practice/i)||[])[0]||'';
     var attrs={}; ['data-testid','data-status','role'].forEach(function(n){var v=el.getAttribute(n);if(v&&v.length<80)attrs[n]=v;});
     var key=[st,exam,dates[0]||'',times[0]||'',JSON.stringify(attrs)].join('|');
     if (!seen.has(key)) { seen.add(key); out.push({status:st,exam_type:exam,date:dates[0]||'',time:times[0]||'',attributes:attrs}); }
   });
   return out.slice(0,20);
+})()
+"""
+
+BOOKING_DIAGNOSTIC_CANDIDATES_JS = r"""
+(function() {
+  function visible(e) { var r=e.getBoundingClientRect(),s=getComputedStyle(e); return r.width>0&&r.height>0&&s.display!=='none'&&s.visibility!=='hidden'; }
+  function meta(e) { return e ? {tag:e.tagName.toLowerCase(),role:(e.getAttribute('role')||'').slice(0,60),class_name:String(e.className||'').slice(0,120),test_id:(e.getAttribute('data-testid')||'').slice(0,80)} : null; }
+  var status=/\b(?:Potwierdzona|Anulowana|Nieaktywna|Aktywna|Confirmed|Cancelled|Canceled|Inactive|Active)\b/gi;
+  var date=/\b\d{2}[/.\-]\d{2}[/.\-]\d{4}\b/g;
+  var time=/\b(?:[01]\d|2[0-3]):[0-5]\d\b/g;
+  var exam=/\b(?:Egzamin (?:teoretyczny|praktyczny)|Theoretical|Practice)\b/gi;
+  var nodes=Array.from(document.querySelectorAll('article,section,li,div,[role="article"],[role="group"],[role="region"]'));
+  var out=[],seen=new Set();
+  nodes.forEach(function(el) {
+    if (out.length>=25 || !visible(el)) return;
+    var text=(el.innerText||'').replace(/\s+/g,' ').trim();
+    if (text.length<8 || text.length>1600) return;
+    var statuses=text.match(status)||[],dates=text.match(date)||[],times=text.match(time)||[],exams=text.match(exam)||[];
+    if (!(statuses.length || exams.length || (dates.length && times.length))) return;
+    var item={tag:el.tagName.toLowerCase(),role:(el.getAttribute('role')||'').slice(0,60),class_name:String(el.className||'').slice(0,120),test_id:(el.getAttribute('data-testid')||'').slice(0,80),status_tokens:Array.from(new Set(statuses)).slice(0,6),dates:Array.from(new Set(dates)).slice(0,6),times:Array.from(new Set(times)).slice(0,6),exam_types:Array.from(new Set(exams)).slice(0,6),text_length:text.length,parent:meta(el.parentElement),grandparent:meta(el.parentElement&&el.parentElement.parentElement)};
+    var key=JSON.stringify(item); if (!seen.has(key)) { seen.add(key); out.push(item); }
+  });
+  return out;
 })()
 """
 
@@ -98,14 +123,28 @@ def normalize_card(card):
 
 
 def active(card):
-    status = card.get("status", "").casefold()
-    return any(x in status for x in CONFIRMED) and not any(x in status for x in CANCELLED)
+    status = " ".join(str(card.get("status", "")).casefold().split())
+    if status in INACTIVE_STATUSES:
+        return False
+    return status in ACTIVE_STATUSES
+
+
+def normalize_exam_type(value):
+    return " ".join(str(value or "").casefold().split())
 
 
 def matches_target(card, target):
     return (active(card) and card.get("date") == target["date"] and
             card.get("time") == target["time"] and
-            target["exam_type"].casefold() in card.get("exam_type", "").casefold())
+            normalize_exam_type(card.get("exam_type")) ==
+            normalize_exam_type(target.get("exam_type")))
+
+
+def same_booking(left, right):
+    return (left.get("date") == right.get("date") and
+            left.get("time") == right.get("time") and
+            normalize_exam_type(left.get("exam_type")) ==
+            normalize_exam_type(right.get("exam_type")))
 
 
 def classify_cards(cards, target, baseline):
@@ -123,7 +162,7 @@ def classify_cards(cards, target, baseline):
     if len(old_active) == 1 and len(current_active) == 1:
         old = old_active[0]
         now = current_active[0]
-        if all(now.get(k) == old.get(k) for k in ("date", "time", "exam_type")):
+        if same_booking(now, old):
             return VERIFIED_UNCHANGED
     return UNKNOWN
 
@@ -132,17 +171,49 @@ def capture_booking_cards(host, port, target):
     return [normalize_card(c) for c in (cdp_client.evaluate_in_page(host, port, BOOKING_CARDS_JS, target=target) or [])]
 
 
-def wait_for_booking_cards(host, port, target, timeout=12, interval=0.5):
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
+def capture_booking_diagnostic_candidates(host, port, target):
+    raw = cdp_client.evaluate_in_page(
+        host, port, BOOKING_DIAGNOSTIC_CANDIDATES_JS, target=target
+    ) or []
+    return sanitize(raw[:25])
+
+
+def _card_structure(cards):
+    return json.dumps(sanitize(cards), sort_keys=True, ensure_ascii=False)
+
+
+def capture_stable_booking_baseline(host, port, target, timeout=12, interval=0.5,
+                                    monotonic=time.monotonic, sleep=time.sleep):
+    """Prefer two identical non-empty card snapshots; retain bounded diagnostics."""
+    deadline = monotonic() + timeout
+    last_cards, last_key, stable_count, candidates = [], None, 0, []
+    while monotonic() < deadline:
         try:
             cards = capture_booking_cards(host, port, target)
-            if cards:
-                return cards
         except Exception:
-            pass
-        time.sleep(interval)
-    return []
+            cards = []
+        try:
+            candidates = capture_booking_diagnostic_candidates(host, port, target)
+        except Exception:
+            candidates = candidates or []
+        if cards:
+            key = _card_structure(cards)
+            stable_count = stable_count + 1 if key == last_key else 1
+            last_cards, last_key = cards, key
+            if stable_count >= 2:
+                return last_cards, candidates
+        else:
+            stable_count, last_key = 0, None
+        sleep(interval)
+    return last_cards, candidates
+
+
+def wait_for_booking_cards(host, port, target, timeout=12, interval=0.5):
+    """Compatibility wrapper for callers that only need the stable card list."""
+    cards, _candidates = capture_stable_booking_baseline(
+        host, port, target, timeout=timeout, interval=interval
+    )
+    return cards
 
 
 def capture_page(host, port, target, elapsed):
@@ -169,16 +240,28 @@ def page_fingerprint(snapshot):
     return {key: value for key, value in snapshot.items() if key != "elapsed_seconds"}
 
 
+def update_unchanged_evidence(result, elapsed, consecutive):
+    """Return the current consecutive unchanged count and whether it is stable."""
+    if result != VERIFIED_UNCHANGED:
+        return 0, False
+    consecutive += 1
+    ready = (elapsed >= UNCHANGED_MIN_ELAPSED_SECONDS and
+             consecutive >= UNCHANGED_REQUIRED_OBSERVATIONS)
+    return consecutive, ready
+
+
 @dataclass
 class DiagnosticRecorder:
     target_slot: dict
     baseline_booking: list
     transaction_id: str = ""
+    baseline_booking_candidates: list = None
 
     def __post_init__(self):
         self.transaction_id = self.transaction_id or uuid.uuid4().hex[:12]
-        self.data = {"schema_version": 1, "transaction_id": self.transaction_id,
+        self.data = {"schema_version": 2, "transaction_id": self.transaction_id,
                      "target_slot": sanitize(self.target_slot), "baseline_booking": sanitize(self.baseline_booking),
+                     "baseline_booking_candidates": sanitize(self.baseline_booking_candidates or []),
                      "states": [], "post_submit_pages": [], "network_events": [],
                      "verification_attempts": [], "final_outcome": UNKNOWN}
 
@@ -208,6 +291,8 @@ def run_post_submit(host, port, transaction_target, recorder, *, timeout=24, int
         recorder.data["post_submit_pages"].append(last_page)
     verification_target = None
     outcome = UNKNOWN
+    consecutive_unchanged = 0
+    unchanged_ready = False
     recorder.state("OBSERVE_POST_SUBMIT", target_id=transaction_target.id)
     try:
         verification_target = cdp_client.create_page_target(host, port)
@@ -229,18 +314,38 @@ def run_post_submit(host, port, transaction_target, recorder, *, timeout=24, int
             break
         if verification_target:
             try:
+                try:
+                    candidates = capture_booking_diagnostic_candidates(
+                        host, port, verification_target
+                    )
+                except Exception as exc:
+                    candidates = []
+                    recorder.state("diagnostic_candidates_unavailable", error=type(exc).__name__)
                 cards = capture_booking_cards(host, port, verification_target)
                 current = classify_cards(cards, recorder.target_slot, recorder.baseline_booking)
-                recorder.data["verification_attempts"].append({"elapsed_seconds": round(elapsed, 3), "cards": cards, "result": current})
+                consecutive_unchanged, unchanged_ready = update_unchanged_evidence(
+                    current, elapsed, consecutive_unchanged
+                )
+                recorder.data["verification_attempts"].append({
+                    "elapsed_seconds": round(elapsed, 3), "cards": cards,
+                    "diagnostic_candidates": candidates, "result": current,
+                    "consecutive_unchanged": consecutive_unchanged,
+                })
                 print(f"transaction={recorder.transaction_id} verification={current.lower()}")
                 if current == VERIFIED_SUCCESS:
                     outcome = current; break
-                if current == VERIFIED_UNCHANGED: outcome = current
             except Exception as exc:
-                recorder.data["verification_attempts"].append({"elapsed_seconds": round(elapsed, 3), "error": type(exc).__name__, "result": UNKNOWN})
+                recorder.data["verification_attempts"].append({
+                    "elapsed_seconds": round(elapsed, 3), "cards": [],
+                    "diagnostic_candidates": candidates, "error": type(exc).__name__,
+                    "result": UNKNOWN,
+                })
                 verification_target = None
-                outcome = UNKNOWN
+                consecutive_unchanged = 0
+                unchanged_ready = False
         sleep(interval)
+    if outcome != VERIFIED_SUCCESS:
+        outcome = VERIFIED_UNCHANGED if unchanged_ready else UNKNOWN
     if outcome != VERIFIED_SUCCESS and looks_like_further_confirmation(last_page, initial):
         outcome = NEEDS_FURTHER_CONFIRMATION
     recorder.data["final_outcome"] = outcome

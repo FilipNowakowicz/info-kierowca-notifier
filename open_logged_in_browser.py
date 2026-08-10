@@ -358,7 +358,7 @@ def wait_and_click(host, port, text, timeout=20, target=None):
 
 
 def try_select_target_slot(host, port, target_slot_json, confirm=False, page_target=None,
-                           baseline_booking=None):
+                           baseline_booking=None, baseline_booking_candidates=None):
     """Best-effort continuation of the auto-click-through, gated behind
     --target-slot (itself only ever passed when config's experimental
     auto_select_slot flag is on — see notifier.trigger_open_browser()).
@@ -425,7 +425,10 @@ def try_select_target_slot(host, port, target_slot_json, confirm=False, page_tar
     time_str = dt.strftime("%H:%M")
     transaction_target = {"exam_type": exam_label, "date": date_str, "time": time_str,
                           "word_id": target.get("word_id", target.get("word", ""))}
-    recorder = rt.DiagnosticRecorder(transaction_target, baseline_booking or []) if confirm else None
+    recorder = rt.DiagnosticRecorder(
+        transaction_target, baseline_booking or [],
+        baseline_booking_candidates=baseline_booking_candidates or [],
+    ) if confirm else None
     if recorder:
         recorder.state("CAPTURE_BASELINE_BOOKING")
         print(f"transaction={recorder.transaction_id} state=baseline_captured cards={len(recorder.baseline_booking)}")
@@ -633,9 +636,12 @@ def main():
     cdp_client.bring_target_to_front("127.0.0.1", args.port, page_target)
 
     baseline_booking = []
+    baseline_booking_candidates = []
     if args.target_slot and args.confirm_reschedule:
         try:
-            baseline_booking = rt.wait_for_booking_cards("127.0.0.1", args.port, page_target)
+            baseline_booking, baseline_booking_candidates = rt.capture_stable_booking_baseline(
+                "127.0.0.1", args.port, page_target
+            )
             print(f"Captured {len(baseline_booking)} structural baseline booking card(s).")
         except Exception as exc:
             print(f"Couldn't capture baseline booking cards ({type(exc).__name__}); verification will fail closed.")
@@ -651,6 +657,7 @@ def main():
                 try_select_target_slot(
                     "127.0.0.1", args.port, args.target_slot, confirm=args.confirm_reschedule,
                     page_target=page_target, baseline_booking=baseline_booking,
+                    baseline_booking_candidates=baseline_booking_candidates,
                 )
             else:
                 print("Pick the new date and confirm yourself from here.")
