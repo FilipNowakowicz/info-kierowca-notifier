@@ -53,11 +53,25 @@ class SearchStartDateTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Earliest acceptable exam date"):
             app.build_config(payload(search_start_date="20/08/2026"))
 
+    def test_config_rejects_a_search_start_on_or_after_current_booking(self):
+        with patch("app.datetime") as mocked_datetime:
+            mocked_datetime.now.return_value.date.return_value = date(2026, 8, 9)
+            mocked_datetime.fromisoformat.side_effect = __import__("datetime").datetime.fromisoformat
+            for search_start in ("2026-08-25", "2026-08-26"):
+                with self.subTest(search_start=search_start), self.assertRaisesRegex(
+                    ValueError, "before the current booking date"
+                ):
+                    app.build_config(payload(
+                        current_slot_date="2026-08-25", search_start_date=search_start
+                    ))
+
     def test_wizard_has_an_optional_localized_date_control(self):
         page = app.render_wizard().decode("utf-8")
         self.assertIn('id="search_start_date"', page)
         self.assertIn("Earliest acceptable exam date (optional)", page)
-        self.assertIn("Search from today", page)
+        self.assertIn('class="datepick-clear"', page)
+        self.assertNotIn('id="clear-search-start-date">Search from today</button>', page)
+        self.assertIn("dayBeforeBooking.setDate(dayBeforeBooking.getDate() - 1)", page)
 
     def test_booking_prerequisite_can_be_dismissed_without_touching_config(self):
         page = app.render_wizard().decode("utf-8")

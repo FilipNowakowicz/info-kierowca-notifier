@@ -26,10 +26,43 @@ class PZSecurityTests(unittest.TestCase):
         self.assertNotIn("SUPER_SECRET_PZ_PASSWORD_123", page)
         self.assertNotIn("pz_password", config)
 
-    def test_pz_username_inputs_use_themed_text_input_type(self):
-        self.assertIn('id="pz-username" type="text"', templates.LOGIN_PAGE)
+    def test_pz_username_inputs_are_concealed_with_reveal_controls(self):
+        self.assertIn('id="pz-username" type="password"', templates.LOGIN_PAGE)
+        self.assertIn('id="reveal-pz-username"', templates.LOGIN_PAGE)
         page = app.render_wizard(app.build_config(self.payload())).decode()
-        self.assertIn('id="settings-pz-username" type="text"', page)
+        self.assertIn('id="settings-pz-username" type="password"', page)
+        self.assertIn('id="reveal-pz-username-settings"', page)
+
+    def test_profil_zaufany_is_the_first_run_default(self):
+        self.assertIn('id="method-pz" class="on"', templates.LOGIN_PAGE)
+        self.assertIn("let loginMethod = 'profil_zaufany'", templates.LOGIN_PAGE)
+        self.assertLess(
+            templates.LOGIN_PAGE.index('id="method-pz"'),
+            templates.LOGIN_PAGE.index('id="method-mobywatel"'),
+        )
+        page = app.render_wizard().decode()
+        self.assertLess(
+            page.index('<option value="profil_zaufany">'),
+            page.index('<option value="mobywatel">'),
+        )
+        self.assertIn("updateAuthFields();", page)
+
+    def test_pairing_is_explained_without_an_sms_test_action(self):
+        explanation = "Required for automatic Profil Zaufany login"
+        self.assertIn(explanation, templates.LOGIN_PAGE)
+        self.assertNotIn('id="test-messages"', templates.LOGIN_PAGE)
+        page = app.render_wizard(app.build_config(self.payload())).decode()
+        self.assertIn(explanation, page)
+        self.assertNotIn('id="settings-test-messages"', page)
+
+    def test_session_recovery_is_enabled_without_a_settings_toggle(self):
+        submitted = self.payload()
+        submitted["auto_refresh_chrome"] = False
+        config = app.build_config(submitted)
+        self.assertTrue(config["auto_refresh_chrome"])
+        page = app.render_wizard(config).decode()
+        self.assertNotIn('id="auto_refresh_chrome"', page)
+        self.assertNotIn("Reopen Chrome to log back in", page)
 
     def test_config_cannot_forge_credential_present_marker(self):
         submitted = self.payload()

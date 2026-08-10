@@ -46,9 +46,9 @@ Pair Google Messages Web once in the app's dedicated Chrome profile so fresh
 PZePUAP verification messages can be read during unattended relogin. If no
 secure credential backend is available, Profil Zaufany setup fails closed.
 
-The government and Google page structure is external and may change. Use the
-Settings actions **Pair Google Messages Web** and **Test SMS extraction**, then
-watch one complete live login before relying on unattended recovery.
+Pairing Google Messages Web is required for automatic Profil Zaufany login and
+session recovery. Because the government and Google page structure is external
+and may change, watch one complete live login before relying on unattended recovery.
 
 It checks the same two endpoints info-kierowca.pl's own site uses to show you slots — it just
 does that automatically, on a timer, instead of you refreshing the page by hand. Checking is

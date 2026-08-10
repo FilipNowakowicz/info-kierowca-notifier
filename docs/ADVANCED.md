@@ -47,8 +47,8 @@ extra setup.
    ```
    uv run python app.py
    ```
-   Select Profil Zaufany, enter the username and password, pair Google Messages Web, and use
-   **Test SMS extraction** before completing login. The password is saved only through the OS
+   Select Profil Zaufany, enter the username and password, and pair Google Messages Web before
+   completing login. Pairing is required so the app can read the one-time SMS code. The password is saved only through the OS
    credential backend. If no supported secure backend is available, setup stops without falling
    back to plaintext storage.
 
@@ -98,7 +98,7 @@ extra setup.
    | `earliest_slot_hour` / `latest_slot_hour` *(optional, default `0` / `24`)* | Preferred time-of-day window in whole hours, `latest` exclusive. A slot outside `[earliest, latest)` is ignored entirely — no push, no dashboard entry, nothing in history. Defaults span the whole day. Set with the dashboard's dual-handle time slider. |
    | `phone_alerts` *(optional, default `true`)* | Whether a slot that beats your booked date sends a phone push at all. Set to `false` to just watch the dashboard silently; the dashboard's red/gray colouring and `auto_open_browser` still work. |
    | `phone_alerts_relogin` *(optional, default `true`)* | Whether login recovery may send a phone push. With mObywatel this asks for a QR scan; with Profil Zaufany it reports an automatic-login failure that needs attention. Independent of slot-alert pushes. |
-   | `auto_refresh_chrome` *(optional, default `true`)* | Whether an `auth_expired` outcome should automatically launch `auto_refresh_session.py` (see below). Set to `false` to fall back to a manual relogin. |
+   | `auto_refresh_chrome` *(optional, app-managed as `true`)* | Whether an `auth_expired` outcome should automatically launch `auto_refresh_session.py` (see below). The app keeps this enabled: mObywatel reopens the QR screen, while Profil Zaufany logs in automatically. Advanced headless setups may set it to `false` directly to require manual relogin. |
    | `auto_open_browser` *(optional, default `true`)* | Whether a found slot that beats your booked date should also launch `open_logged_in_browser.py` (see [Reschedule assist](#reschedule-assist) below). Set to `false` to disable. |
 
    Slots are only ever considered within 31 days out — that's a hard line on info-kierowca.pl
@@ -224,10 +224,10 @@ Chrome, even though Profil Zaufany needs no interaction once configured. If
 automatic browser recovery (`auto_refresh_chrome: false`) and populate `session.json` manually.
 
 For Profil Zaufany, keep the dedicated Chrome profile paired with Google Messages Web and leave
-the PZePUAP conversation available. Use **Pair Google Messages Web** and **Test SMS extraction** in
-Settings after a phone/browser reset or whenever automatic login reports that the provider is
-unavailable. Government and Google page markup is external, so observe at least one complete live
-login before relying on it unattended.
+the PZePUAP conversation available. Use **Pair Google Messages Web** in Settings after a
+phone/browser reset or whenever automatic login reports that the provider is unavailable.
+Government and Google page markup is external, so observe at least one complete live login before
+relying on it unattended.
 
 **systemd note:** the launch is handed off via `systemd-run --user` specifically so the Chrome +
 watcher process survives after the triggering oneshot `info-kierowca-notifier.service` run exits

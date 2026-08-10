@@ -204,7 +204,7 @@ def build_config(payload):
     # inside the poll loop where loop()'s except-Exception swallowed it —
     # freezing the dashboard on its last status with nothing to explain why.
     try:
-        datetime.fromisoformat(current_slot_date)
+        parsed_current_slot = datetime.fromisoformat(current_slot_date).date()
     except ValueError:
         raise ValueError("Current slot date must be a date like 2026-09-14")
 
@@ -220,6 +220,8 @@ def build_config(payload):
         horizon = today + timedelta(days=notifier.MAX_DAYS_AHEAD)
         if not today <= parsed_search_start <= horizon:
             raise ValueError("Earliest acceptable exam date must be within the next 31 days")
+        if parsed_search_start >= parsed_current_slot:
+            raise ValueError("Earliest acceptable exam date must be before the current booking date")
     else:
         search_start = ""
 
@@ -244,7 +246,10 @@ def build_config(payload):
         "latest_slot_hour": latest_slot_hour,
         "phone_alerts": bool(payload.get("phone_alerts", True)),
         "phone_alerts_relogin": bool(payload.get("phone_alerts_relogin", True)),
-        "auto_refresh_chrome": bool(payload.get("auto_refresh_chrome", True)),
+        # Recovery is part of the selected authentication flow rather than a
+        # wizard preference: mObywatel reopens the QR screen, while Profil
+        # Zaufany performs its automatic credential + SMS login.
+        "auto_refresh_chrome": True,
         "auto_open_browser": bool(payload.get("auto_open_browser", True)),
     }
     # Both experimental, off-by-default — see notifier.trigger_open_browser()/

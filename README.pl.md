@@ -35,9 +35,10 @@ logowania można było odczytać świeżą wiadomość weryfikacyjną PZePUAP. G
 bezpieczny magazyn poświadczeń jest niedostępny, konfiguracja kończy się
 bezpiecznym błędem bez zapisu hasła jawnym tekstem.
 
-Struktura stron rządowych i Google może się zmienić. Użyj w Ustawieniach opcji
-**Sparuj Google Messages Web** oraz **Przetestuj odczyt SMS**, a przed włączeniem
-trybu bezobsługowego obserwuj jedno pełne logowanie na żywo.
+Sparowanie Google Messages Web jest wymagane do automatycznego logowania przez
+Profil Zaufany i odnawiania sesji. Struktura stron rządowych i Google może się
+zmienić, dlatego przed włączeniem trybu bezobsługowego obserwuj jedno pełne
+logowanie na żywo.
 
 Program sprawdza te same dwa endpointy, których używa strona info-kierowca.pl do wyświetlania terminów. Robi to automatycznie, według zegara, zamiast ręcznego odświeżania strony. Sprawdzanie jest ściśle tylko do odczytu: nie rezerwuje ani nie wykonuje żadnego działania poza sprawdzeniem dostępności.
 

@@ -297,10 +297,17 @@ LOGIN_PAGE = """<!doctype html>
   button:hover { background: var(--accent-soft); }
   button:disabled { opacity: 0.6; cursor: default; }
   input { width:100%; padding:0.72rem; margin:0.35rem 0; border-radius:7px; border:1px solid #555; background:#262626; color:#eee; }
+  .reveal { position: relative; }
+  .reveal input { padding-right: 2.7rem; }
+  .reveal-btn { position:absolute; top:50%; right:0.35rem; transform:translateY(-50%); width:auto; padding:0.35rem;
+    background:none; color:rgba(238,238,238,0.5); display:grid; place-items:center; }
+  .reveal-btn:hover { background:none; color:var(--accent-soft); }
+  .icon { width:18px; height:18px; display:block; }
   .methods { display:flex; gap:0.5rem; margin:1rem 0; }
   .methods button { background:#333; color:#eee; }
   .methods button.on { background:var(--accent); color:#1c1c1c; }
   #pz-fields { display:none; text-align:left; margin-bottom:0.8rem; }
+  .pz-pairing-description { opacity: 0.65; font-size: 0.85rem; line-height: 1.4; margin: 0.1rem 0 0.35rem; }
   .secondary { margin-top:0.5rem; background:#333; color:#eee; }
   #hint { opacity: 0.65; font-size: 0.88rem; margin-top: 1.1rem; display: none; }
   #hint.show { display: block; }
@@ -316,15 +323,19 @@ LOGIN_PAGE = """<!doctype html>
 <div id="card">
   <h1>Connect your account</h1>
   <p class="lead">Choose how the notifier should authenticate. Profil Zaufany can recover expired sessions automatically after setup.</p>
-  <div class="methods"><button id="method-mobywatel" class="on">mObywatel</button><button id="method-pz">Profil Zaufany</button></div>
-  <div id="pz-fields">
-    <label for="pz-username">Profil Zaufany username</label><input id="pz-username" type="text" autocomplete="username">
+  <div class="methods"><button id="method-pz" class="on">Profil Zaufany</button><button id="method-mobywatel">mObywatel</button></div>
+  <div id="pz-fields" style="display:block">
+    <label for="pz-username">Profil Zaufany username</label>
+    <div class="reveal">
+      <input id="pz-username" type="password" autocomplete="username">
+      <button type="button" class="reveal-btn" id="reveal-pz-username" aria-label="Show or hide Profil Zaufany username"></button>
+    </div>
     <label for="pz-password">Profil Zaufany password</label><input id="pz-password" type="password" autocomplete="current-password">
+    <div class="pz-pairing-description">Required for automatic Profil Zaufany login: pairing lets the app read the one-time SMS code from Google Messages.</div>
     <button class="secondary" id="pair-messages" type="button">Pair Google Messages Web</button>
-    <button class="secondary" id="test-messages" type="button">Test SMS extraction</button>
     <div id="messages-status"></div>
   </div>
-  <button id="login-btn">Log in with mObywatel</button>
+  <button id="login-btn">Log in with Profil Zaufany</button>
   <div id="hint">A Chrome window should open — scan the QR code in the mObywatel app. This page
   continues on its own once you're logged in.</div>
   <div id="error"></div>
@@ -334,7 +345,17 @@ LOGIN_PAGE = """<!doctype html>
 const loginBtn = document.getElementById('login-btn');
 const loginHint = document.getElementById('hint');
 const loginError = document.getElementById('error');
-let loginMethod = 'mobywatel';
+const LOGIN_EYE = '<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>';
+const LOGIN_EYE_OFF = '<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.9 4.24A9.1 9.1 0 0 1 12 4c6.5 0 10 8 10 8a18 18 0 0 1-2.16 3.19M6.6 6.6A18 18 0 0 0 2 12s3.5 7 10 7a9 9 0 0 0 5.4-1.6"/><path d="m2 2 20 20"/></svg>';
+const loginPzUsername = document.getElementById('pz-username');
+const loginPzUsernameReveal = document.getElementById('reveal-pz-username');
+function syncLoginPzUsernameReveal() { loginPzUsernameReveal.innerHTML = loginPzUsername.type === 'password' ? LOGIN_EYE : LOGIN_EYE_OFF; }
+loginPzUsernameReveal.addEventListener('click', () => {
+  loginPzUsername.type = loginPzUsername.type === 'password' ? 'text' : 'password';
+  syncLoginPzUsernameReveal();
+});
+syncLoginPzUsernameReveal();
+let loginMethod = 'profil_zaufany';
 const pzFields = document.getElementById('pz-fields');
 function setMethod(method) {
   loginMethod = method; pzFields.style.display = method === 'profil_zaufany' ? 'block' : 'none';
@@ -348,12 +369,6 @@ document.getElementById('pair-messages').onclick = async () => {
   const d = await (await fetch('/pair-google-messages', {method:'POST'})).json();
   document.getElementById('messages-status').textContent = d.ok ? 'Google Messages Web opened for pairing.' : 'Could not open Google Messages Web.';
 };
-document.getElementById('test-messages').onclick = async () => {
-  const d = await (await fetch('/test-google-messages', {method:'POST'})).json();
-  const text = {found:'SMS extraction is working — a PZePUAP verification message was detected.', no_current_otp:'PZePUAP conversation found, but no current OTP was detected.', stale_otp:'Only a stale PZePUAP OTP was found.', no_conversation:'PZePUAP conversation was not found.', not_paired:'Google Messages is not paired.', page_structure_unsupported:'Google Messages page structure is unsupported.', messages_target_unavailable:'Google Messages target is unavailable.'};
-  document.getElementById('messages-status').textContent = text[d.status] || 'SMS extraction test failed.';
-};
-
 loginBtn.addEventListener('click', async () => {
   loginBtn.disabled = true;
   loginError.classList.remove('show');
@@ -603,6 +618,14 @@ WIZARD_PAGE = """<!doctype html>
   /* custom date picker */
   .datepick { position: relative; margin-bottom: 0.3rem; }
   .datepick-input { cursor: pointer; margin-bottom: 0 !important; }
+  .datepick-input.has-clear { padding-right: 2.5rem; }
+  .datepick-clear { display: none; position: absolute; top: 50%; right: 0.35rem; transform: translateY(-50%);
+    width: 2rem; height: 2rem; padding: 0; border: none; border-radius: 6px; background: transparent;
+    color: rgba(238,238,238,0.55); cursor: pointer; font-size: 1.15rem; line-height: 1; }
+  .datepick-clear.visible { display: block; }
+  .datepick-clear:hover { background: #333; color: var(--accent-soft); }
+  .datepick-clear:focus-visible { outline: 2px solid var(--accent-soft); outline-offset: 1px; }
+  .datepick + .hint { margin-top: 0.45rem; }
   .calendar { display: none; position: absolute; top: calc(100% + 6px); left: 0; z-index: 30;
     width: 288px; max-width: 100%; background: #262626; border: 1px solid #3d3d3d; border-radius: 10px;
     padding: 0.8rem; box-shadow: 0 14px 34px rgba(0,0,0,0.55); }
@@ -651,13 +674,17 @@ WIZARD_PAGE = """<!doctype html>
     <fieldset>
       <legend>Authentication</legend>
       <label for="login_method">Authentication method</label>
-      <select id="login_method"><option value="mobywatel">mObywatel</option><option value="profil_zaufany">Profil Zaufany</option></select>
+      <select id="login_method"><option value="profil_zaufany">Profil Zaufany</option><option value="mobywatel">mObywatel</option></select>
       <div id="settings-pz-fields" style="display:none">
-        <label for="settings-pz-username">Profil Zaufany username</label><input id="settings-pz-username" type="text" autocomplete="username">
+        <label for="settings-pz-username">Profil Zaufany username</label>
+        <div class="reveal">
+          <input id="settings-pz-username" type="password" autocomplete="username">
+          <button type="button" class="reveal-btn" id="reveal-pz-username-settings" aria-label="Show or hide Profil Zaufany username"></button>
+        </div>
         <label for="settings-pz-password">Profil Zaufany password</label><input id="settings-pz-password" type="password" autocomplete="new-password" placeholder="Leave blank to keep the saved password">
         <div class="hint" id="password-status">No Profil Zaufany password is saved. Enter it to enable automatic login.</div>
+        <div class="hint">Required for automatic Profil Zaufany login: pairing lets the app read the one-time SMS code from Google Messages.</div>
         <button type="button" class="cat-more" id="settings-pair-messages">Pair Google Messages Web</button>
-        <button type="button" class="cat-more" id="settings-test-messages">Test SMS extraction</button>
         <div class="hint" id="settings-messages-status"></div>
       </div>
     </fieldset>
@@ -716,12 +743,12 @@ WIZARD_PAGE = """<!doctype html>
 
       <label for="search_start_date_display" style="margin-top:1rem;">Earliest acceptable exam date (optional)</label>
       <div class="datepick" id="search-start-datepick">
-        <input type="text" class="datepick-input" id="search_start_date_display" placeholder="Select a date" readonly>
+        <input type="text" class="datepick-input has-clear" id="search_start_date_display" placeholder="Select a date" readonly>
+        <button type="button" class="datepick-clear" id="clear-search-start-date" aria-label="Clear earliest acceptable date" title="Clear earliest acceptable date">&times;</button>
         <input type="hidden" id="search_start_date">
         <div class="calendar" id="search-start-calendar"></div>
       </div>
       <div class="hint">Ignore slots before this date. Leave blank to search from today; the site searches at most 31 days ahead.</div>
-      <button type="button" class="cat-more" id="clear-search-start-date">Search from today</button>
 
       <div class="freq-head" style="margin-top:1rem;">
         <label for="time_from_slider">Preferred time of day</label>
@@ -788,13 +815,6 @@ WIZARD_PAGE = """<!doctype html>
 
       <div class="toggle-row">
         <div class="toggle-text">
-          <div class="tt-title">Reopen Chrome to log back in</div>
-          <div class="tt-sub">When your session expires, relaunch Chrome at the login screen so you can scan the QR again.</div>
-        </div>
-        <div class="switch on" id="auto_refresh_chrome" role="switch" aria-checked="true" tabindex="0"></div>
-      </div>
-      <div class="toggle-row">
-        <div class="toggle-text">
           <div class="tt-title">Open my booking when a slot beats your booked date</div>
           <div class="tt-sub">Opens a logged-in browser at your booking's "change date" screen. You still pick the date and confirm yourself.</div>
         </div>
@@ -837,13 +857,10 @@ const loginMethodSelect = document.getElementById('login_method');
 const settingsPzFields = document.getElementById('settings-pz-fields');
 function updateAuthFields() { settingsPzFields.style.display = loginMethodSelect.value === 'profil_zaufany' ? 'block' : 'none'; }
 loginMethodSelect.addEventListener('change', updateAuthFields);
+updateAuthFields();
 document.getElementById('settings-pair-messages').onclick = async () => {
   const d=await (await fetch('/pair-google-messages',{method:'POST'})).json();
   document.getElementById('settings-messages-status').textContent=d.ok?'Google Messages Web opened for pairing.':'Could not open Google Messages Web.';
-};
-document.getElementById('settings-test-messages').onclick = async () => {
-  const d=await (await fetch('/test-google-messages',{method:'POST'})).json();
-  document.getElementById('settings-messages-status').textContent=d.status==='found'?'SMS extraction is working — a PZePUAP verification message was detected.':'SMS extraction status: '+d.status;
 };
 // True when this page is loaded inside the dashboard's Settings modal
 // (see TOOLBAR_HTML's #ikw-settings-frame) rather than as its own top-level
@@ -1038,7 +1055,6 @@ function applyNtfyDim() {
 }
 wireSwitch(phoneAlertsSwitch, applyNtfyDim);
 wireSwitch(phoneAlertsReloginSwitch, applyNtfyDim);
-wireSwitch(document.getElementById('auto_refresh_chrome'));
 wireSwitch(document.getElementById('auto_open_browser'));
 
 // auto_confirm_reschedule requires auto_select_slot — dim/disable it (and
@@ -1226,6 +1242,7 @@ function wireReveal(input, btn) {
 }
 const pkkInput = document.getElementById('profile_number');
 const pkkSync = wireReveal(pkkInput, document.getElementById('reveal-pkk'));
+wireReveal(document.getElementById('settings-pz-username'), document.getElementById('reveal-pz-username-settings'));
 const ntfyInput = document.getElementById('ntfy_topic');
 wireReveal(ntfyInput, document.getElementById('reveal-ntfy'));
 
@@ -1308,7 +1325,8 @@ function renderCalendar() {
     if (sameDay(date, todayDate)) cell.classList.add('today');
     if (sameDay(date, selectedDate)) cell.classList.add('selected');
     if (date >= todayDate) cell.addEventListener('click', (e) => {
-      e.stopPropagation(); selectedDate = date; dpValue.value = isoOf(date); dpInput.value = fmtDate(date); closeCalendar();
+      e.stopPropagation(); selectedDate = date; dpValue.value = isoOf(date); dpInput.value = fmtDate(date);
+      updateSearchStartBound(); closeCalendar();
     });
     grid.appendChild(cell);
   }
@@ -1326,10 +1344,29 @@ document.addEventListener('click', (e) => { if (!document.getElementById('datepi
 const sdpInput = document.getElementById('search_start_date_display');
 const sdpValue = document.getElementById('search_start_date');
 const sdpCalendar = document.getElementById('search-start-calendar');
+const clearSearchStartDate = document.getElementById('clear-search-start-date');
 const searchHorizonDate = new Date(todayDate);
 searchHorizonDate.setDate(searchHorizonDate.getDate() + 31);
 let sdpView = new Date(todayDate.getFullYear(), todayDate.getMonth(), 1);
 let selectedSearchStartDate = null;
+function latestSearchStartDate() {
+  if (!selectedDate) return null;
+  const dayBeforeBooking = new Date(selectedDate);
+  dayBeforeBooking.setDate(dayBeforeBooking.getDate() - 1);
+  return dayBeforeBooking < searchHorizonDate ? dayBeforeBooking : searchHorizonDate;
+}
+function clearSearchStart() {
+  selectedSearchStartDate = null;
+  sdpValue.value = '';
+  sdpInput.value = '';
+  clearSearchStartDate.classList.remove('visible');
+  closeSearchStartCalendar();
+}
+function updateSearchStartBound() {
+  const latest = latestSearchStartDate();
+  sdpInput.disabled = !latest || latest < todayDate;
+  if (selectedSearchStartDate && (!latest || selectedSearchStartDate > latest)) clearSearchStart();
+}
 function renderSearchStartCalendar() {
   sdpCalendar.innerHTML = '';
   const head = document.createElement('div'); head.className = 'cal-head';
@@ -1344,15 +1381,17 @@ function renderSearchStartCalendar() {
   const startOffset = (new Date(sdpView.getFullYear(), sdpView.getMonth(), 1).getDay() + 6) % 7;
   const daysInMonth = new Date(sdpView.getFullYear(), sdpView.getMonth() + 1, 0).getDate();
   const prevDays = new Date(sdpView.getFullYear(), sdpView.getMonth(), 0).getDate();
+  const latest = latestSearchStartDate();
   for (let i = 0; i < startOffset; i++) { const cell = document.createElement('div'); cell.className = 'cal-day muted disabled'; cell.textContent = prevDays - startOffset + 1 + i; grid.appendChild(cell); }
   for (let d = 1; d <= daysInMonth; d++) {
     const date = new Date(sdpView.getFullYear(), sdpView.getMonth(), d);
     const cell = document.createElement('div'); cell.className = 'cal-day'; cell.textContent = d;
-    if (date < todayDate || date > searchHorizonDate) cell.classList.add('disabled');
+    if (!latest || date < todayDate || date > latest) cell.classList.add('disabled');
     if (sameDay(date, todayDate)) cell.classList.add('today');
     if (sameDay(date, selectedSearchStartDate)) cell.classList.add('selected');
-    if (date >= todayDate && date <= searchHorizonDate) cell.addEventListener('click', (e) => {
-      e.stopPropagation(); selectedSearchStartDate = date; sdpValue.value = isoOf(date); sdpInput.value = fmtDate(date); closeSearchStartCalendar();
+    if (latest && date >= todayDate && date <= latest) cell.addEventListener('click', (e) => {
+      e.stopPropagation(); selectedSearchStartDate = date; sdpValue.value = isoOf(date); sdpInput.value = fmtDate(date);
+      clearSearchStartDate.classList.add('visible'); closeSearchStartCalendar();
     });
     grid.appendChild(cell);
   }
@@ -1363,9 +1402,8 @@ function closeSearchStartCalendar() { sdpCalendar.classList.remove('open'); }
 sdpInput.addEventListener('click', () => { sdpCalendar.classList.contains('open') ? closeSearchStartCalendar() : openSearchStartCalendar(); });
 sdpInput.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeSearchStartCalendar(); });
 document.addEventListener('click', (e) => { if (!document.getElementById('search-start-datepick').contains(e.target)) closeSearchStartCalendar(); });
-document.getElementById('clear-search-start-date').addEventListener('click', () => {
-  selectedSearchStartDate = null; sdpValue.value = ''; sdpInput.value = ''; closeSearchStartCalendar();
-});
+clearSearchStartDate.addEventListener('click', (e) => { e.stopPropagation(); clearSearchStart(); });
+updateSearchStartBound();
 
 renderSelected();
 
@@ -1417,15 +1455,17 @@ if (EXISTING_CONFIG) {
         selectedSearchStartDate = configuredDate;
         sdpValue.value = EXISTING_CONFIG.search_start_date;
         sdpInput.value = fmtDate(configuredDate);
+        clearSearchStartDate.classList.add('visible');
       }
     }
   }
+
+  updateSearchStartBound();
 
   setPollIntervalSeconds(EXISTING_CONFIG.poll_interval_seconds || 60);
   setTimeWindow(EXISTING_CONFIG.earliest_slot_hour, EXISTING_CONFIG.latest_slot_hour);
   setSwitch(phoneAlertsSwitch, EXISTING_CONFIG.phone_alerts !== false);
   setSwitch(phoneAlertsReloginSwitch, EXISTING_CONFIG.phone_alerts_relogin !== false);
-  setSwitch(document.getElementById('auto_refresh_chrome'), EXISTING_CONFIG.auto_refresh_chrome !== false);
   setSwitch(document.getElementById('auto_open_browser'), EXISTING_CONFIG.auto_open_browser !== false);
   setSwitch(autoSelectSlotSwitch, EXISTING_CONFIG.auto_select_slot === true);
   setSwitch(autoConfirmSwitch, EXISTING_CONFIG.auto_confirm_reschedule === true);
@@ -1532,7 +1572,6 @@ document.getElementById('form').addEventListener('submit', async (e) => {
       latest_slot_hour: parseInt(timeToHidden.value, 10),
       phone_alerts: switchOn('phone-alerts'),
       phone_alerts_relogin: switchOn('phone-alerts-relogin'),
-      auto_refresh_chrome: switchOn('auto_refresh_chrome'),
       auto_open_browser: switchOn('auto_open_browser'),
       auto_select_slot: switchOn('auto_select_slot'),
       auto_confirm_reschedule: switchOn('auto_confirm_reschedule'),
