@@ -95,7 +95,7 @@ BOOKING_DIAGNOSTIC_CANDIDATES_JS = r"""
     if (text.length<8 || text.length>1600) return;
     var statuses=text.match(status)||[],dates=text.match(date)||[],times=text.match(time)||[],exams=text.match(exam)||[];
     if (!(statuses.length || exams.length || (dates.length && times.length))) return;
-    var item={tag:el.tagName.toLowerCase(),role:(el.getAttribute('role')||'').slice(0,60),class_name:String(el.className||'').slice(0,120),test_id:(el.getAttribute('data-testid')||'').slice(0,80),status_tokens:Array.from(new Set(statuses)).slice(0,6),dates:Array.from(new Set(dates)).slice(0,6),times:Array.from(new Set(times)).slice(0,6),exam_types:Array.from(new Set(exams)).slice(0,6),text_length:text.length,parent:meta(el.parentElement),grandparent:meta(el.parentElement&&el.parentElement.parentElement)};
+    var item={tag:el.tagName.toLowerCase(),role:(el.getAttribute('role')||'').slice(0,60),class_name:String(el.className||'').slice(0,120),test_id:(el.getAttribute('data-testid')||'').slice(0,80),statuses:Array.from(new Set(statuses)).slice(0,6),dates:Array.from(new Set(dates)).slice(0,6),times:Array.from(new Set(times)).slice(0,6),exam_types:Array.from(new Set(exams)).slice(0,6),text_length:text.length,parent:meta(el.parentElement),grandparent:meta(el.parentElement&&el.parentElement.parentElement)};
     var key=JSON.stringify(item); if (!seen.has(key)) { seen.add(key); out.push(item); }
   });
   return out;
@@ -293,6 +293,7 @@ def run_post_submit(host, port, transaction_target, recorder, *, timeout=24, int
     outcome = UNKNOWN
     consecutive_unchanged = 0
     unchanged_ready = False
+    transaction_target_lost = False
     recorder.state("OBSERVE_POST_SUBMIT", target_id=transaction_target.id)
     try:
         verification_target = cdp_client.create_page_target(host, port)
@@ -311,6 +312,9 @@ def run_post_submit(host, port, transaction_target, recorder, *, timeout=24, int
         except Exception as exc:
             recorder.state("transaction_target_disappeared", error=type(exc).__name__)
             outcome = UNKNOWN
+            consecutive_unchanged = 0
+            unchanged_ready = False
+            transaction_target_lost = True
             break
         if verification_target:
             try:
@@ -344,9 +348,10 @@ def run_post_submit(host, port, transaction_target, recorder, *, timeout=24, int
                 consecutive_unchanged = 0
                 unchanged_ready = False
         sleep(interval)
-    if outcome != VERIFIED_SUCCESS:
+    if outcome != VERIFIED_SUCCESS and not transaction_target_lost:
         outcome = VERIFIED_UNCHANGED if unchanged_ready else UNKNOWN
-    if outcome != VERIFIED_SUCCESS and looks_like_further_confirmation(last_page, initial):
+    if (outcome != VERIFIED_SUCCESS and not transaction_target_lost and
+            looks_like_further_confirmation(last_page, initial)):
         outcome = NEEDS_FURTHER_CONFIRMATION
     recorder.data["final_outcome"] = outcome
     recorder.state("completed", outcome=outcome)

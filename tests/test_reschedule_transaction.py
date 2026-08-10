@@ -97,7 +97,8 @@ class DiagnosticSecurityTests(unittest.TestCase):
     def test_candidate_extractor_is_bounded_structural_metadata_only(self):
         source = rt.BOOKING_DIAGNOSTIC_CANDIDATES_JS
         self.assertIn("out.length>=25", source)
-        self.assertIn("status_tokens", source)
+        self.assertIn("statuses", source)
+        self.assertNotIn("status_tokens", source)
         self.assertIn("exam_types", source)
         self.assertIn("text_length", source)
         self.assertIn("grandparent", source)
@@ -111,7 +112,8 @@ class DiagnosticSecurityTests(unittest.TestCase):
         secret = "UNMISTAKABLE_CANDIDATE_SECRET_123456789"
         evaluate.return_value = [{
             "tag": "div", "role": "group", "class_name": "reservation-tile " + secret,
-            "test_id": "booking-card", "status_tokens": ["Potwierdzona"],
+            "test_id": "booking-card", "statuses": ["Potwierdzona"],
+            "session_token": secret,
             "dates": ["10/08/2026"], "times": ["12:30"],
             "exam_types": ["Egzamin praktyczny"], "text_length": 138,
             "parent": {"tag": "section", "class_name": "case-wrapper"},
@@ -120,6 +122,8 @@ class DiagnosticSecurityTests(unittest.TestCase):
         encoded = json.dumps(candidates)
         self.assertEqual(candidates[0]["tag"], "div")
         self.assertEqual(candidates[0]["parent"]["class_name"], "case-wrapper")
+        self.assertEqual(candidates[0]["statuses"], ["Potwierdzona"])
+        self.assertNotIn("session_token", candidates[0])
         self.assertNotIn(secret, encoded)
         self.assertNotIn("html", encoded.casefold())
 
@@ -127,7 +131,7 @@ class DiagnosticSecurityTests(unittest.TestCase):
         recorder = rt.DiagnosticRecorder(
             TARGET, [OLD], "candidate-only",
             baseline_booking_candidates=[{
-                "status_tokens": ["Potwierdzona"], "dates": [TARGET["date"]],
+                "statuses": ["Potwierdzona"], "dates": [TARGET["date"]],
                 "times": [TARGET["time"]], "exam_types": [TARGET["exam_type"]],
             }],
         )
@@ -145,6 +149,34 @@ class DiagnosticSecurityTests(unittest.TestCase):
                 if os.name == "posix":
                     self.assertEqual(path.stat().st_mode & 0o777, 0o600)
                     self.assertEqual(location.stat().st_mode & 0o777, 0o700)
+
+    def test_serialized_candidates_keep_statuses_but_remove_token_fields(self):
+        secret = "UNMISTAKABLE_SAVED_TOKEN_SECRET_123456789"
+        candidate = {
+            "tag": "div", "statuses": ["Potwierdzona"],
+            "session_token": secret, "secret_note": secret,
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            location = Path(tmp) / "diagnostics"
+            with mock.patch.object(rt, "RESCHEDULE_DIAGNOSTICS_DIR", location):
+                recorder = rt.DiagnosticRecorder(
+                    TARGET, [OLD], "saved-statuses",
+                    baseline_booking_candidates=[candidate],
+                )
+                recorder.data["verification_attempts"].append({
+                    "diagnostic_candidates": [candidate], "result": rt.UNKNOWN,
+                })
+                payload = json.loads(recorder.save().read_text())
+
+        baseline_candidate = payload["baseline_booking_candidates"][0]
+        verification_candidate = payload["verification_attempts"][0][
+            "diagnostic_candidates"
+        ][0]
+        self.assertEqual(baseline_candidate["statuses"], ["Potwierdzona"])
+        self.assertEqual(verification_candidate["statuses"], ["Potwierdzona"])
+        self.assertNotIn("session_token", baseline_candidate)
+        self.assertNotIn("secret_note", baseline_candidate)
+        self.assertNotIn(secret, json.dumps(payload))
 
 
 class NetworkMetadataTests(unittest.TestCase):
@@ -388,6 +420,37 @@ class SeparateTargetFlowTests(unittest.TestCase):
         result = rt.run_post_submit("h", 1, transaction, recorder, timeout=2, interval=0,
                                     monotonic=mock.Mock(side_effect=[0, 0, 0, 1]), sleep=lambda _: None)
         self.assertEqual(result, rt.UNKNOWN)
+
+    @mock.patch.object(rt, "capture_booking_diagnostic_candidates", return_value=[])
+    @mock.patch.object(rt, "capture_booking_cards", return_value=[OLD])
+    @mock.patch.object(rt, "capture_page")
+    @mock.patch.object(cdp_client, "navigate_target")
+    @mock.patch.object(cdp_client, "create_page_target")
+    def test_transaction_disappearance_after_stable_unchanged_stays_unknown(
+            self, create, navigate, page, cards, candidates):
+        transaction = cdp_client.PageTarget("tx", "", "", "ws://tx")
+        create.return_value = cdp_client.PageTarget("verify", "", "", "ws://verify")
+        stable = {"url": "https://info-kierowca.pl/summary", "buttons": [],
+                  "forms": [], "dialogs": []}
+        page.side_effect = [
+            stable, stable, stable, stable,
+            cdp_client.StaleTargetError("transaction closed"),
+        ]
+        recorder = rt.DiagnosticRecorder(TARGET, [OLD], "tx-lost-after-unchanged")
+        recorder.data["post_submit_pages"].append(stable)
+        clock = mock.Mock(side_effect=[0, 0, 0, 2, 2, 4, 4, 6, 6])
+
+        result = rt.run_post_submit(
+            "h", 1, transaction, recorder, timeout=10, interval=0,
+            monotonic=clock, sleep=lambda _: None,
+        )
+
+        self.assertEqual(result, rt.UNKNOWN)
+        self.assertEqual(recorder.data["final_outcome"], rt.UNKNOWN)
+        self.assertEqual(
+            [attempt["result"] for attempt in recorder.data["verification_attempts"]],
+            [rt.VERIFIED_UNCHANGED] * 3,
+        )
 
     @mock.patch.object(rt, "capture_booking_cards", side_effect=cdp_client.StaleTargetError("verifier closed"))
     @mock.patch.object(rt, "capture_page")
