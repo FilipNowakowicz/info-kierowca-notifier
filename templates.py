@@ -297,6 +297,12 @@ LOGIN_PAGE = """<!doctype html>
   button:hover { background: var(--accent-soft); }
   button:disabled { opacity: 0.6; cursor: default; }
   input { width:100%; padding:0.72rem; margin:0.35rem 0; border-radius:7px; border:1px solid #555; background:#262626; color:#eee; }
+  .reveal { position: relative; }
+  .reveal input { padding-right: 2.7rem; }
+  .reveal-btn { position:absolute; top:50%; right:0.35rem; transform:translateY(-50%); width:auto; padding:0.35rem;
+    background:none; color:rgba(238,238,238,0.5); display:grid; place-items:center; }
+  .reveal-btn:hover { background:none; color:var(--accent-soft); }
+  .icon { width:18px; height:18px; display:block; }
   .methods { display:flex; gap:0.5rem; margin:1rem 0; }
   .methods button { background:#333; color:#eee; }
   .methods button.on { background:var(--accent); color:#1c1c1c; }
@@ -319,7 +325,11 @@ LOGIN_PAGE = """<!doctype html>
   <p class="lead">Choose how the notifier should authenticate. Profil Zaufany can recover expired sessions automatically after setup.</p>
   <div class="methods"><button id="method-mobywatel" class="on">mObywatel</button><button id="method-pz">Profil Zaufany</button></div>
   <div id="pz-fields">
-    <label for="pz-username">Profil Zaufany username</label><input id="pz-username" type="text" autocomplete="username">
+    <label for="pz-username">Profil Zaufany username</label>
+    <div class="reveal">
+      <input id="pz-username" type="password" autocomplete="username">
+      <button type="button" class="reveal-btn" id="reveal-pz-username" aria-label="Show or hide Profil Zaufany username"></button>
+    </div>
     <label for="pz-password">Profil Zaufany password</label><input id="pz-password" type="password" autocomplete="current-password">
     <div class="pz-pairing-description">Required for automatic Profil Zaufany login: pairing lets the app read the one-time SMS code from Google Messages.</div>
     <button class="secondary" id="pair-messages" type="button">Pair Google Messages Web</button>
@@ -335,6 +345,16 @@ LOGIN_PAGE = """<!doctype html>
 const loginBtn = document.getElementById('login-btn');
 const loginHint = document.getElementById('hint');
 const loginError = document.getElementById('error');
+const LOGIN_EYE = '<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>';
+const LOGIN_EYE_OFF = '<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.9 4.24A9.1 9.1 0 0 1 12 4c6.5 0 10 8 10 8a18 18 0 0 1-2.16 3.19M6.6 6.6A18 18 0 0 0 2 12s3.5 7 10 7a9 9 0 0 0 5.4-1.6"/><path d="m2 2 20 20"/></svg>';
+const loginPzUsername = document.getElementById('pz-username');
+const loginPzUsernameReveal = document.getElementById('reveal-pz-username');
+function syncLoginPzUsernameReveal() { loginPzUsernameReveal.innerHTML = loginPzUsername.type === 'password' ? LOGIN_EYE : LOGIN_EYE_OFF; }
+loginPzUsernameReveal.addEventListener('click', () => {
+  loginPzUsername.type = loginPzUsername.type === 'password' ? 'text' : 'password';
+  syncLoginPzUsernameReveal();
+});
+syncLoginPzUsernameReveal();
 let loginMethod = 'mobywatel';
 const pzFields = document.getElementById('pz-fields');
 function setMethod(method) {
@@ -656,7 +676,11 @@ WIZARD_PAGE = """<!doctype html>
       <label for="login_method">Authentication method</label>
       <select id="login_method"><option value="mobywatel">mObywatel</option><option value="profil_zaufany">Profil Zaufany</option></select>
       <div id="settings-pz-fields" style="display:none">
-        <label for="settings-pz-username">Profil Zaufany username</label><input id="settings-pz-username" type="text" autocomplete="username">
+        <label for="settings-pz-username">Profil Zaufany username</label>
+        <div class="reveal">
+          <input id="settings-pz-username" type="password" autocomplete="username">
+          <button type="button" class="reveal-btn" id="reveal-pz-username-settings" aria-label="Show or hide Profil Zaufany username"></button>
+        </div>
         <label for="settings-pz-password">Profil Zaufany password</label><input id="settings-pz-password" type="password" autocomplete="new-password" placeholder="Leave blank to keep the saved password">
         <div class="hint" id="password-status">No Profil Zaufany password is saved. Enter it to enable automatic login.</div>
         <div class="hint">Required for automatic Profil Zaufany login: pairing lets the app read the one-time SMS code from Google Messages.</div>
@@ -1217,6 +1241,7 @@ function wireReveal(input, btn) {
 }
 const pkkInput = document.getElementById('profile_number');
 const pkkSync = wireReveal(pkkInput, document.getElementById('reveal-pkk'));
+wireReveal(document.getElementById('settings-pz-username'), document.getElementById('reveal-pz-username-settings'));
 const ntfyInput = document.getElementById('ntfy_topic');
 wireReveal(ntfyInput, document.getElementById('reveal-ntfy'));
 

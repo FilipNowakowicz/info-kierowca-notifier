@@ -26,10 +26,12 @@ class PZSecurityTests(unittest.TestCase):
         self.assertNotIn("SUPER_SECRET_PZ_PASSWORD_123", page)
         self.assertNotIn("pz_password", config)
 
-    def test_pz_username_inputs_use_themed_text_input_type(self):
-        self.assertIn('id="pz-username" type="text"', templates.LOGIN_PAGE)
+    def test_pz_username_inputs_are_concealed_with_reveal_controls(self):
+        self.assertIn('id="pz-username" type="password"', templates.LOGIN_PAGE)
+        self.assertIn('id="reveal-pz-username"', templates.LOGIN_PAGE)
         page = app.render_wizard(app.build_config(self.payload())).decode()
-        self.assertIn('id="settings-pz-username" type="text"', page)
+        self.assertIn('id="settings-pz-username" type="password"', page)
+        self.assertIn('id="reveal-pz-username-settings"', page)
 
     def test_pairing_is_explained_without_an_sms_test_action(self):
         explanation = "Required for automatic Profil Zaufany login"
