@@ -63,6 +63,7 @@ jobs:
           path: ${{ matrix.asset_name }}
 
   publish:
+    if: startsWith(github.ref, 'refs/tags/')
     needs: build
     runs-on: ubuntu-latest
     permissions:
