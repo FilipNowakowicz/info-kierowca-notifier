@@ -16,19 +16,20 @@ the same one the real site's own center picker calls. Nothing is sent
 anywhere else.
 """
 import json
-from info_kierowca_notifier import notifier
-from info_kierowca_notifier.paths import WORD_CENTERS_FILE
+from info_kierowca_notifier import client
+from info_kierowca_notifier.paths import SESSION_FILE, WORD_CENTERS_FILE
 
-DICT_URL = f"{notifier.BASE}/bknd/config/api/v1/dict/words"
+DICT_URL = f"{client.BASE}/bknd/config/api/v1/dict/words"
 OUTPUT_FILE = WORD_CENTERS_FILE
 
 
 def main():
-    if not notifier.SESSION_FILE.exists():
-        raise SystemExit(f"No session.json at {notifier.SESSION_FILE} — log in first.")
-    session = notifier.load_json(notifier.SESSION_FILE)
+    if not SESSION_FILE.exists():
+        raise SystemExit(f"No session.json at {SESSION_FILE} — log in first.")
+    with open(SESSION_FILE) as f:
+        session = json.load(f)
 
-    status, body, headers = notifier.do_request(DICT_URL, session, method="GET")
+    status, body, headers = client.do_request(DICT_URL, session, method="GET")
     if status != 200:
         raise SystemExit(f"GET {DICT_URL} -> {status}, expected 200. Session may be expired.")
 

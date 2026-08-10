@@ -364,7 +364,7 @@ def try_select_target_slot(host, port, target_slot_json, confirm=False, page_tar
                            baseline_booking=None, baseline_booking_candidates=None):
     """Best-effort continuation of the auto-click-through, gated behind
     --target-slot (itself only ever passed when config's experimental
-    auto_select_slot flag is on — see notifier.trigger_open_browser()).
+    auto_select_slot flag is on — see booking.launch.trigger_open_browser()).
 
     Slots within a ~31-day window show up in the "Najbliższe dostępne
     terminy" list on the date-picker screen without needing to touch the

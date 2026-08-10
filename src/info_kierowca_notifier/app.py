@@ -26,6 +26,9 @@ from info_kierowca_notifier.auth import credentials as credential_store
 from info_kierowca_notifier.auth import sms as sms_provider
 from info_kierowca_notifier.web import server as dashboard_server
 from info_kierowca_notifier import notifier
+from info_kierowca_notifier import client
+from info_kierowca_notifier.auth import launch as auth_launch
+from info_kierowca_notifier.booking import launch as booking_launch
 from info_kierowca_notifier.booking import reschedule as open_logged_in_browser
 from info_kierowca_notifier import tls_transport
 from info_kierowca_notifier.paths import CATEGORIES_FILE, WORD_CENTERS_FILE
@@ -103,7 +106,7 @@ def check_session_valid():
     if not notifier.SESSION_FILE.exists():
         return False
     session = notifier.load_json(notifier.SESSION_FILE)
-    status, _body, _headers = notifier.do_request(notifier.REFRESH_URL, session, method="GET")
+    status, _body, _headers = client.do_request(client.REFRESH_URL, session, method="GET")
     if status == 204:
         notifier.save_json(notifier.SESSION_FILE, session)
         return True
@@ -135,7 +138,7 @@ def _wait_for_relogin_and_wake(prior_captured_at, wake_event):
                     break
             except Exception:
                 pass
-        if not notifier.auto_refresh_in_progress():
+        if not auth_launch.auto_refresh_in_progress():
             break  # Chrome closed/crashed before scanning - nothing to wait on
         time.sleep(1)
     wake_event.set()
@@ -252,7 +255,7 @@ def build_config(payload):
         "auto_refresh_chrome": True,
         "auto_open_browser": bool(payload.get("auto_open_browser", True)),
     }
-    # Both experimental, off-by-default — see notifier.trigger_open_browser()/
+    # Both experimental, off-by-default — see booking_launch.trigger_open_browser()/
     # booking.reschedule. auto_confirm_reschedule is meaningless without
     # auto_select_slot (trigger_open_browser() only ever passes
     # --confirm-reschedule alongside --target-slot), so it's enforced here too
@@ -354,7 +357,7 @@ def pkk_category_id(category_code):
 def build_pkk_prefill():
     """Best-effort prefill for the first-run wizard: looks up the account's
     PKK profile(s) via the session the login screen just captured (see
-    notifier.fetch_pkk_profiles), so the wizard can offer a ready-made
+    client.fetch_pkk_profiles), so the wizard can offer a ready-made
     "PKK number — category" pick instead of asking for both blind. Drops
     any profile whose categoryName doesn't map to a known category id
     rather than guessing; if that empties the list, the wizard's normal
@@ -364,7 +367,7 @@ def build_pkk_prefill():
         return []
     session = notifier.load_json(notifier.SESSION_FILE)
     prefill = []
-    for p in notifier.fetch_pkk_profiles(session):
+    for p in client.fetch_pkk_profiles(session):
         category_id = pkk_category_id(p["categoryName"])
         if category_id is None:
             continue
@@ -424,7 +427,7 @@ class AppHandler(http.server.BaseHTTPRequestHandler):
 
     def _reply_outcome(self, outcome, messages, default="Done."):
         """Send the standard {ok, action, message} reply for a trigger_*
-        outcome. `messages` is keyed on notifier's TRIGGER_* constants."""
+        outcome. `messages` is keyed on the launch module's TRIGGER_* constants."""
         self._send_json(200, {"ok": True, "action": outcome, "message": messages.get(outcome, default)})
 
     @staticmethod
@@ -455,7 +458,7 @@ class AppHandler(http.server.BaseHTTPRequestHandler):
         elif self.path == "/login-status":
             self._send_json(200, {
                 "ready": notifier.SESSION_FILE.exists(),
-                "in_progress": notifier.auto_refresh_in_progress(),
+                "in_progress": auth_launch.auto_refresh_in_progress(),
             })
         elif self.path == "/status.json":
             data = notifier.STATUS_FILE.read_bytes() if notifier.STATUS_FILE.exists() else dashboard_server.EMPTY_STATUS
@@ -514,27 +517,27 @@ class AppHandler(http.server.BaseHTTPRequestHandler):
         """
         config = self._load_config_or_empty()
         if check_session_valid():
-            outcome = notifier.trigger_open_browser(AppHandler.logger, config, auto_click=False)
+            outcome = booking_launch.trigger_open_browser(AppHandler.logger, config, auto_click=False)
             messages = {
-                notifier.TRIGGER_LAUNCHED: "Session looks valid — opening a logged-in browser tab.",
-                notifier.TRIGGER_ALREADY_RUNNING: "A logged-in browser tab is already open.",
-                notifier.TRIGGER_DISABLED: "Session looks valid, but auto_open_browser is turned off in Settings.",
-                notifier.TRIGGER_LAUNCH_FAILED: "Session looks valid, but the browser failed to launch — check the log.",
-                notifier.TRIGGER_NO_BROWSER: "Session looks valid, but no Chrome, Edge, or other "
+                booking_launch.TRIGGER_LAUNCHED: "Session looks valid — opening a logged-in browser tab.",
+                booking_launch.TRIGGER_ALREADY_RUNNING: "A logged-in browser tab is already open.",
+                booking_launch.TRIGGER_DISABLED: "Session looks valid, but auto_open_browser is turned off in Settings.",
+                booking_launch.TRIGGER_LAUNCH_FAILED: "Session looks valid, but the browser failed to launch — check the log.",
+                booking_launch.TRIGGER_NO_BROWSER: "Session looks valid, but no Chrome, Edge, or other "
                     "Chromium-based browser was found on this machine — install one to continue.",
             }
         else:
-            outcome = notifier.trigger_auto_refresh(
+            outcome = auth_launch.trigger_auto_refresh(
                 AppHandler.logger, config, force=True, notify_phone=False
             )
             messages = {
-                notifier.TRIGGER_LAUNCHED: "Session looks expired — opening Chrome for a fresh QR login.",
-                notifier.TRIGGER_MANUAL_RETRY_LAUNCHED: "Session looks expired — opening Chrome for a fresh QR login.",
-                notifier.TRIGGER_ALREADY_RUNNING: "A QR login is already open — finish scanning there.",
-                notifier.TRIGGER_BACKOFF_ACTIVE: "Automatic relogin is cooling down; use this button to retry now.",
-                notifier.TRIGGER_DISABLED: "Session looks expired, but auto_refresh_chrome is turned off in Settings.",
-                notifier.TRIGGER_LAUNCH_FAILED: "Session looks expired, but Chrome failed to launch — check the log.",
-                notifier.TRIGGER_NO_BROWSER: "Session looks expired, but no Chrome, Edge, or other "
+                auth_launch.TRIGGER_LAUNCHED: "Session looks expired — opening Chrome for a fresh QR login.",
+                auth_launch.TRIGGER_MANUAL_RETRY_LAUNCHED: "Session looks expired — opening Chrome for a fresh QR login.",
+                auth_launch.TRIGGER_ALREADY_RUNNING: "A QR login is already open — finish scanning there.",
+                auth_launch.TRIGGER_BACKOFF_ACTIVE: "Automatic relogin is cooling down; use this button to retry now.",
+                auth_launch.TRIGGER_DISABLED: "Session looks expired, but auto_refresh_chrome is turned off in Settings.",
+                auth_launch.TRIGGER_LAUNCH_FAILED: "Session looks expired, but Chrome failed to launch — check the log.",
+                auth_launch.TRIGGER_NO_BROWSER: "Session looks expired, but no Chrome, Edge, or other "
                     "Chromium-based browser was found on this machine — install one to continue.",
             }
         self._reply_outcome(outcome, messages)
@@ -553,21 +556,21 @@ class AppHandler(http.server.BaseHTTPRequestHandler):
                 prior_captured_at = notifier.load_json(notifier.SESSION_FILE).get("captured_at")
             except Exception:
                 pass
-        outcome = notifier.trigger_auto_refresh(AppHandler.logger, config, force=True, notify_phone=False)
-        if outcome in (notifier.TRIGGER_LAUNCHED, notifier.TRIGGER_MANUAL_RETRY_LAUNCHED):
+        outcome = auth_launch.trigger_auto_refresh(AppHandler.logger, config, force=True, notify_phone=False)
+        if outcome in (auth_launch.TRIGGER_LAUNCHED, auth_launch.TRIGGER_MANUAL_RETRY_LAUNCHED):
             threading.Thread(
                 target=_wait_for_relogin_and_wake,
                 args=(prior_captured_at, AppHandler.wake_event),
                 daemon=True,
             ).start()
         messages = {
-            notifier.TRIGGER_LAUNCHED: "Opening Chrome for a fresh QR login.",
-            notifier.TRIGGER_MANUAL_RETRY_LAUNCHED: "Opening Chrome for a fresh QR login.",
-            notifier.TRIGGER_ALREADY_RUNNING: "A QR login is already open — finish scanning there.",
-            notifier.TRIGGER_BACKOFF_ACTIVE: "Automatic relogin is cooling down; retry is available now.",
-            notifier.TRIGGER_DISABLED: "auto_refresh_chrome is turned off in Settings.",
-            notifier.TRIGGER_LAUNCH_FAILED: "Chrome failed to launch — check the log.",
-            notifier.TRIGGER_NO_BROWSER: "No Chrome, Edge, or other Chromium-based browser was found "
+            auth_launch.TRIGGER_LAUNCHED: "Opening Chrome for a fresh QR login.",
+            auth_launch.TRIGGER_MANUAL_RETRY_LAUNCHED: "Opening Chrome for a fresh QR login.",
+            auth_launch.TRIGGER_ALREADY_RUNNING: "A QR login is already open — finish scanning there.",
+            auth_launch.TRIGGER_BACKOFF_ACTIVE: "Automatic relogin is cooling down; retry is available now.",
+            auth_launch.TRIGGER_DISABLED: "auto_refresh_chrome is turned off in Settings.",
+            auth_launch.TRIGGER_LAUNCH_FAILED: "Chrome failed to launch — check the log.",
+            auth_launch.TRIGGER_NO_BROWSER: "No Chrome, Edge, or other Chromium-based browser was found "
                 "on this machine — install one to continue.",
         }
         self._reply_outcome(outcome, messages)
@@ -586,21 +589,21 @@ class AppHandler(http.server.BaseHTTPRequestHandler):
                 prior_captured_at = notifier.load_json(notifier.SESSION_FILE).get("captured_at")
             except Exception:
                 pass
-        outcome = notifier.restart_auto_refresh(AppHandler.logger, config)
-        if outcome == notifier.TRIGGER_RESTART_LAUNCHED:
+        outcome = auth_launch.restart_auto_refresh(AppHandler.logger, config)
+        if outcome == auth_launch.TRIGGER_RESTART_LAUNCHED:
             threading.Thread(
                 target=_wait_for_relogin_and_wake,
                 args=(prior_captured_at, AppHandler.wake_event),
                 daemon=True,
             ).start()
         messages = {
-            notifier.TRIGGER_RESTART_LAUNCHED: "The previous QR login closed — opening a fresh one.",
-            notifier.TRIGGER_RESTART_UNAVAILABLE: "That older QR login cannot be restarted safely. Close its Chrome window, then try again.",
-            notifier.TRIGGER_SHUTDOWN_FAILED: "The existing QR login did not close. No second browser was opened.",
-            notifier.TRIGGER_ALREADY_RUNNING: "A QR login is still running. No second browser was opened.",
-            notifier.TRIGGER_DISABLED: "auto_refresh_chrome is turned off in Settings.",
-            notifier.TRIGGER_LAUNCH_FAILED: "The old QR login closed, but Chrome failed to relaunch — check the log.",
-            notifier.TRIGGER_NO_BROWSER: "No Chrome, Edge, or other Chromium-based browser was found on this machine — install one to continue.",
+            auth_launch.TRIGGER_RESTART_LAUNCHED: "The previous QR login closed — opening a fresh one.",
+            auth_launch.TRIGGER_RESTART_UNAVAILABLE: "That older QR login cannot be restarted safely. Close its Chrome window, then try again.",
+            auth_launch.TRIGGER_SHUTDOWN_FAILED: "The existing QR login did not close. No second browser was opened.",
+            auth_launch.TRIGGER_ALREADY_RUNNING: "A QR login is still running. No second browser was opened.",
+            auth_launch.TRIGGER_DISABLED: "auto_refresh_chrome is turned off in Settings.",
+            auth_launch.TRIGGER_LAUNCH_FAILED: "The old QR login closed, but Chrome failed to relaunch — check the log.",
+            auth_launch.TRIGGER_NO_BROWSER: "No Chrome, Edge, or other Chromium-based browser was found on this machine — install one to continue.",
         }
         self._reply_outcome(outcome, messages)
 
@@ -632,14 +635,14 @@ class AppHandler(http.server.BaseHTTPRequestHandler):
             config["pz_username"] = username
             config["pz_credential_present"] = True
         notifier.save_json(notifier.CONFIG_FILE, config)
-        outcome = notifier.trigger_auto_refresh(AppHandler.logger, config, force=True, notify_phone=False)
+        outcome = auth_launch.trigger_auto_refresh(AppHandler.logger, config, force=True, notify_phone=False)
         messages = {
-            notifier.TRIGGER_NO_BROWSER: "No Chrome, Edge, or other Chromium-based browser was found "
+            auth_launch.TRIGGER_NO_BROWSER: "No Chrome, Edge, or other Chromium-based browser was found "
                 "on this machine. Install one and try again.",
-            notifier.TRIGGER_MANUAL_RETRY_LAUNCHED: "Opening Chrome for a fresh QR login.",
-            notifier.TRIGGER_ALREADY_RUNNING: "A QR login is already open — finish scanning there.",
-            notifier.TRIGGER_BACKOFF_ACTIVE: "Automatic relogin is cooling down; retry is available now.",
-            notifier.TRIGGER_LAUNCH_FAILED: "Could not open Chrome — try the manual option below.",
+            auth_launch.TRIGGER_MANUAL_RETRY_LAUNCHED: "Opening Chrome for a fresh QR login.",
+            auth_launch.TRIGGER_ALREADY_RUNNING: "A QR login is already open — finish scanning there.",
+            auth_launch.TRIGGER_BACKOFF_ACTIVE: "Automatic relogin is cooling down; retry is available now.",
+            auth_launch.TRIGGER_LAUNCH_FAILED: "Could not open Chrome — try the manual option below.",
         }
         self._reply_outcome(outcome, messages, default=None)
 
@@ -746,7 +749,7 @@ class ThreadingServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
 
 def run_internal_auto_refresh():
     """Dispatch target for the frozen-binary re-invocation in
-    notifier.trigger_auto_refresh() — see its docstring for why this exists.
+    auth_launch.trigger_auto_refresh() — see its docstring for why this exists.
     """
     sys.argv = [arg for arg in sys.argv if arg != "--internal-auto-refresh"]
     auto_refresh_session.main()
@@ -754,7 +757,7 @@ def run_internal_auto_refresh():
 
 def run_internal_open_browser():
     """Dispatch target for the frozen-binary re-invocation in
-    notifier.trigger_open_browser() — see its docstring for why this exists.
+    booking_launch.trigger_open_browser() — see its docstring for why this exists.
     """
     sys.argv = [arg for arg in sys.argv if arg != "--internal-open-browser"]
     open_logged_in_browser.main()

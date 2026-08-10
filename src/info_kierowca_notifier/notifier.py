@@ -12,32 +12,21 @@ import logging
 import logging.handlers
 import os
 import random
-import shutil
 import subprocess
 import sys
 import threading
 import time
-import urllib.error
-import urllib.request
 from datetime import date, datetime, timedelta
-from pathlib import Path
 
-from info_kierowca_notifier.auth import session as auto_refresh_session
+from info_kierowca_notifier import client
+from info_kierowca_notifier.auth import launch as auth_launch
 from info_kierowca_notifier import ntfy_transport
-from info_kierowca_notifier.booking import reschedule as open_logged_in_browser
-from info_kierowca_notifier.browser import chrome
-from info_kierowca_notifier.auth import relogin_control
+from info_kierowca_notifier.booking import launch as booking_launch
 from info_kierowca_notifier import tls_transport
-from info_kierowca_notifier.auth.relogin_backoff import RetryBackoff
 from info_kierowca_notifier.paths import (  # noqa: F401  (re-exported: other modules read these off notifier)
-    AUTO_REFRESH_LOG_FILE,
-    AUTO_REFRESH_RESTART_REQUEST,
     CONFIG_FILE,
     LOG_FILE,
     PAUSE_FILE,
-    RELOGIN_BACKOFF_FILE,
-    RESCHEDULE_CONFIRM_COOLDOWN_FILE,
-    RESCHEDULE_LOG_FILE,
     SESSION_FILE,
     STATE_DIR,
     STATUS_FILE,
@@ -47,6 +36,7 @@ from info_kierowca_notifier.paths import (  # noqa: F401  (re-exported: other mo
 )
 
 MAX_HISTORY = 200
+NTFY_TIMEOUT = 15
 
 # The search endpoint rejects anything but exactly 5 organizationIds
 # ("Exactly 5 exam centers must be provided when searching for the fastest
@@ -114,15 +104,6 @@ def build_search_organization_ids(config):
     random.shuffle(filler_pool)
     return wanted + filler_pool[: SEARCH_ORG_ID_COUNT - len(wanted)]
 
-BASE = "https://info-kierowca.pl"
-REFRESH_URL = f"{BASE}/bknd/auth/api/v1/jwt/refresh"
-SEARCH_URL = f"{BASE}/bknd/exam/api/v1/Schedules/user/MultipleCentersExams"
-# Traced from the site's own main-*.js (pkkProfilesResource(), used by its
-# "check documents"/reservation forms to resolve a PKK number to a license
-# category) — used by the app module's setup wizard to prefill the PKK number and
-# category from the account instead of asking the user to type them in.
-PKK_PROFILES_URL = f"{BASE}/bknd/status/api/v1/pkk/get_profiles"
-
 # The site itself won't show slots further out than this, so there's no
 # benefit to making it configurable — it's a hard line on info-kierowca.pl,
 # not a user preference.
@@ -148,13 +129,6 @@ def search_start_date(value, *, today=None):
     if parsed is None:
         return today
     return min(max(parsed, today), horizon)
-
-USER_AGENT = (
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
-)
-TIMEOUT = 15
-
 
 def setup_logger():
     STATE_DIR.mkdir(parents=True, exist_ok=True)
@@ -308,449 +282,13 @@ def notify(summary, body, urgency="normal"):
 def push_ntfy(logger, topic, title, message, priority="default", tags=None):
     """Send an ntfy push and return a safe, structured delivery outcome."""
     outcome = ntfy_transport.push_ntfy(
-        topic, title, message, priority=priority, tags=tags, timeout=TIMEOUT
+        topic, title, message, priority=priority, tags=tags, timeout=NTFY_TIMEOUT
     )
     if outcome.ok:
         logger.info("outcome=push_sent status=%s", outcome.http_status)
     else:
         logger.info("outcome=push_failed reason=%s status=%s", outcome.kind, outcome.http_status)
     return outcome
-
-
-AUTO_REFRESH_SCRIPT = Path(auto_refresh_session.__file__)
-AUTO_REFRESH_LOCK = auto_refresh_session.LOCK_FILE
-
-
-# Outcome vocabulary returned by trigger_auto_refresh() and
-# trigger_open_browser(). Named constants — rather than bare string literals
-# re-spelled in the app module's login handlers — so the producer and every consumer
-# key off one source; a renamed or added outcome is then a grep away instead of
-# a silent fall-through to a generic message. TRIGGER_OUTCOMES is the full set.
-TRIGGER_DISABLED = "disabled"
-TRIGGER_NO_BROWSER = "no_chromium_browser"
-TRIGGER_ALREADY_RUNNING = "already_running"
-TRIGGER_BACKOFF_ACTIVE = "backoff_active"
-TRIGGER_LAUNCHED = "launched"
-TRIGGER_MANUAL_RETRY_LAUNCHED = "manual_retry_launched"
-TRIGGER_RESTART_LAUNCHED = "restart_launched"
-TRIGGER_RESTART_UNAVAILABLE = "restart_unavailable"
-TRIGGER_SHUTDOWN_FAILED = "shutdown_failed"
-TRIGGER_LAUNCH_FAILED = "launch_failed"
-TRIGGER_OUTCOMES = (
-    TRIGGER_DISABLED,
-    TRIGGER_NO_BROWSER,
-    TRIGGER_ALREADY_RUNNING,
-    TRIGGER_BACKOFF_ACTIVE,
-    TRIGGER_LAUNCHED,
-    TRIGGER_MANUAL_RETRY_LAUNCHED,
-    TRIGGER_RESTART_LAUNCHED,
-    TRIGGER_RESTART_UNAVAILABLE,
-    TRIGGER_SHUTDOWN_FAILED,
-    TRIGGER_LAUNCH_FAILED,
-)
-
-
-def trigger_auto_refresh(logger, config, force=False, notify_phone=True):
-    """Best-effort: launch auth.session to relogin via Chrome+QR.
-
-    Detached so it survives this (oneshot) process exiting — on systemd it's
-    handed off via `systemd-run --user` so it isn't killed when this unit's
-    cgroup is torn down at exit; elsewhere a plain detached Popen is enough.
-    Guarded by auth.session's own lock file so a stuck relogin
-    doesn't get relaunched on every subsequent 60s tick.
-
-    Inside a PyInstaller-frozen build, sys.executable is the bundled binary
-    itself (not a Python interpreter that can run a loose .py file) and
-    AUTO_REFRESH_SCRIPT has no file on disk to point at — so instead we
-    re-invoke the binary with a hidden flag that the app module dispatches straight
-    to auto_refresh_session.main(), keeping it a separate detached process.
-
-    force=True denotes a deliberate manual retry. It bypasses only persisted
-    automatic-failure backoff; it never replaces an active QR-login process.
-    A live lock always returns ``already_running`` so a second click cannot
-    close a browser while the person is mid-scan. Dead or malformed lock files
-    are still removed before launching a new process.
-
-    notify_phone=False (the manual "Open browser"/login-screen buttons) skips
-    the ntfy push telling the user to go scan a QR — they just clicked a
-    button and are already sitting in front of Chrome watching it open, so a
-    phone notification saying the same thing is just noise (and, worse, reads
-    as an alert when nothing's actually wrong). The automatic auth_expired
-    path keeps the push, since that's the one case where the user genuinely
-    isn't watching and needs the nudge. The desktop notification still fires
-    either way — it's local and harmless.
-
-    Returns one of the TRIGGER_* outcome constants.
-    """
-    automatic = not force
-    backoff = RetryBackoff(RELOGIN_BACKOFF_FILE)
-    if not config.get("auto_refresh_chrome", True):
-        return TRIGGER_DISABLED
-    remaining = backoff.cooldown_remaining(manual=force)
-    if remaining:
-        logger.info(
-            "outcome=auto_refresh_skipped detail=backoff_active remaining_seconds=%d",
-            remaining,
-        )
-        return TRIGGER_BACKOFF_ACTIVE
-    if not chrome.chrome_available():
-        logger.info("outcome=auto_refresh_no_browser detail=no_chromium_found")
-        if automatic:
-            backoff.record_failure("browser_unavailable")
-        return TRIGGER_NO_BROWSER
-    if AUTO_REFRESH_LOCK.exists():
-        pid = relogin_control.lock_pid(AUTO_REFRESH_LOCK)
-        if pid is not None and relogin_control.process_alive(pid):
-            logger.info("outcome=auto_refresh_skipped detail=already_running pid=%s", pid)
-            return TRIGGER_ALREADY_RUNNING
-        # Malformed or stale lock — safe to remove before launching.
-        AUTO_REFRESH_LOCK.unlink(missing_ok=True)
-    if getattr(sys, "frozen", False):
-        cmd = [sys.executable, "--internal-auto-refresh"]
-    else:
-        if not AUTO_REFRESH_SCRIPT.exists():
-            return TRIGGER_LAUNCH_FAILED
-        python = sys.executable
-        if shutil.which("systemd-run"):
-            cmd = [
-                "systemd-run", "--user", "--collect",
-                "--unit=info-kierowca-auto-refresh",
-                "--description=info-kierowca.pl auto session refresh",
-            ]
-            # systemd-run starts a new user-service environment rather than
-            # inheriting a caller's runtime overrides.  Keep the helper in
-            # the same state home as this notifier: otherwise a preview or
-            # alternate HOME writes its lock/session under the regular user
-            # home while the app module polls the alternate location and concludes
-            # that Chrome closed before a QR scan.
-            for name in ("HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME"):
-                if value := os.environ.get(name):
-                    cmd.append(f"--setenv={name}={value}")
-            cmd.extend([python, str(AUTO_REFRESH_SCRIPT)])
-        else:
-            cmd = [python, str(AUTO_REFRESH_SCRIPT)]
-    if not notify_phone:
-        cmd.append("--no-phone-push")
-    if automatic:
-        cmd.append("--automatic")
-    try:
-        AUTO_REFRESH_LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
-        with open(AUTO_REFRESH_LOG_FILE, "a") as logf:
-            logf.write(f"\n--- {datetime.now().isoformat()} launching: {cmd!r} ---\n")
-            logf.flush()
-            subprocess.Popen(
-                cmd, stdout=logf, stderr=subprocess.STDOUT, start_new_session=True
-            )
-        logger.info("outcome=auto_refresh_launched")
-        return TRIGGER_MANUAL_RETRY_LAUNCHED if force else TRIGGER_LAUNCHED
-    except Exception as e:
-        logger.info("outcome=auto_refresh_launch_failed detail=%r", str(e))
-        if automatic:
-            backoff.record_failure("launch_failed")
-        return TRIGGER_LAUNCH_FAILED
-
-
-def restart_auto_refresh(
-    logger, config, *, timeout=8, clock=time.monotonic, wall_clock=time.time,
-    sleeper=time.sleep
-):
-    """Cooperatively replace a known active QR relogin helper.
-
-    The active helper owns and terminates its Chrome child. This function only
-    writes that helper's unguessable request token and waits for its lock to be
-    released. It never signals a PID read from disk, and it never starts a
-    replacement while the prior owner may still hold the profile/debug port.
-    Older live PID-only locks therefore fail conservatively until that helper
-    exits normally.
-    """
-    if not config.get("auto_refresh_chrome", True):
-        return TRIGGER_DISABLED
-    if not chrome.chrome_available():
-        return TRIGGER_NO_BROWSER
-
-    if not AUTO_REFRESH_LOCK.exists():
-        outcome = trigger_auto_refresh(logger, config, force=True, notify_phone=False)
-        return TRIGGER_RESTART_LAUNCHED if outcome == TRIGGER_MANUAL_RETRY_LAUNCHED else outcome
-
-    owner = relogin_control.read_lock(AUTO_REFRESH_LOCK)
-    pid = relogin_control.lock_pid(AUTO_REFRESH_LOCK)
-    if pid is None or not relogin_control.process_alive(pid):
-        AUTO_REFRESH_LOCK.unlink(missing_ok=True)
-        outcome = trigger_auto_refresh(logger, config, force=True, notify_phone=False)
-        return TRIGGER_RESTART_LAUNCHED if outcome == TRIGGER_MANUAL_RETRY_LAUNCHED else outcome
-    if owner is None:
-        logger.info("outcome=auto_refresh_restart_refused detail=unverifiable_legacy_lock")
-        return TRIGGER_RESTART_UNAVAILABLE
-
-    issued_at = wall_clock()
-    relogin_control.write_restart_request(
-        AUTO_REFRESH_RESTART_REQUEST, owner,
-        issued_at=issued_at, expires_at=issued_at + timeout
-    )
-    deadline = clock() + timeout
-    while clock() < deadline:
-        lock_exists = AUTO_REFRESH_LOCK.exists()
-        if lock_exists and relogin_control.read_lock(AUTO_REFRESH_LOCK) != owner:
-            logger.info("outcome=auto_refresh_restart_failed detail=lock_owner_changed")
-            relogin_control.clear_restart_request_if_owned(
-                AUTO_REFRESH_RESTART_REQUEST, owner
-            )
-            return TRIGGER_SHUTDOWN_FAILED
-        if not relogin_control.process_alive(owner.pid):
-            if lock_exists:
-                relogin_control.clear_if_owned(AUTO_REFRESH_LOCK, owner)
-            break
-        sleeper(min(0.1, max(0, deadline - clock())))
-    if AUTO_REFRESH_LOCK.exists() or relogin_control.process_alive(owner.pid):
-        logger.info("outcome=auto_refresh_restart_failed detail=shutdown_timeout")
-        relogin_control.clear_restart_request_if_owned(
-            AUTO_REFRESH_RESTART_REQUEST, owner
-        )
-        return TRIGGER_SHUTDOWN_FAILED
-
-    relogin_control.clear_restart_request_if_owned(AUTO_REFRESH_RESTART_REQUEST, owner)
-    outcome = trigger_auto_refresh(logger, config, force=True, notify_phone=False)
-    if outcome == TRIGGER_MANUAL_RETRY_LAUNCHED:
-        logger.info("outcome=auto_refresh_restart_launched")
-        return TRIGGER_RESTART_LAUNCHED
-    return outcome
-
-
-def auto_refresh_in_progress():
-    """Whether a launched auth.session helper is still alive and holding
-    AUTO_REFRESH_LOCK — used by the app module's login screen to tell "still waiting
-    on you to scan" apart from "Chrome was closed/crashed before you scanned,
-    give up waiting and let the user retry" (see wait_for_cookies's docstring
-    in auth.session: that process releases the lock and exits the
-    moment its own Chrome disappears, whether from a scan, a close, or a
-    crash — so the lock's liveness is exactly the signal we need here).
-    """
-    if not AUTO_REFRESH_LOCK.exists():
-        return False
-    pid = relogin_control.lock_pid(AUTO_REFRESH_LOCK)
-    return pid is not None and relogin_control.process_alive(pid)
-
-
-OPEN_BROWSER_SCRIPT = Path(open_logged_in_browser.__file__)
-OPEN_BROWSER_PORT = open_logged_in_browser.DEFAULT_PORT
-
-# How long after an attempted final-confirm click (see
-# open_logged_in_browser.try_select_target_slot(), which writes
-# RESCHEDULE_CONFIRM_COOLDOWN_FILE right before that click) trigger_open_browser()
-# holds off passing --confirm-reschedule again. Without it, a confirm attempt
-# whose own post-click verification timed out (so current_slot_date never got
-# updated) could let the very next poll cycle attempt another confirm on some
-# other nearby slot — a real reservation change, possibly to a worse date,
-# before any human has had a chance to notice and step in. Not user-configurable
-# — this is a safety margin, not a tunable.
-RESCHEDULE_CONFIRM_COOLDOWN_SECONDS = 900
-
-
-def confirm_reschedule_cooldown_active():
-    """Whether a --confirm-reschedule attempt happened recently enough that
-    trigger_open_browser() should hold off passing that flag again. Missing or
-    unparseable RESCHEDULE_CONFIRM_COOLDOWN_FILE just means no recent attempt
-    is known — not a hard stop, so a fresh install/state dir behaves as if the
-    cooldown already elapsed.
-    """
-    try:
-        raw = RESCHEDULE_CONFIRM_COOLDOWN_FILE.read_text().strip()
-        if raw.startswith("{"):
-            raw = json.loads(raw)["attempted_at"]
-        last = datetime.fromisoformat(raw)
-    except (FileNotFoundError, ValueError, KeyError, TypeError, json.JSONDecodeError):
-        return False
-    return (datetime.now() - last).total_seconds() < RESCHEDULE_CONFIRM_COOLDOWN_SECONDS
-
-
-def trigger_open_browser(logger, config, auto_click=True, target_hit=None):
-    """Best-effort: launch booking.reschedule so a pre-authenticated
-    tab is already open by the moment the push notification lands — skips
-    the login step that otherwise costs you the fastest-moving slots.
-
-    Skipped if something's already answering on OPEN_BROWSER_PORT (its own
-    dedicated debug port) so a slot that keeps reappearing under a new
-    signature doesn't pile up duplicate Chrome windows — you'll just have
-    the one from the first hit to work with.
-
-    Same frozen-build re-invocation trick as trigger_auto_refresh() — see
-    its docstring — since sys.executable is the bundled binary itself
-    inside a PyInstaller build, not a Python interpreter that can run a
-    loose .py file.
-
-    auto_click=False (the manual "Open browser" button when the session is
-    still valid) passes --no-auto-click through, so it just opens the
-    logged-in tab without clicking through to the reschedule date-picker —
-    that click-through is only wanted for the automatic urgent-slot-hit
-    path, which keeps the default auto_click=True.
-
-    target_hit, when given together with auto_click and config's
-    experimental, default-off "auto_select_slot" flag, is one of
-    run_check()'s hit_dicts (word/exam_type/datetime/places) — passed
-    through as --target-slot JSON so booking.reschedule can also try
-    to expand that date's slot group, select the matching time radio
-    button, and click through to the summary/review screen, past the plain
-    date-picker screen.
-
-    A second, separate, also default-off flag — config's
-    "auto_confirm_reschedule" — additionally passes --confirm-reschedule,
-    which (only once auto_select_slot has already landed on the summary
-    screen, and only after booking.reschedule itself re-verifies
-    that screen matches the intended slot) clicks through the final
-    "Potwierdź i przejdź dalej" confirm button — actually submitting the
-    reservation change. auto_confirm_reschedule alone, without
-    auto_select_slot, does nothing (no --target-slot means
-    booking.reschedule never reaches that screen to confirm on).
-    UNVERIFIED against the live site as of 2026-07-20, by explicit user
-    request that same day — see booking.reschedule's own docstrings
-    for exactly what it does and does not click, and the verification step
-    that gates the final click. Both flags are omitted entirely (no
-    --target-slot/--confirm-reschedule at all) whenever off, so a config
-    predating this feature behaves identically to before.
-
-    --confirm-reschedule is further gated by confirm_reschedule_cooldown_active()
-    (see its own docstring) — even with auto_confirm_reschedule on, it's
-    withheld (falling back to --target-slot alone, same as auto_select_slot
-    without auto_confirm_reschedule) if a confirm attempt was made too
-    recently, regardless of whether that attempt's own outcome is known.
-
-    The launched subprocess's stdout/stderr go to RESCHEDULE_LOG_FILE
-    (append mode) rather than DEVNULL — this is a
-    detached, fire-and-forget launch with no other way for its outcome to
-    reach anyone, and booking.reschedule's own print()s are the only
-    record of what an auto-triggered run actually did, especially the
-    "couldn't verify automatically — check yourself" messages past the
-    confirm click.
-
-    Returns one of the TRIGGER_* outcome constants. No force option here
-    (unlike trigger_auto_refresh) — forcing would mean launching a second
-    Chrome on the same fixed debug port an already-open one is using, which
-    is fragile rather than useful; if one's already open that's already the
-    outcome a caller wants.
-    """
-    if not config.get("auto_open_browser", True):
-        return TRIGGER_DISABLED
-    if not chrome.chrome_available():
-        logger.info("outcome=open_browser_no_browser detail=no_chromium_found")
-        return TRIGGER_NO_BROWSER
-    try:
-        urllib.request.urlopen(f"http://127.0.0.1:{OPEN_BROWSER_PORT}/json/version", timeout=1)
-        logger.info("outcome=open_browser_skipped detail=already_running")
-        return TRIGGER_ALREADY_RUNNING
-    except Exception:
-        pass  # nothing listening on that port -> safe to launch
-    if getattr(sys, "frozen", False):
-        cmd = [sys.executable, "--internal-open-browser"]
-    else:
-        if not OPEN_BROWSER_SCRIPT.exists():
-            return TRIGGER_LAUNCH_FAILED
-        cmd = [sys.executable, str(OPEN_BROWSER_SCRIPT)]
-    if not auto_click:
-        cmd.append("--no-auto-click")
-    elif target_hit is not None and config.get("auto_select_slot", False):
-        cmd += ["--target-slot", json.dumps(target_hit)]
-        if config.get("auto_confirm_reschedule", False):
-            if confirm_reschedule_cooldown_active():
-                logger.info("outcome=confirm_reschedule_skipped detail=cooldown_active")
-            else:
-                cmd.append("--confirm-reschedule")
-    try:
-        RESCHEDULE_LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
-        with open(RESCHEDULE_LOG_FILE, "a") as logf:
-            logf.write(f"\n--- {datetime.now().isoformat()} launching: {cmd!r} ---\n")
-            logf.flush()
-            subprocess.Popen(cmd, stdout=logf, stderr=subprocess.STDOUT, start_new_session=True)
-        logger.info("outcome=open_browser_launched")
-        return TRIGGER_LAUNCHED
-    except Exception as e:
-        logger.info("outcome=open_browser_launch_failed detail=%r", str(e))
-        return TRIGGER_LAUNCH_FAILED
-
-
-def cookie_header(session):
-    return "; ".join(f"{k}={v}" for k, v in session.get("cookies", {}).items())
-
-
-def cookie_is_deletion(value, attrs):
-    """Whether a Set-Cookie is the server clearing the cookie rather than
-    setting one. Servers expire a cookie by sending it back empty and/or with
-    Max-Age=0 / an Expires in the past."""
-    if not value:
-        return True
-    lowered = attrs.lower()
-    if "max-age=0" in lowered.replace(" ", ""):
-        return True
-    return "expires=thu, 01 jan 1970" in lowered
-
-
-def parse_set_cookies(headers, session):
-    """Merge Set-Cookie headers into session["cookies"].
-
-    Deletions must actually delete: a logout/invalidate response carrying
-    `__Secure-PUDOJT=; Expires=Thu, 01 Jan 1970 ...` would otherwise be stored
-    as an empty-string cookie, leaving session.json looking complete to
-    booking.reschedule's COOKIE_NAMES check — which then injects blank
-    cookies and opens a logged-*out* tab instead of reporting the problem.
-    """
-    if headers is None:
-        return
-    for raw in headers.get_all("Set-Cookie") or []:
-        name, _, rest = raw.partition("=")
-        value, _, attrs = rest.partition(";")
-        name = name.strip()
-        cookies = session.setdefault("cookies", {})
-        if cookie_is_deletion(value, attrs):
-            cookies.pop(name, None)
-        else:
-            cookies[name] = value
-
-
-def do_request(url, session, method="GET", json_body=None):
-    data = None
-    headers = {
-        "User-Agent": USER_AGENT,
-        "Accept": "application/json, text/plain, */*",
-        "Cookie": cookie_header(session),
-        "Referer": f"{BASE}/reservation",
-        "Origin": BASE,
-    }
-    if json_body is not None:
-        data = json.dumps(json_body).encode()
-        headers["Content-Type"] = "application/json"
-    req = urllib.request.Request(url, data=data, headers=headers, method=method)
-    try:
-        with tls_transport.urlopen(req, timeout=TIMEOUT) as resp:
-            body = resp.read()
-            parse_set_cookies(resp.headers, session)
-            return resp.status, body, resp.headers
-    except urllib.error.HTTPError as e:
-        body = e.read()
-        return e.code, body, e.headers
-    except (urllib.error.URLError, tls_transport.TLSConfigurationError) as e:
-        return None, str(e).encode(), None
-
-
-def fetch_pkk_profiles(session):
-    """Best-effort lookup of the account's PKK profile(s) — used by the app module's
-    setup wizard to prefill the PKK number/category right after QR login
-    instead of asking the user to type a PKK number in blind. The endpoint
-    also returns pesel/name/birthDate; only pkkNumber/categoryName are kept,
-    matching this project's minimal-footprint stance on PII. Returns []
-    on any failure (session not ready yet, unexpected shape, etc.) so a
-    fetch hiccup just falls back to manual entry rather than blocking setup.
-    """
-    try:
-        status, body, _headers = do_request(PKK_PROFILES_URL, session, method="GET")
-        if status != 200:
-            return []
-        profiles = json.loads(body)
-        return [
-            {"pkkNumber": p["pkkNumber"], "categoryName": p["categoryName"]}
-            for p in profiles
-            if isinstance(p, dict) and p.get("pkkNumber") and p.get("categoryName")
-        ]
-    except Exception:
-        return []
 
 
 def _handle_auth_expired(logger, dash_status, config, status, stage):
@@ -768,7 +306,7 @@ def _handle_auth_expired(logger, dash_status, config, status, stage):
             "critical",
         )
     update_status(dash_status, "auth_expired", f"Session expired during {stage}")
-    trigger_auto_refresh(logger, config)
+    auth_launch.trigger_auto_refresh(logger, config)
 
 
 def should_proactively_relogin(config, captured_at, *, now=None):
@@ -824,7 +362,7 @@ def run_check(logger, dash_status):
                 "critical",
             )
         update_status(dash_status, "auth_expired", "session.json missing")
-        trigger_auto_refresh(logger, config)
+        auth_launch.trigger_auto_refresh(logger, config)
         return
     required_config = {"organization_ids", "category", "profile_number", "exam_types",
                        "ntfy_topic", "current_slot_date"}
@@ -846,10 +384,10 @@ def run_check(logger, dash_status):
     # and persisted retry backoff in trigger_auto_refresh().
     if should_proactively_relogin(config, captured_at):
         logger.info("outcome=proactive_relogin detail=session_expiring_soon")
-        trigger_auto_refresh(logger, config)
+        auth_launch.trigger_auto_refresh(logger, config)
 
     # 1. Keep the session alive.
-    status, body, _headers = do_request(REFRESH_URL, session, method="GET")
+    status, body, _headers = client.do_request(client.REFRESH_URL, session, method="GET")
     if status == 204:
         save_json(SESSION_FILE, session)
         logger.info("outcome=refresh_ok status=%s", status)
@@ -888,7 +426,9 @@ def run_check(logger, dash_status):
         "profileNumber": config["profile_number"],
         "profileType": "Pkk",
     }
-    status, body, _headers = do_request(SEARCH_URL, session, method="POST", json_body=payload)
+    status, body, _headers = client.do_request(
+        client.SEARCH_URL, session, method="POST", json_body=payload
+    )
 
     if status is None:
         # Never reached the server — see the matching branch in the refresh
@@ -985,7 +525,7 @@ def run_check(logger, dash_status):
                     )
                     logger.info("outcome=push_sent detail=%r", fastest)
                 dash_status["last_push_signature"] = fastest
-                trigger_open_browser(logger, config, target_hit=fastest)
+                booking_launch.trigger_open_browser(logger, config, target_hit=fastest)
         else:
             dash_status["last_push_signature"] = None
 
