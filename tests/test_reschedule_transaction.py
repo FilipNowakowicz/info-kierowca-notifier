@@ -37,6 +37,9 @@ class BookingClassificationTests(unittest.TestCase):
         self.assertEqual(rt.classify_cards([card()], TARGET, []), rt.UNKNOWN)
         self.assertEqual(rt.classify_cards([card()], TARGET, [card()]), rt.UNKNOWN)
 
+    def test_old_and_target_both_active_is_unknown(self):
+        self.assertEqual(rt.classify_cards([OLD, card()], TARGET, [OLD]), rt.UNKNOWN)
+
     def test_old_booking_still_active_is_verified_unchanged(self):
         self.assertEqual(rt.classify_cards([OLD], TARGET, [OLD]), rt.VERIFIED_UNCHANGED)
 

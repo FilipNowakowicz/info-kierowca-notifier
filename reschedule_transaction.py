@@ -114,11 +114,12 @@ def classify_cards(cards, target, baseline):
     if len(matches) > 1:
         return UNKNOWN
     old_active = [c for c in (baseline or []) if active(c)]
+    current_active = [c for c in cards if active(c)]
     if len(matches) == 1:
-        if len(old_active) != 1 or matches_target(old_active[0], target):
+        if (len(old_active) != 1 or len(current_active) != 1 or
+                matches_target(old_active[0], target)):
             return UNKNOWN
         return VERIFIED_SUCCESS
-    current_active = [c for c in cards if active(c)]
     if len(old_active) == 1 and len(current_active) == 1:
         old = old_active[0]
         now = current_active[0]
