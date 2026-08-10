@@ -253,6 +253,10 @@ def build_config(payload):
         # wizard preference: mObywatel reopens the QR screen, while Profil
         # Zaufany performs its automatic credential + SMS login.
         "auto_refresh_chrome": True,
+        # Only Profil Zaufany can relogin without visible interaction. Keep
+        # headed mode as the default and ignore this setting for mObywatel,
+        # whose QR code must remain visible for a person to scan.
+        "headless_pz_login": bool(payload.get("headless_pz_login", False)),
         "auto_open_browser": bool(payload.get("auto_open_browser", True)),
     }
     # Both experimental, off-by-default — see booking_launch.trigger_open_browser()/

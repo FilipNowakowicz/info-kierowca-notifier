@@ -68,8 +68,9 @@ on the second.
 The info-kierowca.pl session still expires after roughly an hour. With Profil Zaufany configured,
 the app starts refreshing it five minutes before the estimated expiry: it opens its dedicated
 Chrome profile, submits the securely stored credentials, reads the fresh PZePUAP verification
-code from the paired Google Messages Web tab, and restores the session automatically. With
-mObywatel selected, it waits for actual expiry, then opens the QR screen for you to scan. See
+code from the paired Google Messages Web tab, and restores the session automatically. Settings
+can run this browser headlessly so no window appears during automatic renewal. With mObywatel
+selected, it waits for actual expiry, then opens the QR screen for you to scan. See
 [Auto-relogin on session expiry](docs/ADVANCED.md#auto-relogin-on-session-expiry) for requirements,
 fallback behavior, and troubleshooting.
 

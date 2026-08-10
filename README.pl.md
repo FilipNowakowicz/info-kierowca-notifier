@@ -47,9 +47,11 @@ Jeśli włączysz pomoc przy zmianie terminu (domyślnie włączona, przełączn
 Sesja info-kierowca.pl nadal wygasa po około godzinie. Po skonfigurowaniu Profilu Zaufanego
 aplikacja rozpoczyna jej odnawianie pięć minut przed szacowanym wygaśnięciem: otwiera dedykowany
 profil Chrome, podaje bezpiecznie zapisane dane logowania, odczytuje nowy kod weryfikacyjny
-PZePUAP ze sparowanej karty Google Messages Web i automatycznie przywraca sesję. Przy wybranym
-mObywatelu czeka do faktycznego wygaśnięcia sesji, a następnie otwiera ekran kodu QR i czeka na
-jego zeskanowanie. Wymagania, zachowanie awaryjne i rozwiązywanie problemów opisano w sekcji
+PZePUAP ze sparowanej karty Google Messages Web i automatycznie przywraca sesję. W Ustawieniach
+można uruchomić tę przeglądarkę w tle, aby podczas automatycznego odnawiania sesji nie pojawiało
+się żadne okno. Przy wybranym mObywatelu aplikacja czeka do faktycznego wygaśnięcia sesji, a
+następnie otwiera ekran kodu QR i czeka na jego zeskanowanie. Wymagania, zachowanie awaryjne i
+rozwiązywanie problemów opisano w sekcji
 [automatyczne ponowne logowanie](docs/ADVANCED.md#auto-relogin-on-session-expiry).
 
 Pliki cookie sesji i numer PKK nie trafiają nigdzie poza info-kierowca.pl.
