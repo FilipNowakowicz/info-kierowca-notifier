@@ -48,6 +48,7 @@ RELOGIN_BACKOFF_FILE = STATE_DIR / "relogin-backoff.json"
 # grow the way the poll log does.
 RESCHEDULE_LOG_FILE = STATE_DIR / "reschedule.log"
 RESCHEDULE_CONFIRM_COOLDOWN_FILE = STATE_DIR / "reschedule-confirm-cooldown"
+RESCHEDULE_DIAGNOSTICS_DIR = STATE_DIR / "reschedule-diagnostics"
 
 # Same rationale as RESCHEDULE_LOG_FILE (own file, not LOG_FILE, for the same
 # rotation-race reason) — auto_refresh_session.py's stdout used to go to

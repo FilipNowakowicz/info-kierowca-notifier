@@ -31,6 +31,7 @@ from datetime import datetime
 import auto_refresh_session
 import cdp_client
 import ntfy_transport
+import reschedule_transaction as rt
 from auto_refresh_session import find_chrome
 
 from paths import CONFIG_FILE, RESCHEDULE_CONFIRM_COOLDOWN_FILE, STATE_DIR  # noqa: E402
@@ -241,33 +242,18 @@ def wait_and_verify_summary(host, port, date_str, time_str, exam_label, timeout=
 
 
 def wait_and_verify_booking(host, port, date_str, time_str, exam_label, timeout=20, target=None):
-    """Run after CONFIRM_SUMMARY_TEXT is clicked, on the /cases bookings list
-    (the caller navigates there first — CONFIRM_SUMMARY_TEXT's own "i
-    przejdź dalej" wording implies at least one more screen, unscouted, so
-    this deliberately doesn't try to read anything off of it) — does a
-    booking now show up as our intended slot, actually confirmed?
-
-    Same whole-page-text approach and same false-negative-over-false-
-    positive bias as wait_and_verify_summary(), plus a 'Potwierdzona'
-    (confirmed) status check: /cases lists both active and past/cancelled
-    bookings (see screenshots — an "Anulowana" card sits right next to the
-    "Potwierdzona" one), so matching the date/time and exam type alone
-    isn't enough to be sure this is the live booking rather than
-    historical entries.
-
-    This is the one signal update_current_slot_date() is allowed to act
-    on — the confirm click itself succeeding only means the button was
-    clickable and got clicked, not that the backend accepted the change.
-    """
-    expected_datetime = f"{date_str}, {time_str}"
-    js = """
-(function(expectedDateTime, examLabel) {
-  var text = document.body.innerText || document.body.textContent || '';
-  return text.indexOf(expectedDateTime) !== -1 && text.indexOf(examLabel) !== -1 &&
-         text.indexOf('Potwierdzona') !== -1;
-})(%s, %s)
-""" % (json.dumps(expected_datetime), json.dumps(exam_label))
-    return _poll_until_truthy(host, port, js, timeout, target)
+    """Compatibility wrapper using card-scoped, unambiguous verification."""
+    deadline = time.monotonic() + timeout
+    wanted = {"date": date_str, "time": time_str, "exam_type": exam_label}
+    while time.monotonic() < deadline:
+        try:
+            cards = rt.capture_booking_cards(host, port, target)
+            if rt.classify_cards(cards, wanted, []) == rt.VERIFIED_SUCCESS:
+                return True
+        except Exception:
+            pass
+        time.sleep(0.5)
+    return False
 
 
 def read_config():
@@ -340,6 +326,26 @@ def update_current_slot_date(new_date_iso):
         )
 
 
+def record_confirm_cooldown(outcome="PENDING"):
+    """Persist attempt time and latest outcome without weakening the 15-minute gate."""
+    try:
+        RESCHEDULE_CONFIRM_COOLDOWN_FILE.parent.mkdir(parents=True, exist_ok=True)
+        payload = {"attempted_at": datetime.now().isoformat(), "outcome": outcome}
+        RESCHEDULE_CONFIRM_COOLDOWN_FILE.write_text(json.dumps(payload))
+        if os.name == "posix":
+            RESCHEDULE_CONFIRM_COOLDOWN_FILE.chmod(0o600)
+    except Exception:
+        pass
+
+
+def update_slot_date_for_outcome(outcome, new_date_iso):
+    """The sole outcome gate for mutating current_slot_date."""
+    if outcome == rt.VERIFIED_SUCCESS:
+        update_current_slot_date(new_date_iso)
+        return True
+    return False
+
+
 def wait_and_click(host, port, text, timeout=20, target=None):
     """Poll for an element containing `text` and click it once it renders —
     content on this SPA loads asynchronously after navigation/a previous
@@ -351,7 +357,8 @@ def wait_and_click(host, port, text, timeout=20, target=None):
     return _poll_until_truthy(host, port, click_text_js(text), timeout, target)
 
 
-def try_select_target_slot(host, port, target_slot_json, confirm=False, page_target=None):
+def try_select_target_slot(host, port, target_slot_json, confirm=False, page_target=None,
+                           baseline_booking=None):
     """Best-effort continuation of the auto-click-through, gated behind
     --target-slot (itself only ever passed when config's experimental
     auto_select_slot flag is on — see notifier.trigger_open_browser()).
@@ -382,9 +389,9 @@ def try_select_target_slot(host, port, target_slot_json, confirm=False, page_tar
     undone by closing the tab. A verification mismatch, or the button never
     becoming clickable, stops short of that click every time.
 
-    After that click, also by explicit user request as of 2026-07-20:
-    navigates to /cases and, if wait_and_verify_booking() confirms the
-    booking now actually shows our slot as "Potwierdzona", updates
+    After that click, a separate explicit CDP target navigates to /cases while
+    the transaction target remains untouched. If structured card verification
+    confirms the booking now actually shows our slot as "Potwierdzona", this updates
     config.json's current_slot_date to match
     (update_current_slot_date()) — so notifier.is_urgent()'s next
     comparison reflects the change immediately instead of possibly
@@ -416,6 +423,12 @@ def try_select_target_slot(host, port, target_slot_json, confirm=False, page_tar
         return
     date_str = dt.strftime("%d/%m/%Y")
     time_str = dt.strftime("%H:%M")
+    transaction_target = {"exam_type": exam_label, "date": date_str, "time": time_str,
+                          "word_id": target.get("word_id", target.get("word", ""))}
+    recorder = rt.DiagnosticRecorder(transaction_target, baseline_booking or []) if confirm else None
+    if recorder:
+        recorder.state("CAPTURE_BASELINE_BOOKING")
+        print(f"transaction={recorder.transaction_id} state=baseline_captured cards={len(recorder.baseline_booking)}")
     print(f"Looking for {exam_label} at {time_str} on {date_str}...")
     if not wait_and_click(host, port, date_str, target=page_target):
         print(f"Couldn't find the '{date_str}' date group automatically — pick the slot yourself.")
@@ -428,6 +441,9 @@ def try_select_target_slot(host, port, target_slot_json, confirm=False, page_tar
         )
         return
     print(f"Selected {exam_label} at {time_str}.")
+    if recorder:
+        recorder.state("SELECT_TARGET_SLOT")
+        print(f"transaction={recorder.transaction_id} state=target_slot_selected")
     if not wait_and_click_enabled(host, port, SUMMARY_BUTTON_TEXT, target=page_target):
         print(
             f"Selected the slot but couldn't click '{SUMMARY_BUTTON_TEXT}' automatically "
@@ -460,17 +476,28 @@ def try_select_target_slot(host, port, target_slot_json, confirm=False, page_tar
         )
         return
     print("Summary screen matches the intended slot.")
+    recorder.state("VERIFY_SUMMARY")
+    print(f"transaction={recorder.transaction_id} state=summary_verified")
     # Written right before attempting the real submit click, regardless of its
     # outcome — see notifier.confirm_reschedule_cooldown_active(), which this
     # gates: a confirm attempt whose own result is uncertain (verification
     # below can time out even on a real success) must not let the very next
     # poll cycle immediately attempt another one on some other nearby slot.
+    record_confirm_cooldown()
     try:
-        RESCHEDULE_CONFIRM_COOLDOWN_FILE.parent.mkdir(parents=True, exist_ok=True)
-        RESCHEDULE_CONFIRM_COOLDOWN_FILE.write_text(datetime.now().isoformat())
-    except Exception:
-        pass  # best-effort, same tolerance as the read side treating a missing file as "no cooldown"
+        recorder.data["post_submit_pages"].append(rt.capture_page(host, port, page_target, 0))
+    except Exception as exc:
+        recorder.state("pre_submit_snapshot_unavailable", error=type(exc).__name__)
+    observer = None
+    try:
+        observer = cdp_client.NetworkObserver(host, port, page_target).start()
+    except Exception as exc:
+        recorder.state("network_observer_unavailable", error=type(exc).__name__)
     if not wait_and_click_enabled(host, port, CONFIRM_SUMMARY_TEXT, target=page_target):
+        if observer: recorder.data["network_events"] = observer.stop()
+        recorder.data["final_outcome"] = rt.ERROR
+        diagnostic_path = recorder.save()
+        print(f"Reschedule diagnostic saved to: {diagnostic_path}")
         print(
             f"Couldn't click '{CONFIRM_SUMMARY_TEXT}' automatically — confirm it yourself "
             "if the summary looks right."
@@ -483,33 +510,41 @@ def try_select_target_slot(host, port, target_slot_json, confirm=False, page_tar
             priority="urgent",
         )
         return
-    print(
-        f"Clicked '{CONFIRM_SUMMARY_TEXT}' — the reservation change has been submitted. "
-        "Nothing past this screen is automated or known — check the site for whatever "
-        "comes next."
-    )
-    time.sleep(2)  # give the backend a moment to process before we go check /cases
+    recorder.state("SUBMIT_CURRENT_FINAL_BUTTON")
+    print(f"transaction={recorder.transaction_id} state=submit_clicked")
+    print(f"Clicked '{CONFIRM_SUMMARY_TEXT}'. Waiting for booking outcome.")
     try:
-        cdp_client.navigate(host, port, DEFAULT_URL, target=page_target)
-    except Exception as e:
-        print(f"Couldn't reload /cases to verify the booking ({e!r}) — check it yourself.")
-        push_ntfy(
-            topic,
-            "info-kierowca: reschedule submitted, unverified",
-            f"Confirmed {exam_label} at {date_str}, {time_str} but couldn't reload /cases to "
-            "verify it. Check the site — current_slot_date was NOT updated automatically.",
-            priority="urgent",
-        )
-        return
-    if wait_and_verify_booking(host, port, date_str, time_str, exam_label, target=page_target):
-        print(f"Confirmed on /cases: {exam_label} at {date_str}, {time_str} shows as Potwierdzona.")
-        update_current_slot_date(dt.date().isoformat())
+        outcome = rt.run_post_submit(host, port, page_target, recorder)
+    except Exception as exc:
+        outcome = rt.UNKNOWN
+        recorder.state("observation_error", error=type(exc).__name__)
+        recorder.data["final_outcome"] = outcome
+    finally:
+        if observer:
+            recorder.data["network_events"] = observer.stop()
+    record_confirm_cooldown(outcome)
+    diagnostic_path = recorder.save()
+    print(f"transaction={recorder.transaction_id} outcome={outcome.lower()}")
+    print(f"Reschedule diagnostic saved to: {diagnostic_path}")
+    if outcome == rt.VERIFIED_SUCCESS:
+        print(f"Verified on /cases: {exam_label} at {date_str}, {time_str} is active and confirmed.")
+        update_slot_date_for_outcome(outcome, dt.date().isoformat())
         push_ntfy(
             topic,
             "info-kierowca: reschedule confirmed",
             f"Booked {exam_label} at {date_str}, {time_str}. current_slot_date updated.",
             priority="default",
         )
+    elif outcome == rt.NEEDS_FURTHER_CONFIRMATION:
+        push_ntfy(
+            topic, "info-kierowca: additional reschedule step",
+            "Reschedule reached an additional step and needs review. The browser has been "
+            f"left open and a diagnostic trace was saved to {diagnostic_path}.", priority="urgent")
+    elif outcome == rt.VERIFIED_UNCHANGED:
+        push_ntfy(
+            topic, "info-kierowca: booking unchanged",
+            f"The previous booking remained active after attempting {exam_label} at {date_str}, "
+            f"{time_str}. The browser remains open; diagnostic: {diagnostic_path}.", priority="urgent")
     else:
         print(
             "Couldn't confirm the new booking on /cases automatically — check the site and, "
@@ -518,9 +553,10 @@ def try_select_target_slot(host, port, target_slot_json, confirm=False, page_tar
         )
         push_ntfy(
             topic,
-            "info-kierowca: reschedule submitted, unverified",
-            f"Clicked confirm for {exam_label} at {date_str}, {time_str} but couldn't verify it "
-            "landed on /cases. Check the site — current_slot_date was NOT updated automatically.",
+            "info-kierowca: reschedule outcome unknown",
+            f"Clicked the current final control for {exam_label} at {date_str}, {time_str}, but "
+            f"the booking outcome is unverified. Browser left open; diagnostic: {diagnostic_path}. "
+            "current_slot_date was NOT updated.",
             priority="urgent",
         )
 
@@ -596,6 +632,14 @@ def main():
     cdp_client.navigate_target("127.0.0.1", args.port, page_target, args.url)
     cdp_client.bring_target_to_front("127.0.0.1", args.port, page_target)
 
+    baseline_booking = []
+    if args.target_slot and args.confirm_reschedule:
+        try:
+            baseline_booking = rt.wait_for_booking_cards("127.0.0.1", args.port, page_target)
+            print(f"Captured {len(baseline_booking)} structural baseline booking card(s).")
+        except Exception as exc:
+            print(f"Couldn't capture baseline booking cards ({type(exc).__name__}); verification will fail closed.")
+
     print(f"Chrome opened at {args.url}, logged in using {cdp_client.SESSION_FILE}.")
     if args.no_auto_click:
         print("Skipping the Zmień termin auto-click-through (--no-auto-click).")
@@ -606,7 +650,7 @@ def main():
             if args.target_slot:
                 try_select_target_slot(
                     "127.0.0.1", args.port, args.target_slot, confirm=args.confirm_reschedule,
-                    page_target=page_target,
+                    page_target=page_target, baseline_booking=baseline_booking,
                 )
             else:
                 print("Pick the new date and confirm yourself from here.")
