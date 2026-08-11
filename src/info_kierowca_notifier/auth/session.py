@@ -72,6 +72,22 @@ def authentication_chrome_args(port, profile_dir, *, headless=False):
         "--no-default-browser-check",
         "--window-size=900,850",
         "--app=about:blank",
+        # AUTO_CLICK_TARGETS below is hardcoded Polish text ("Zaloguj się",
+        # "Aplikacja mObywatel"). A brand-new throwaway profile (see
+        # ensure_private_profile_dir — this one is freshly created every
+        # run) has no saved language preference, so absent --lang Chrome
+        # falls back to the OS display language for its UI and, more
+        # importantly, its default Accept-Language header — which
+        # info-kierowca.pl/gov.pl may honor to serve English (or another
+        # language) copy instead of Polish. On a Polish-locale machine that
+        # accidentally matches and everything works; on a non-Polish-locale
+        # machine (plausible on a Windows install, less likely on a
+        # Polish user's own Linux box) every text match in AUTO_CLICK_TARGETS
+        # would silently fail from the very first page — no exception, no
+        # log line, indistinguishable from the CDP connection itself never
+        # having worked. Forcing pl-PL here makes the click-through
+        # deterministic regardless of the host OS's own locale.
+        "--lang=pl-PL",
     ]
     if headless:
         args.append("--headless=new")
@@ -209,23 +225,20 @@ AUTO_CLICK_OBSERVER_JS = CLICK_LOGIC_JS + (
 
 
 def try_auto_click(host, port, target=None):
+    """Returns the click diagnostics dict for any outcome the JS itself
+    completed (clicked or not — see reason: not_found/ambiguous_match/
+    known_error_page/stopped), or None only when the eval call itself
+    raised. Distinguishing those two is the whole point: a script that ran
+    fine but matched nothing (e.g. the page rendered in an unexpected
+    language — see --lang=pl-PL above) looks, from a single call, exactly
+    like a CDP connection that never worked at all. Only the exception case
+    is truly silent-by-design (Chrome may be mid-navigation); the no-match
+    case is now visible via wait_for_cookies's periodic heartbeat log below.
+    """
     try:
         result = sanitize_click_diagnostics(
             cdp_client.evaluate_in_page(host, port, AUTO_CLICK_JS, target=target)
         )
-        if result and result.get("clicked"):
-            # The browser's URL/host and non-secret DOM identity are useful
-            # when a site markup change needs diagnosis. Do not log page text,
-            # cookies, form values, or any authentication material.
-            print(
-                "auto-click result "
-                f"label={result['requested_label']!r} matched={result['matched_text']!r} "
-                f"url={result.get('page_url', '')!r} host={result['page_host']!r} tag={result['tag']!r} "
-                f"id={result['element_id']!r} class={result['element_class']!r} "
-                f"href={result['href']!r}"
-            )
-            return result
-        return None
     except Exception as e:
         # Swallowed by design (Chrome may be mid-navigation) but logged: a
         # click failing here silently every 0.5s for the whole wait looks
@@ -234,6 +247,18 @@ def try_auto_click(host, port, target=None):
         # AUTO_REFRESH_LOG_FILE after the fact.
         print(f"try_auto_click error: {e!r}")
         return None
+    if result and result.get("clicked"):
+        # The browser's URL/host and non-secret DOM identity are useful
+        # when a site markup change needs diagnosis. Do not log page text,
+        # cookies, form values, or any authentication material.
+        print(
+            "auto-click result "
+            f"label={result['requested_label']!r} matched={result['matched_text']!r} "
+            f"url={result.get('page_url', '')!r} host={result['page_host']!r} tag={result['tag']!r} "
+            f"id={result['element_id']!r} class={result['element_class']!r} "
+            f"href={result['href']!r}"
+        )
+    return result
 
 
 def open_google_messages_pairing(host="127.0.0.1", port=DEFAULT_PORT):
@@ -370,6 +395,15 @@ def wait_for_cookies(host, port, timeout, chrome_proc, target=None, should_resta
     chatter.
     """
     deadline = None if timeout is None else time.monotonic() + timeout
+    # Periodic heartbeat, not per-poll: try_auto_click() now returns a
+    # diagnostics dict on every completed eval, not just a successful click,
+    # so a stuck run (page rendered in an unexpected language, site markup
+    # changed, stuck on a "wkProcessUsed" error page, ...) can be told apart
+    # from a CDP connection that silently never worked — without spamming
+    # AUTO_REFRESH_LOG_FILE every 0.5s for however long a human takes to
+    # scan the QR.
+    heartbeat_interval = 30
+    next_heartbeat = time.monotonic()
     while deadline is None or time.monotonic() < deadline:
         if should_restart and should_restart():
             raise ReloginRestartRequested
@@ -382,9 +416,16 @@ def wait_for_cookies(host, port, timeout, chrome_proc, target=None, should_resta
                 return cookies
         except Exception:
             pass  # Chrome may be mid-navigation; just retry
-        clicked = try_auto_click(host, port, target=target)
-        if clicked:
-            print(f"auto-clicked: {clicked!r}")
+        diagnostics = try_auto_click(host, port, target=target)
+        # try_auto_click() already prints on a successful click; this is
+        # only the "still waiting" case.
+        if diagnostics and not diagnostics.get("clicked") and time.monotonic() >= next_heartbeat:
+            print(
+                "auto-click heartbeat: no target matched yet "
+                f"reason={diagnostics.get('reason')!r} url={diagnostics.get('page_url', '')!r} "
+                f"host={diagnostics.get('page_host', '')!r}"
+            )
+            next_heartbeat = time.monotonic() + heartbeat_interval
         time.sleep(0.5)
     return None
 

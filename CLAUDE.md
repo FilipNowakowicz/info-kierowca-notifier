@@ -137,7 +137,27 @@ automation. Regenerate the static snapshots with `tools/fetch_word_centers.py` /
   as a fallback if it doesn't pan out. Launches into a dedicated throwaway
   profile at `info-kierowca.pl/login`, then auto-clicks through the gov.pl → "Aplikacja mObywatel"
   chooser via an injected DOM-mutation-observer (`AUTO_CLICK_TARGETS`/`AUTO_CLICK_OBSERVER_JS` —
-  text-based, will break if the site's login UI text/labels change). The observer watches attribute
+  text-based, will break if the site's login UI text/labels change, **and also if the page renders
+  in a non-Polish language** — `authentication_chrome_args()` passes `--lang=pl-PL` for exactly this
+  reason: the throwaway profile is freshly created every run (see `ensure_private_profile_dir`
+  below) so without it Chrome's default UI language/`Accept-Language` header falls back to the host
+  OS's own display language, and a non-Polish render would make every text match silently fail from
+  the very first page — reported live on Windows 2026-08-11 as "Chrome opens to the login page and
+  just sits there"; **UNVERIFIED against the actual failing machine**, since no repro environment
+  was available, but grounded in `find_chrome()`/`chrome_debugging_args()` never having pinned a
+  language before this fix, and in the fact that a fresh profile's default Accept-Language really
+  does come from the OS locale. `chrome_debugging_args()` (shared with `booking/reschedule.py`'s own
+  separately-built launch args, which do **not** currently get `--lang` — same class of risk there,
+  not yet fixed) also now passes `--remote-allow-origins=*`, the flag Chrome/Edge 111+ require for
+  some CDP clients' websocket handshake to be accepted; `browser/cdp.py`'s handshake never sends an
+  `Origin` header so this shouldn't have been required, but it's cheap insurance against a
+  browser-version-dependent connection failure that only reproduces on whatever exact Chrome/Edge
+  build is bundled on the reporting machine. `try_auto_click()`/`wait_for_cookies()` also now log a
+  periodic heartbeat (`auto-click heartbeat: no target matched yet ...`) into
+  `AUTO_REFRESH_LOG_FILE` whenever the JS ran but matched nothing, closing a real diagnostic gap: previously that case
+  and a fully-broken CDP connection both produced total silence, indistinguishable from each other.
+  If a future report reproduces this, that heartbeat's `reason`/`url`/`host` is the first thing to
+  check. The observer watches attribute
   changes as well as insertions (a tile revealed via a class/hidden toggle rather than a new node
   would otherwise only get clicked on the slower Python-side fallback poll), and disconnects itself
   the instant it clicks the final tile (a `sessionStorage` flag, `__ikw_findAndClick`, stops the

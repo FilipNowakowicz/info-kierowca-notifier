@@ -52,6 +52,18 @@ def chrome_debugging_args(port, profile_dir):
         "--remote-debugging-address=127.0.0.1",
         f"--remote-debugging-port={port}",
         f"--user-data-dir={profile_dir}",
+        # Chrome/Edge 111+ reject a DevTools websocket handshake whose Origin
+        # header isn't on an allow-list (a DNS-rebinding defense). This
+        # project's own handshake (browser/cdp.py's ws_handshake) never sends
+        # an Origin header, so it shouldn't trip that check either way — but
+        # this flag is the documented, upstream-recommended fix for CDP
+        # clients hitting exactly this wall, it's a no-op when it isn't
+        # needed, and a newer bundled Chrome/Edge on one machine (e.g.
+        # Windows) than another (e.g. Linux) is exactly the kind of drift
+        # that would make this bite on one OS and not another. Cheap
+        # insurance against a version-dependent CDP connection failure that
+        # can't be reproduced without the exact browser build that has it.
+        "--remote-allow-origins=*",
     ]
 
 # Edge is Chromium-based and supports the same --remote-debugging-port CDP

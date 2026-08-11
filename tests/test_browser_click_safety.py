@@ -181,11 +181,26 @@ console.log(JSON.stringify({result: RESULT, clicked}));
         )
         self.assertEqual(result["matched_text"], "Aplikacja mObywatel")
 
-    def test_auto_click_abstains_for_non_click_outcome(self):
+    def test_auto_click_returns_diagnostics_without_printing_for_non_click_outcome(self):
+        # try_auto_click() now surfaces every completed eval's diagnostics
+        # (not just a successful click) so a stuck run can be told apart
+        # from a CDP connection that never worked at all — see
+        # wait_for_cookies()'s heartbeat log. It still prints nothing itself
+        # for a non-click outcome; only wait_for_cookies decides whether/how
+        # often to log that.
+        diagnostics = {"clicked": False, "reason": "ambiguous_match"}
         with patch.object(
-            auto_refresh_session.cdp_client,
-            "evaluate_in_page",
-            return_value={"clicked": False, "reason": "ambiguous_match"},
+            auto_refresh_session.cdp_client, "evaluate_in_page", return_value=diagnostics
+        ):
+            stream = io.StringIO()
+            with contextlib.redirect_stdout(stream):
+                result = auto_refresh_session.try_auto_click("127.0.0.1", 9333, target="correct-tab")
+        self.assertEqual(result, diagnostics)
+        self.assertEqual(stream.getvalue(), "")
+
+    def test_auto_click_still_abstains_on_eval_exception(self):
+        with patch.object(
+            auto_refresh_session.cdp_client, "evaluate_in_page", side_effect=RuntimeError("boom"),
         ):
             self.assertIsNone(auto_refresh_session.try_auto_click("127.0.0.1", 9333, target="correct-tab"))
 
