@@ -9,6 +9,7 @@ import json
 import socketserver
 
 from info_kierowca_notifier.web import guard
+from info_kierowca_notifier.web.favicon import FAVICON_LINK
 from info_kierowca_notifier.web.localization import LOCALIZATION_SCRIPT
 from info_kierowca_notifier.paths import STATUS_FILE, empty_status
 
@@ -293,6 +294,7 @@ setInterval(tickCountdown, 1000);
 </html>
 """
 
+PAGE = PAGE.replace("<head>", "<head>" + FAVICON_LINK, 1)
 PAGE = PAGE.replace("<head>", "<head>" + LOCALIZATION_SCRIPT, 1)
 
 

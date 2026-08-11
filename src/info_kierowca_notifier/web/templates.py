@@ -6,6 +6,7 @@ the bulk of that file's line count. The app module still owns all rendering logi
 dashboard_server.PAGE, etc.) — this module only holds the literal strings.
 """
 
+from info_kierowca_notifier.web.favicon import FAVICON_LINK
 from info_kierowca_notifier.web.localization import LOCALIZATION_SCRIPT
 
 TOOLBAR_HTML = """
@@ -1715,5 +1716,7 @@ document.getElementById('form').addEventListener('submit', async (e) => {
 
 # Keep the templates readable as complete HTML documents above while placing
 # the shared localization bootstrap in each page's head before it is painted.
+LOGIN_PAGE = LOGIN_PAGE.replace("<head>", "<head>" + FAVICON_LINK, 1)
+WIZARD_PAGE = WIZARD_PAGE.replace("<head>", "<head>" + FAVICON_LINK, 1)
 LOGIN_PAGE = LOGIN_PAGE.replace("<head>", "<head>" + LOCALIZATION_SCRIPT, 1)
 WIZARD_PAGE = WIZARD_PAGE.replace("<head>", "<head>" + LOCALIZATION_SCRIPT, 1)
