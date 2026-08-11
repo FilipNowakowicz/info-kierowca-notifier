@@ -198,6 +198,27 @@ class TLSRequestResolutionTests(unittest.TestCase):
         response.status = 200
         return response
 
+    def _opener(self, response=None, side_effect=None):
+        """urlopen() now sends the request through
+        build_opener(HTTPSHandler(context=...), _CookieSafeRedirectHandler())
+        .open(...) instead of calling urllib.request.urlopen(...) directly
+        (see _CookieSafeRedirectHandler's docstring for why) — tests assert
+        against the opener returned by a mocked build_opener() instead of a
+        mocked module-level urlopen()."""
+        opener = mock.MagicMock()
+        if side_effect is not None:
+            opener.open.side_effect = side_effect
+        else:
+            opener.open.return_value = response if response is not None else self._response()
+        return opener
+
+    def _https_context(self, build_opener_mock):
+        """The HTTPSHandler instance passed as build_opener()'s first
+        positional argument, so a test can assert which context it wraps."""
+        https_handler = build_opener_mock.call_args.args[0]
+        self.assertIsInstance(https_handler, urllib.request.HTTPSHandler)
+        return https_handler._context
+
     def _verification_error(self, verify_code, verify_message):
         error = ssl.SSLCertVerificationError(1, verify_message)
         error.verify_code = verify_code
@@ -208,15 +229,20 @@ class TLSRequestResolutionTests(unittest.TestCase):
         native = ssl.create_default_context()
         request = urllib.request.Request(self.URL)
         response = self._response()
+        opener = self._opener(response=response)
         with mock.patch.object(tls_transport, "_native_context", return_value=native), mock.patch.object(
             tls_transport, "_probe_verified_origin"
         ) as probe, mock.patch.object(
-            tls_transport.urllib.request, "urlopen", return_value=response
-        ) as application_open:
+            tls_transport.urllib.request, "build_opener", return_value=opener
+        ) as build_opener:
             actual = tls_transport.urlopen(request, timeout=7)
         self.assertIs(actual, response)
         probe.assert_called_once_with("https://example.test", native, 7)
-        application_open.assert_called_once_with(request, timeout=7, context=native)
+        opener.open.assert_called_once_with(request, timeout=7)
+        self.assertIs(self._https_context(build_opener), native)
+        self.assertIsInstance(
+            build_opener.call_args.args[1], tls_transport._CookieSafeRedirectHandler
+        )
         self.assertEqual(tls_transport.trust_backend(self.URL), "native_truststore")
 
     def test_native_verification_failure_uses_verified_certifi_fallback(self):
@@ -226,6 +252,7 @@ class TLSRequestResolutionTests(unittest.TestCase):
             20, "unable to get local issuer certificate"
         )
         request = urllib.request.Request(self.URL)
+        opener = self._opener()
         with mock.patch.object(tls_transport, "_native_context", return_value=native), mock.patch.object(
             tls_transport, "_certifi_context", return_value=certifi_context
         ) as fallback, mock.patch.object(
@@ -233,8 +260,8 @@ class TLSRequestResolutionTests(unittest.TestCase):
             "_probe_verified_origin",
             side_effect=[verification_error, None],
         ) as probe, mock.patch.object(
-            tls_transport.urllib.request, "urlopen", return_value=self._response()
-        ) as application_open:
+            tls_transport.urllib.request, "build_opener", return_value=opener
+        ) as build_opener:
             tls_transport.urlopen(request, timeout=4)
         fallback.assert_called_once_with()
         self.assertEqual(
@@ -244,7 +271,8 @@ class TLSRequestResolutionTests(unittest.TestCase):
                 mock.call("https://example.test", certifi_context, 4),
             ],
         )
-        application_open.assert_called_once_with(request, timeout=4, context=certifi_context)
+        opener.open.assert_called_once_with(request, timeout=4)
+        self.assertIs(self._https_context(build_opener), certifi_context)
         self.assertEqual(tls_transport.trust_backend(self.URL), "certifi_fallback")
 
     def test_non_tls_network_error_does_not_trigger_ca_fallback(self):
@@ -253,12 +281,12 @@ class TLSRequestResolutionTests(unittest.TestCase):
         with mock.patch.object(tls_transport, "_native_context", return_value=native), mock.patch.object(
             tls_transport, "_probe_verified_origin", side_effect=network_error
         ), mock.patch.object(tls_transport, "_certifi_context") as fallback, mock.patch.object(
-            tls_transport.urllib.request, "urlopen"
-        ) as application_open:
+            tls_transport.urllib.request, "build_opener"
+        ) as build_opener:
             with self.assertRaises(urllib.error.URLError):
                 tls_transport.urlopen(self.URL, timeout=2)
         fallback.assert_not_called()
-        application_open.assert_not_called()
+        build_opener.assert_not_called()
 
     def test_certifi_verification_failure_fails_before_application_request(self):
         native = ssl.create_default_context()
@@ -276,12 +304,12 @@ class TLSRequestResolutionTests(unittest.TestCase):
             "_probe_verified_origin",
             side_effect=[native_error, certifi_error],
         ), mock.patch.object(
-            tls_transport.urllib.request, "urlopen"
-        ) as application_open:
+            tls_transport.urllib.request, "build_opener"
+        ) as build_opener:
             with self.assertRaises(urllib.error.URLError) as raised:
                 tls_transport.urlopen(self.URL, timeout=2)
         self.assertIs(raised.exception, certifi_error)
-        application_open.assert_not_called()
+        build_opener.assert_not_called()
 
     def test_hostname_mismatch_does_not_trigger_ca_fallback(self):
         native = ssl.create_default_context()
@@ -289,13 +317,13 @@ class TLSRequestResolutionTests(unittest.TestCase):
         with mock.patch.object(tls_transport, "_native_context", return_value=native), mock.patch.object(
             tls_transport, "_probe_verified_origin", side_effect=mismatch
         ), mock.patch.object(tls_transport, "_certifi_context") as fallback, mock.patch.object(
-            tls_transport.urllib.request, "urlopen"
-        ) as application_open:
+            tls_transport.urllib.request, "build_opener"
+        ) as build_opener:
             with self.assertRaises(urllib.error.URLError) as raised:
                 tls_transport.urlopen(self.URL, timeout=2)
         self.assertIs(raised.exception, mismatch)
         fallback.assert_not_called()
-        application_open.assert_not_called()
+        build_opener.assert_not_called()
 
     def test_expired_certificate_does_not_trigger_ca_fallback(self):
         native = ssl.create_default_context()
@@ -303,13 +331,13 @@ class TLSRequestResolutionTests(unittest.TestCase):
         with mock.patch.object(tls_transport, "_native_context", return_value=native), mock.patch.object(
             tls_transport, "_probe_verified_origin", side_effect=expired
         ), mock.patch.object(tls_transport, "_certifi_context") as fallback, mock.patch.object(
-            tls_transport.urllib.request, "urlopen"
-        ) as application_open:
+            tls_transport.urllib.request, "build_opener"
+        ) as build_opener:
             with self.assertRaises(urllib.error.URLError) as raised:
                 tls_transport.urlopen(self.URL, timeout=2)
         self.assertIs(raised.exception, expired)
         fallback.assert_not_called()
-        application_open.assert_not_called()
+        build_opener.assert_not_called()
 
     def test_message_fallback_is_limited_to_chain_discovery(self):
         chain_error = urllib.error.URLError(
@@ -334,16 +362,18 @@ class TLSRequestResolutionTests(unittest.TestCase):
             20, "unable to get local issuer certificate"
         )
         request = urllib.request.Request(self.URL)
+        opener = self._opener(side_effect=verification_error)
         with mock.patch.object(tls_transport, "_verified_context", return_value=explicit), mock.patch.object(
             tls_transport, "_probe_verified_origin"
         ) as probe, mock.patch.object(tls_transport, "_certifi_context") as fallback, mock.patch.object(
-            tls_transport.urllib.request, "urlopen", side_effect=verification_error
-        ) as application_open:
+            tls_transport.urllib.request, "build_opener", return_value=opener
+        ) as build_opener:
             with self.assertRaises(urllib.error.URLError):
                 tls_transport.urlopen(request, timeout=3)
         probe.assert_not_called()
         fallback.assert_not_called()
-        application_open.assert_called_once_with(request, timeout=3, context=explicit)
+        opener.open.assert_called_once_with(request, timeout=3)
+        self.assertIs(self._https_context(build_opener), explicit)
 
     def test_post_body_is_sent_exactly_once_after_backend_resolution(self):
         native = ssl.create_default_context()
@@ -356,6 +386,7 @@ class TLSRequestResolutionTests(unittest.TestCase):
             data=b"non-idempotent-payload",
             method="POST",
         )
+        opener = self._opener()
         with mock.patch.object(tls_transport, "_native_context", return_value=native), mock.patch.object(
             tls_transport, "_certifi_context", return_value=certifi_context
         ), mock.patch.object(
@@ -363,18 +394,19 @@ class TLSRequestResolutionTests(unittest.TestCase):
             "_probe_verified_origin",
             side_effect=[verification_error, None],
         ), mock.patch.object(
-            tls_transport.urllib.request, "urlopen", return_value=self._response()
-        ) as application_open:
+            tls_transport.urllib.request, "build_opener", return_value=opener
+        ):
             tls_transport.urlopen(request, timeout=5)
-        application_open.assert_called_once_with(request, timeout=5, context=certifi_context)
+        opener.open.assert_called_once_with(request, timeout=5)
         self.assertEqual(request.data, b"non-idempotent-payload")
 
     def test_origin_resolution_is_cached_without_leaking_path_or_query(self):
         native = ssl.create_default_context()
+        opener = self._opener()
         with mock.patch.object(tls_transport, "_native_context", return_value=native), mock.patch.object(
             tls_transport, "_probe_verified_origin"
         ) as probe, mock.patch.object(
-            tls_transport.urllib.request, "urlopen", return_value=self._response()
+            tls_transport.urllib.request, "build_opener", return_value=opener
         ):
             tls_transport.urlopen(self.URL, timeout=2)
             tls_transport.urlopen("https://example.test/another?password=hidden", timeout=2)
@@ -393,6 +425,130 @@ class TLSRequestResolutionTests(unittest.TestCase):
         self.assertIsNone(request.data)
         self.assertNotIn("secret", request.full_url)
         response.close.assert_called_once_with()
+
+
+class CookieSafeRedirectHandlerTests(unittest.TestCase):
+    """The session cookie (and any Authorization header) must never survive
+    a redirect to a different origin -- see client.py's own hard invariant
+    that the session cookie never leaves info-kierowca.pl."""
+
+    def _request(self, url, cookie="__Secure-PUDOJT=secret-session-value"):
+        return urllib.request.Request(
+            url, headers={"Cookie": cookie, "Authorization": "Bearer token"}
+        )
+
+    def test_strips_credentials_on_cross_origin_redirect(self):
+        handler = tls_transport._CookieSafeRedirectHandler()
+        req = self._request("https://info-kierowca.pl/bknd/exam/api/v1/x")
+        new_req = handler.redirect_request(
+            req, None, 302, "Found", {}, "https://evil.example/steal"
+        )
+        self.assertIsNotNone(new_req)
+        self.assertIsNone(new_req.get_header("Cookie"))
+        self.assertIsNone(new_req.get_header("Authorization"))
+
+    def test_strips_credentials_on_scheme_downgrade_to_the_same_host(self):
+        """A same-host https -> http redirect is still a different origin
+        (an on-path attacker could otherwise force a downgrade to read the
+        cookie in cleartext) -- _origin() returns None for a non-https
+        target, which never equals the original https origin."""
+        handler = tls_transport._CookieSafeRedirectHandler()
+        req = self._request("https://info-kierowca.pl/bknd/exam/api/v1/x")
+        new_req = handler.redirect_request(
+            req, None, 302, "Found", {}, "http://info-kierowca.pl/bknd/exam/api/v1/x"
+        )
+        self.assertIsNotNone(new_req)
+        self.assertIsNone(new_req.get_header("Cookie"))
+        self.assertIsNone(new_req.get_header("Authorization"))
+
+    def test_strips_credentials_on_subdomain_redirect(self):
+        handler = tls_transport._CookieSafeRedirectHandler()
+        req = self._request("https://info-kierowca.pl/bknd/exam/api/v1/x")
+        new_req = handler.redirect_request(
+            req, None, 302, "Found", {}, "https://sub.info-kierowca.pl/x"
+        )
+        self.assertIsNotNone(new_req)
+        self.assertIsNone(new_req.get_header("Cookie"))
+
+    def test_preserves_credentials_on_same_origin_redirect(self):
+        handler = tls_transport._CookieSafeRedirectHandler()
+        req = self._request("https://info-kierowca.pl/bknd/exam/api/v1/x")
+        new_req = handler.redirect_request(
+            req, None, 302, "Found", {}, "https://info-kierowca.pl/bknd/exam/api/v1/y"
+        )
+        self.assertIsNotNone(new_req)
+        self.assertEqual(new_req.get_header("Cookie"), "__Secure-PUDOJT=secret-session-value")
+        self.assertEqual(new_req.get_header("Authorization"), "Bearer token")
+
+    def test_declines_to_redirect_exactly_when_the_stock_handler_would(self):
+        """redirect_request() must still return None (refuse the redirect)
+        whenever the stock HTTPRedirectHandler would -- this class only
+        strips headers from a redirect that's already being followed, it
+        never independently decides to follow more redirects than before."""
+        handler = tls_transport._CookieSafeRedirectHandler()
+        req = self._request("https://info-kierowca.pl/bknd/exam/api/v1/x")
+        with mock.patch.object(
+            urllib.request.HTTPRedirectHandler, "redirect_request", return_value=None
+        ):
+            new_req = handler.redirect_request(
+                req, None, 302, "Found", {}, "https://info-kierowca.pl/bknd/exam/api/v1/y"
+            )
+        self.assertIsNone(new_req)
+
+    def test_end_to_end_redirect_strips_cookie_before_leaving_the_process(self):
+        """Integration-level check: a real redirect chain through
+        tls_transport.urlopen() must not carry the Cookie header to a
+        different-origin Location, using two local HTTP servers rather than
+        mocks so nothing about urllib's own redirect machinery is assumed."""
+        received = {}
+
+        class _TargetHandler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                received["cookie"] = self.headers.get("Cookie")
+                self.send_response(200)
+                self.end_headers()
+
+            def log_message(self, *_a):
+                pass
+
+        target = HTTPServer(("127.0.0.1", 0), _TargetHandler)
+        target_thread = threading.Thread(target=target.serve_forever, daemon=True)
+        target_thread.start()
+        try:
+            target_port = target.server_port
+
+            class _RedirectHandler(BaseHTTPRequestHandler):
+                def do_GET(self):
+                    self.send_response(302)
+                    self.send_header("Location", f"http://127.0.0.1:{target_port}/")
+                    self.end_headers()
+
+                def log_message(self, *_a):
+                    pass
+
+            redirector = HTTPServer(("127.0.0.1", 0), _RedirectHandler)
+            redirector_thread = threading.Thread(target=redirector.serve_forever, daemon=True)
+            redirector_thread.start()
+            try:
+                request = urllib.request.Request(
+                    f"http://127.0.0.1:{redirector.server_port}/",
+                    headers={"Cookie": "__Secure-PUDOJT=secret-session-value"},
+                )
+                with tls_transport.urlopen(request, timeout=5) as response:
+                    self.assertEqual(response.status, 200)
+            finally:
+                redirector.shutdown()
+                redirector_thread.join()
+                redirector.server_close()
+        finally:
+            target.shutdown()
+            target_thread.join()
+            target.server_close()
+
+        # 127.0.0.1:<redirector_port> and 127.0.0.1:<target_port> are
+        # different origins (different ports), so the cookie must not
+        # have reached the second server at all.
+        self.assertIsNone(received.get("cookie"))
 
 
 class TLSSourcePolicyTests(unittest.TestCase):

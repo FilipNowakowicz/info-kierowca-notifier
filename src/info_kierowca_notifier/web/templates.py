@@ -6,6 +6,7 @@ the bulk of that file's line count. The app module still owns all rendering logi
 dashboard_server.PAGE, etc.) — this module only holds the literal strings.
 """
 
+from info_kierowca_notifier.web.favicon import FAVICON_LINK
 from info_kierowca_notifier.web.localization import LOCALIZATION_SCRIPT
 
 TOOLBAR_HTML = """
@@ -26,16 +27,6 @@ TOOLBAR_HTML = """
   .ikw-icon-btn:disabled { opacity: 0.5; cursor: default; }
   .ikw-icon-btn svg { width: 1.05rem; height: 1.05rem; }
   #ikw-quit-btn:hover { border-color: rgba(224,104,95,0.7); color: #ffb3ad; }
-  /* Small inline icon button next to web.server's #session-expiry
-     text - deliberately lighter-weight than .ikw-icon-btn (the top toolbar's
-     larger circular badges), since this one sits inline with 0.85rem text
-     rather than floating over the page. */
-  #session-refresh-btn { width: 1.3rem; height: 1.3rem; display: flex; align-items: center; justify-content: center;
-    border-radius: 999px; cursor: pointer; background: rgba(255,255,255,0.07); color: #eee; opacity: 0.55;
-    border: 1px solid rgba(255,255,255,0.18); transition: opacity 0.12s, background 0.12s; }
-  #session-refresh-btn:hover { opacity: 0.9; background: rgba(255,255,255,0.16); }
-  #session-refresh-btn:disabled { opacity: 0.3; cursor: default; }
-  #session-refresh-btn svg { width: 0.8rem; height: 0.8rem; }
   /* Faint permanent dot so the toolbar is discoverable even before its
      hover/focus reveal has ever fired. */
   #ikw-toolbar-hint { position: fixed; top: 1.1rem; right: 1.25rem; width: 0.35rem; height: 0.35rem;
@@ -130,7 +121,7 @@ function ikwToast(msg) {
 
 document.getElementById('ikw-quit-btn').addEventListener('click', async () => {
   if (!confirm(ikwI18n.t('Quit info-kierowca-notifier? You will stop getting checked/notified until you start it again.'))) return;
-  try { await fetch('/shutdown', {method: 'POST'}); } catch (e) {}
+  try { await fetch('/shutdown', {method: 'POST', headers: {'Content-Type': 'application/json'}}); } catch (e) {}
   document.body.innerHTML =
     `<div style="padding:4rem;text-align:center;font-family:sans-serif;color:#eee;">${ikwI18n.t('Stopped. You can close this tab.')}</div>`;
 });
@@ -191,7 +182,7 @@ document.getElementById('ikw-browser-btn').addEventListener('click', async () =>
   const btn = document.getElementById('ikw-browser-btn');
   btn.disabled = true;
   try {
-    const res = await fetch('/manual-login', {method: 'POST'});
+    const res = await fetch('/manual-login', {method: 'POST', headers: {'Content-Type': 'application/json'}});
     const data = await res.json();
     ikwToast(ikwI18n.t(data.message || 'Something went wrong.'));
   } catch (e) {
@@ -201,30 +192,11 @@ document.getElementById('ikw-browser-btn').addEventListener('click', async () =>
   }
 });
 
-// web.server's #session-refresh-btn stays display:none (and has no
-// listener) without this script - see its CSS comment there for why. Shown
-// unconditionally rather than only when data.session_expires_estimate is
-// set, since it's also the way to get a *first* estimate going.
-const ikwSessionRefreshBtn = document.getElementById('session-refresh-btn');
-ikwSessionRefreshBtn.style.display = 'flex';
-ikwSessionRefreshBtn.addEventListener('click', async () => {
-  if (!confirm(ikwI18n.t('Open Chrome for a fresh QR login now? This replaces your current session.'))) return;
-  ikwSessionRefreshBtn.disabled = true;
-  try {
-    const res = await fetch('/relogin-now', {method: 'POST'});
-    const data = await res.json();
-    ikwToast(ikwI18n.t(data.message || 'Something went wrong.'));
-    if (data.action === 'already_running' && confirm(ikwI18n.t('A QR login is already open. Close it and restart login?'))) {
-      const restartRes = await fetch('/relogin-restart', {method: 'POST'});
-      const restartData = await restartRes.json();
-      ikwToast(ikwI18n.t(restartData.message || 'Something went wrong.'));
-    }
-  } catch (e) {
-    ikwToast(ikwI18n.t('Could not reach the app.'));
-  } finally {
-    ikwSessionRefreshBtn.disabled = false;
-  }
-});
+// Getting a fresh session on demand lives in Settings now (next to Pair
+// Google Messages Web), not here - see WIZARD_PAGE's #settings-relogin-btn.
+// The dashboard toolbar used to have its own copy of this control; moved out
+// since it's a "sometimes useful" action, not something that needs to be one
+// click away on the main view for every visit.
 
 // Headline becomes the pause/resume control here rather than in
 // web.server, so the plain read-only dashboard (no /pause or
@@ -244,7 +216,7 @@ async function ikwTogglePause() {
   // relied on below for `poll` itself).
   const resuming = isPaused;
   try {
-    const res = await fetch(resuming ? '/resume' : '/pause', {method: 'POST'});
+    const res = await fetch(resuming ? '/resume' : '/pause', {method: 'POST', headers: {'Content-Type': 'application/json'}});
     const data = await res.json();
     // poll() (defined in web.server's own script, sharing this
     // page) re-reads the now-updated status.json and redraws the
@@ -366,7 +338,7 @@ function setMethod(method) {
 document.getElementById('method-mobywatel').onclick = () => setMethod('mobywatel');
 document.getElementById('method-pz').onclick = () => setMethod('profil_zaufany');
 document.getElementById('pair-messages').onclick = async () => {
-  const d = await (await fetch('/pair-google-messages', {method:'POST'})).json();
+  const d = await (await fetch('/pair-google-messages', {method:'POST', headers:{'Content-Type':'application/json'}})).json();
   document.getElementById('messages-status').textContent = d.ok ? 'Google Messages Web opened for pairing.' : 'Could not open Google Messages Web.';
 };
 loginBtn.addEventListener('click', async () => {
@@ -382,7 +354,7 @@ loginBtn.addEventListener('click', async () => {
       throw new Error(ikwI18n.t(data.message || 'Could not open Chrome — try the manual option below.'));
     }
     if (data.action === 'already_running' && confirm(ikwI18n.t('A QR login is already open. Close it and restart login?'))) {
-      const restartRes = await fetch('/relogin-restart', {method: 'POST'});
+      const restartRes = await fetch('/relogin-restart', {method: 'POST', headers: {'Content-Type': 'application/json'}});
       const restartData = await restartRes.json();
       if (restartData.action !== 'restart_launched') {
         throw new Error(ikwI18n.t(restartData.message || 'Could not restart the QR login.'));
@@ -504,7 +476,7 @@ WIZARD_PAGE = """<!doctype html>
 
   /* reveal-able inputs (PKK / ntfy link) */
   .reveal { position: relative; margin-bottom: 0.9rem; }
-  .reveal input { margin-bottom: 0; padding-right: 2.5rem; }
+  .reveal input, .reveal select { margin-bottom: 0; padding-right: 2.5rem; }
   .reveal-btn { position: absolute; top: 50%; right: 0.35rem; transform: translateY(-50%);
     background: none; border: none; color: rgba(238,238,238,0.5); cursor: pointer; padding: 0.3rem;
     display: grid; place-items: center; }
@@ -675,6 +647,8 @@ WIZARD_PAGE = """<!doctype html>
       <legend>Authentication</legend>
       <label for="login_method">Authentication method</label>
       <select id="login_method"><option value="profil_zaufany">Profil Zaufany</option><option value="mobywatel">mObywatel</option></select>
+      <button type="button" class="cat-more" id="settings-relogin-btn">Get new session now</button>
+      <div class="hint" id="settings-relogin-status"></div>
       <div id="settings-pz-fields" style="display:none">
         <label for="settings-pz-username">Profil Zaufany username</label>
         <div class="reveal">
@@ -699,19 +673,34 @@ WIZARD_PAGE = """<!doctype html>
     <fieldset>
       <legend>Exam &amp; centers</legend>
       <div id="pkk-auto-block" style="display:none;">
-        <label for="pkk-profile-select">Your PKK profile</label>
-        <select id="pkk-profile-select"></select>
+        <!-- 2+ profiles: masked "...last4 - code" dropdown, with a reveal toggle
+             for the whole option list. See the PKK profile picker script below. -->
+        <div id="pkk-select-block" style="display:none;">
+          <label for="pkk-profile-select">Your PKK profile</label>
+          <div class="reveal">
+            <select id="pkk-profile-select"></select>
+            <button type="button" class="reveal-btn" id="reveal-pkk-select" aria-label="Show or hide PKK number"></button>
+          </div>
+        </div>
+        <!-- Exactly 1 profile: the #profile_number reveal input (moved in from
+             pkk-manual-block below, not duplicated) shown read-only, plus a plain
+             non-clickable category label - the category is bound to this profile,
+             not user-chosen. -->
+        <div id="pkk-single-block" style="display:none;">
+          <label for="profile_number">PKK number</label>
+          <div class="hint" id="pkk-single-category"></div>
+        </div>
         <button type="button" class="cat-more" id="pkk-manual-link">Enter manually instead</button>
       </div>
 
       <div id="pkk-manual-block">
         <label for="profile_number">PKK number</label>
-        <div class="reveal">
+        <div class="reveal" id="pkk-reveal">
           <input type="text" id="profile_number" autocomplete="off" required>
           <button type="button" class="reveal-btn" id="reveal-pkk" aria-label="Show or hide PKK number"></button>
         </div>
 
-        <label>License category</label>
+        <label id="pkk-manual-cat-label">License category</label>
         <div class="cat-group" id="cat-primary"></div>
         <button type="button" class="cat-more" id="cat-more-btn">More categories</button>
         <div class="cat-group cat-rest" id="cat-rest"></div>
@@ -795,7 +784,9 @@ WIZARD_PAGE = """<!doctype html>
         <label>Your private notification link — install the <a href="https://ntfy.sh/app" target="_blank" style="color:var(--accent-soft);">ntfy app</a> and subscribe to it exactly:</label>
         <div class="ntfy-row">
           <div class="reveal">
-            <input type="password" id="ntfy_topic" value="__NTFY_TOPIC__" readonly>
+            <!-- Value set from NTFY_TOPIC in the script below, not
+                 substituted into this attribute - see render_wizard(). -->
+            <input type="password" id="ntfy_topic" readonly>
             <button type="button" class="reveal-btn" id="reveal-ntfy" aria-label="Show or hide notification link"></button>
           </div>
           <button type="button" id="copy-ntfy">Copy link</button>
@@ -860,6 +851,7 @@ WIZARD_PAGE = """<!doctype html>
 const CENTERS = __CENTERS_JSON__;
 const CATEGORIES = __CATEGORIES_JSON__;
 const EXISTING_CONFIG = __EXISTING_CONFIG_JSON__;
+const NTFY_TOPIC = __NTFY_TOPIC_JSON__;
 const KNOWN_IDS = new Set(CENTERS.map(c => c.id));
 const loginMethodSelect = document.getElementById('login_method');
 const settingsPzFields = document.getElementById('settings-pz-fields');
@@ -867,9 +859,36 @@ function updateAuthFields() { settingsPzFields.style.display = loginMethodSelect
 loginMethodSelect.addEventListener('change', updateAuthFields);
 updateAuthFields();
 document.getElementById('settings-pair-messages').onclick = async () => {
-  const d=await (await fetch('/pair-google-messages',{method:'POST'})).json();
+  const d=await (await fetch('/pair-google-messages',{method:'POST', headers:{'Content-Type':'application/json'}})).json();
   document.getElementById('settings-messages-status').textContent=d.ok?'Google Messages Web opened for pairing.':'Could not open Google Messages Web.';
 };
+// Moved out of the dashboard toolbar (see web.server.py's #session-expiry
+// and the app module's old TOOLBAR_HTML wiring) - same /relogin-now +
+// /relogin-restart flow, just living in Settings instead of one click away
+// on the main view, since forcing a fresh login is a "sometimes useful"
+// action rather than a routine one. Not scoped to either login_method: a
+// stuck mObywatel session is exactly as real a reason to reach for this as
+// a Profil Zaufany one.
+const settingsReloginBtn = document.getElementById('settings-relogin-btn');
+const settingsReloginStatus = document.getElementById('settings-relogin-status');
+settingsReloginBtn.addEventListener('click', async () => {
+  if (!confirm(t('Open Chrome for a fresh QR login now? This replaces your current session.'))) return;
+  settingsReloginBtn.disabled = true;
+  try {
+    const res = await fetch('/relogin-now', {method: 'POST', headers: {'Content-Type': 'application/json'}});
+    const data = await res.json();
+    settingsReloginStatus.textContent = t(data.message || 'Something went wrong.');
+    if (data.action === 'already_running' && confirm(t('A QR login is already open. Close it and restart login?'))) {
+      const restartRes = await fetch('/relogin-restart', {method: 'POST', headers: {'Content-Type': 'application/json'}});
+      const restartData = await restartRes.json();
+      settingsReloginStatus.textContent = t(restartData.message || 'Something went wrong.');
+    }
+  } catch (e) {
+    settingsReloginStatus.textContent = t('Could not reach the app.');
+  } finally {
+    settingsReloginBtn.disabled = false;
+  }
+});
 // True when this page is loaded inside the dashboard's Settings modal
 // (see TOOLBAR_HTML's #ikw-settings-frame) rather than as its own top-level
 // page (first-run /setup, or a direct /settings visit) — same-origin, so
@@ -1209,6 +1228,17 @@ let selectedCategory = null;
 function setCategory(id) {
   selectedCategory = id;
   document.querySelectorAll('.cat-pill').forEach((p) => p.classList.toggle('on', p.dataset.id === String(id)));
+  updatePkkSingleCategoryLabel();
+}
+// Keeps the read-only "License category: X" label (single-PKK-profile state,
+// see the PKK profile picker below) in sync with selectedCategory - a plain
+// text snapshot taken once at profile-apply time would otherwise go stale the
+// moment EXISTING_CONFIG's own setCategory() call runs later on /settings.
+function updatePkkSingleCategoryLabel() {
+  const el = document.getElementById('pkk-single-category');
+  if (!el || el.dataset.active !== '1') return;
+  const c = CATEGORIES.find((cat) => cat.id === selectedCategory);
+  el.textContent = `${t('License category')}: ${c ? (c.code || ('Cat ' + c.id)) : ''}`;
 }
 function setCatRestOpen(open) {
   catRest.classList.toggle('open', open);
@@ -1253,23 +1283,33 @@ const pkkInput = document.getElementById('profile_number');
 const pkkSync = wireReveal(pkkInput, document.getElementById('reveal-pkk'));
 wireReveal(document.getElementById('settings-pz-username'), document.getElementById('reveal-pz-username-settings'));
 const ntfyInput = document.getElementById('ntfy_topic');
+ntfyInput.value = NTFY_TOPIC;
 wireReveal(ntfyInput, document.getElementById('reveal-ntfy'));
 
-// ---- PKK profile picker (prefilled after QR login, see build_pkk_prefill) ----
+// ---- PKK profile picker (prefilled after QR login / on Settings, see
+// build_pkk_prefill). Three presentations depending on account profile count:
+//   0 profiles  -> pkk-manual-block only (unchanged: editable field + pills)
+//   1 profile   -> pkk-single-block: the *same* #profile_number reveal input
+//                  (moved here, not duplicated), made read-only, plus a plain
+//                  non-clickable category label - the category is bound to
+//                  the profile, not user-chosen
+//   2+ profiles -> pkk-select-block: a <select> of masked "...last4 - code"
+//                  options with a reveal toggle that swaps every option's
+//                  label at once (updating the closed <select>'s own display
+//                  for free, since it reads the selected <option>'s text)
 const PKK_PROFILES = __PKK_PROFILES_JSON__;
 if (PKK_PROFILES.length) {
   const pkkAutoBlock = document.getElementById('pkk-auto-block');
   const pkkManualBlock = document.getElementById('pkk-manual-block');
+  const pkkSelectBlock = document.getElementById('pkk-select-block');
+  const pkkSingleBlock = document.getElementById('pkk-single-block');
   const pkkProfileSelect = document.getElementById('pkk-profile-select');
   const pkkManualLink = document.getElementById('pkk-manual-link');
   const pkkAutoLink = document.getElementById('pkk-auto-link');
-
-  PKK_PROFILES.forEach((p, i) => {
-    const opt = document.createElement('option');
-    opt.value = String(i);
-    opt.textContent = `${p.pkkNumber} — ${p.categoryCode}`;
-    pkkProfileSelect.appendChild(opt);
-  });
+  const pkkRevealWrap = document.getElementById('pkk-reveal');
+  const pkkManualCatLabel = document.getElementById('pkk-manual-cat-label');
+  const pkkSingleCategory = document.getElementById('pkk-single-category');
+  const multiProfile = PKK_PROFILES.length > 1;
 
   function applyPkkProfile(p) {
     pkkInput.value = p.pkkNumber;
@@ -1278,21 +1318,79 @@ if (PKK_PROFILES.length) {
     if (!isTop) expandCatRest();
   }
 
+  function maskedPkk(num) {
+    const last4 = num.slice(-4);
+    return '•'.repeat(Math.max(0, num.length - last4.length)) + last4;
+  }
+
+  function showSingleProfile() {
+    pkkSelectBlock.style.display = 'none';
+    pkkSingleBlock.style.display = 'block';
+    pkkSingleCategory.dataset.active = '1';
+    pkkSingleBlock.insertBefore(pkkRevealWrap, pkkSingleCategory);
+    pkkInput.readOnly = true;
+    pkkInput.type = 'password';
+    pkkSync();
+    applyPkkProfile(PKK_PROFILES[0]);
+  }
+
+  let selectRevealed = false;
+  function refreshSelectOptionLabels() {
+    Array.from(pkkProfileSelect.options).forEach((opt, i) => {
+      const p = PKK_PROFILES[i];
+      opt.textContent = `${selectRevealed ? p.pkkNumber : maskedPkk(p.pkkNumber)} — ${p.categoryCode}`;
+    });
+  }
+
+  function showSelectProfiles() {
+    pkkSingleBlock.style.display = 'none';
+    pkkSelectBlock.style.display = 'block';
+    refreshSelectOptionLabels();
+    applyPkkProfile(PKK_PROFILES[Number(pkkProfileSelect.value || 0)]);
+  }
+
   pkkAutoBlock.style.display = 'block';
   pkkManualBlock.style.display = 'none';
-  applyPkkProfile(PKK_PROFILES[0]);
 
-  pkkProfileSelect.addEventListener('change', () => applyPkkProfile(PKK_PROFILES[Number(pkkProfileSelect.value)]));
+  if (multiProfile) {
+    PKK_PROFILES.forEach((p, i) => {
+      const opt = document.createElement('option');
+      opt.value = String(i);
+      pkkProfileSelect.appendChild(opt);
+    });
+    const selectRevealBtn = document.getElementById('reveal-pkk-select');
+    const syncSelectReveal = () => { selectRevealBtn.innerHTML = selectRevealed ? EYE_OFF : EYE; };
+    syncSelectReveal();
+    selectRevealBtn.addEventListener('click', () => {
+      selectRevealed = !selectRevealed;
+      refreshSelectOptionLabels();
+      syncSelectReveal();
+    });
+    pkkProfileSelect.addEventListener('change', () => applyPkkProfile(PKK_PROFILES[Number(pkkProfileSelect.value)]));
+    showSelectProfiles();
+  } else {
+    showSingleProfile();
+  }
+
   pkkManualLink.addEventListener('click', () => {
     pkkAutoBlock.style.display = 'none';
     pkkManualBlock.style.display = 'block';
     pkkAutoLink.style.display = 'block';
+    if (!multiProfile) {
+      pkkSingleCategory.dataset.active = '0';
+      pkkManualBlock.insertBefore(pkkRevealWrap, pkkManualCatLabel);
+      pkkInput.readOnly = false;
+    }
   });
   pkkAutoLink.addEventListener('click', () => {
     pkkAutoBlock.style.display = 'block';
     pkkManualBlock.style.display = 'none';
     pkkAutoLink.style.display = 'none';
-    applyPkkProfile(PKK_PROFILES[Number(pkkProfileSelect.value)]);
+    if (multiProfile) {
+      showSelectProfiles();
+    } else {
+      showSingleProfile();
+    }
   });
 }
 
@@ -1437,6 +1535,15 @@ if (EXISTING_CONFIG) {
 
   pkkInput.value = EXISTING_CONFIG.profile_number || '';
   if (pkkInput.value) { pkkInput.type = 'password'; pkkSync(); }
+  // The dropdown (2+ PKK profiles) otherwise stays visually on whichever
+  // profile applyPkkProfile() picked at load (index 0) even though the lines
+  // above just overwrote the actually-submitted number/category with the
+  // saved config's own values - sync the visible selection so it doesn't
+  // silently disagree with what Save would submit.
+  if (PKK_PROFILES.length > 1) {
+    const savedProfileIdx = PKK_PROFILES.findIndex((p) => p.pkkNumber === EXISTING_CONFIG.profile_number);
+    if (savedProfileIdx >= 0) document.getElementById('pkk-profile-select').value = String(savedProfileIdx);
+  }
 
   if (EXISTING_CONFIG.category != null) {
     setCategory(EXISTING_CONFIG.category);
@@ -1529,7 +1636,7 @@ resetAccountBtn.addEventListener('click', async () => {
   if (!confirm(t("This logs you out and clears your saved settings. You'll need to scan the QR code again. Continue?"))) return;
   resetAccountBtn.disabled = true;
   try {
-    const response = await fetch('/reset-account', {method: 'POST'});
+    const response = await fetch('/reset-account', {method: 'POST', headers: {'Content-Type': 'application/json'}});
     const data = await response.json();
     if (!response.ok || !data.ok) throw new Error(data.error || 'Reset failed');
     if (data.warning) alert(data.warning);
@@ -1609,5 +1716,7 @@ document.getElementById('form').addEventListener('submit', async (e) => {
 
 # Keep the templates readable as complete HTML documents above while placing
 # the shared localization bootstrap in each page's head before it is painted.
+LOGIN_PAGE = LOGIN_PAGE.replace("<head>", "<head>" + FAVICON_LINK, 1)
+WIZARD_PAGE = WIZARD_PAGE.replace("<head>", "<head>" + FAVICON_LINK, 1)
 LOGIN_PAGE = LOGIN_PAGE.replace("<head>", "<head>" + LOCALIZATION_SCRIPT, 1)
 WIZARD_PAGE = WIZARD_PAGE.replace("<head>", "<head>" + LOCALIZATION_SCRIPT, 1)

@@ -8,6 +8,8 @@ import http.server
 import json
 import socketserver
 
+from info_kierowca_notifier.web import guard
+from info_kierowca_notifier.web.favicon import FAVICON_LINK
 from info_kierowca_notifier.web.localization import LOCALIZATION_SCRIPT
 from info_kierowca_notifier.paths import STATUS_FILE, empty_status
 
@@ -82,14 +84,13 @@ PAGE = """<!doctype html>
      are handled the way they are above. */
   #countdown { margin-top: 2rem; font-size: 1rem; min-height: 1.25rem; opacity: 0.6; font-variant-numeric: tabular-nums; }
   #meta { margin-top: 0.4rem; font-size: 0.85rem; opacity: 0.45; }
-  /* #session-refresh-btn stays display:none here - only the app module's
-     TOOLBAR_HTML (which backs /relogin-now) reveals and styles it, same
-     reason #headline-wrap's cursor/hover styling is gated on TOOLBAR_HTML
-     adding .ikw-pausable: the plain read-only dashboard has no endpoint
-     behind this button and must not show an affordance it can't act on. */
+  /* Empty (no text, no layout) whenever notifier.py's run_check() decides
+     there's nothing worth showing here - see its own comment on
+     session_expires_estimate for when that is. Forcing a fresh login is a
+     Settings action now (next to Pair Google Messages Web), not a button
+     on this page - see WIZARD_PAGE's #settings-relogin-btn. */
   #session-expiry-wrap { margin-top: 0.15rem; display: flex; align-items: center; justify-content: center; gap: 0.35rem; }
   #session-expiry { font-size: 0.85rem; opacity: 0.45; }
-  #session-refresh-btn { display: none; }
 
   #history {
     margin-top: 3rem;
@@ -128,11 +129,6 @@ PAGE = """<!doctype html>
     <div id="meta"></div>
     <div id="session-expiry-wrap">
       <span id="session-expiry"></span>
-      <button id="session-refresh-btn" type="button" title="Get new session" aria-label="Get new session">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 4v5h-5"/>
-        </svg>
-      </button>
     </div>
   </div>
   <div id="history"></div>
@@ -298,10 +294,16 @@ setInterval(tickCountdown, 1000);
 </html>
 """
 
+PAGE = PAGE.replace("<head>", "<head>" + FAVICON_LINK, 1)
 PAGE = PAGE.replace("<head>", "<head>" + LOCALIZATION_SCRIPT, 1)
 
 
-class Handler(http.server.BaseHTTPRequestHandler):
+class Handler(guard.LocalRequestGuardMixin, http.server.BaseHTTPRequestHandler):
+    # This surface is read-only, but /status.json still hands out booking
+    # history, so it gets the same Host check as app.py's - see web.guard's
+    # docstring on DNS rebinding.
+    guard_port = PORT
+
     def log_message(self, format, *args):
         pass
 
@@ -313,6 +315,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self):
+        if not self.guard_get():
+            return
         if self.path in ("/", "/index.html"):
             self._send(200, PAGE.encode("utf-8"), "text/html; charset=utf-8")
         elif self.path == "/status.json":

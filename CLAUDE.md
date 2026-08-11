@@ -114,6 +114,29 @@ automation. Regenerate the static snapshots with `tools/fetch_word_centers.py` /
   `poll()` parses it into a page-level epoch-ms value, and `tickCountdown()` just diffs that against
   `Date.now()` every second — no client-side interval constant involved, so the display can't drift
   out of sync with a Settings-page interval change or the actual post-jitter wait.
+  `#session-expiry`'s text comes from `status.json`'s `session_expires_estimate`, which
+  `src/info_kierowca_notifier/notifier.py`'s `run_check()` only sets for `login_method: "mobywatel"`
+  — that session ends in a manual QR rescan, so a countdown is a genuine heads-up; a Profil Zaufany
+  session relogs itself in proactively (`should_proactively_relogin()`) with no action needed, so the
+  same countdown there was just clutter, by explicit user request. The "get a new session now"
+  button that used to sit next to this text (`#session-refresh-btn`, revealed only by the app
+  module's `TOOLBAR_HTML`) moved into Settings instead (`#settings-relogin-btn`, next to "Pair
+  Google Messages Web") — same `/relogin-now`+`/relogin-restart` flow, just not one click away on
+  the main view for every visit, since forcing a fresh login is occasional-use rather than routine.
+  Not gated by `login_method` — a stuck mObywatel session is exactly as real a reason to reach for
+  it as a Profil Zaufany one.
+- `src/info_kierowca_notifier/web/guard.py` — the loopback/same-origin checks both HTTP surfaces run
+  before dispatching (`LocalRequestGuardMixin`, mixed into `web/server.py`'s `Handler` and
+  `src/info_kierowca_notifier/app.py`'s `AppHandler`, each setting `guard_port`). Binding 127.0.0.1
+  is not a boundary against a web page the user has open: every request must carry a loopback
+  `Host` we recognise (`127.0.0.1`/`localhost`/`[::1]` + port — this is what stops DNS rebinding
+  reading `/settings`' rendered config or `/status.json`'s history), and every POST must carry one
+  of our own `Origin`s *when the header is present* (absent means a non-browser client such as curl
+  or `already_running()`'s own probe; `null` is rejected) plus `Content-Type: application/json`.
+  That content type is the CSRF fix specifically: it is not CORS-safelisted, so a cross-site POST
+  needs a preflight this server never answers — which is also why every `fetch(..., {method:
+  'POST'})` in `web/templates.py`, including the body-less ones, sends that header. Imports nothing
+  from the project, so neither `app.py` nor `web/server.py` has to depend on the other for it.
 - `tools/pull_session_cookies.py` — pulls session cookies from a running Chrome via remote-debugging
   port; writes them into `session.json`. Manual: you launch Chrome and log in first.
 - `src/info_kierowca_notifier/auth/session.py` — launches Chrome (via `find_chrome()`: `CHROME_CANDIDATES` PATH names
@@ -137,12 +160,160 @@ automation. Regenerate the static snapshots with `tools/fetch_word_centers.py` /
   as a fallback if it doesn't pan out. Launches into a dedicated throwaway
   profile at `info-kierowca.pl/login`, then auto-clicks through the gov.pl → "Aplikacja mObywatel"
   chooser via an injected DOM-mutation-observer (`AUTO_CLICK_TARGETS`/`AUTO_CLICK_OBSERVER_JS` —
-  text-based, will break if the site's login UI text/labels change). The observer watches attribute
+  text-based, will break if the site's login UI text/labels change).
+
+  **The non-Polish-language theory is ruled out.** A first fix pinned `authentication_chrome_args()`
+  to `--lang=pl-PL`, on the theory that a non-Polish OS locale on Windows made Chrome's default UI
+  language/`Accept-Language` render the login chain in some other language, silently breaking every
+  hardcoded-Polish-text match from the first page — reported live on Windows 2026-08-11 as "Chrome
+  opens to the login page and just sits there." That flag is still in place (harmless, and still
+  worth keeping as insurance), but the reporter has since confirmed the Windows Chrome window shows
+  the *exact same Polish text* as their working Linux machine, and the stall is still there — so the
+  language theory is very likely wrong. This is useful negative information, not just a dead end: it
+  rules out an entire class of "the DOM never rendered the expected text at all" explanations, and
+  narrows the field to something that leaves the visible text correct but still stops the click chain
+  cold right at the very first page. (Unrelated to the language theory but from the same fix:
+  `chrome_debugging_args()` — shared with `booking/reschedule.py`'s own separately-built launch args
+  — also passes `--remote-allow-origins=*`, the flag Chrome/Edge 111+ require for some CDP clients'
+  websocket handshake to be accepted; `browser/cdp.py`'s handshake never sends an `Origin` header so
+  this shouldn't have been required, but it's cheap insurance against a browser-version-dependent
+  connection failure that only reproduces on whatever exact Chrome/Edge build is bundled on the
+  reporting machine — still in place and still worth keeping regardless of the language theory being
+  ruled out.)
+
+  **Fresh ranked hypotheses (2026-08-11), reasoned from `find_chrome()`/`authentication_chrome_args()`,
+  `browser/cdp.py`'s CDP mechanics, and `try_auto_click()`/`wait_for_cookies()`'s fallback poll — all
+  UNVERIFIED, no live Windows machine available to reproduce on.** The key constraint shaping this
+  ranking: `AUTO_CLICK_OBSERVER_JS` (the injected, persistent MutationObserver) and
+  `try_auto_click()`'s Python-side fallback poll (a *fresh* `Runtime.evaluate` call on its own CDP
+  connection, independent of the observer entirely — see `wait_for_cookies()`'s own docstring) are
+  two structurally unrelated mechanisms. A cause that only explains one of them failing (a timing
+  quirk in the injected script, a CDP-version quirk in how `Page.addScriptToEvaluateOnNewDocument`
+  behaves) can't by itself explain a *total, indefinite* stall — the other mechanism should still
+  catch it within ~0.5s. Only a cause that's true regardless of which side is asking (i.e. a real
+  property of the DOM/page itself, or something breaking the CDP transport for both) explains what
+  was reported. Ranked with that in mind:
+  1. **DOM-state/responsive-layout collapse specific to Windows display scaling.** The fixed
+     `--window-size=900,850` doesn't account for Windows per-monitor DPI scaling (a much more common
+     default there than on the Linux/X11 setups this was tested on) the way it might on a
+     scaling-aware compositor — if the resulting CSS viewport ends up small enough to trip a
+     responsive/mobile layout on info-kierowca.pl or the gov.pl chooser, the target tiles could be
+     legitimately `display:none`/`visibility:hidden` (which `__ikw_isVisible` correctly, and
+     silently, excludes) rather than just visually smaller. Ranked first because it's the only class
+     of explanation that's identical regardless of which side (observer or fallback poll) is asking —
+     both read the same DOM.
+  2. **The fallback poll's CDP calls are silently erroring on every cycle**, most plausibly Windows
+     firewall/antivirus software intercepting the rapid repeated loopback WebSocket connect/
+     disconnect cycles `try_auto_click()`'s `evaluate_in_target()` produces (a fresh `cdp_socket()`
+     connection every 0.5s, indefinitely, for however long the QR wait lasts). `wait_for_cookies()`'s
+     `except Exception: pass` around `fetch_cookies()` and `try_auto_click()`'s own catch (which does
+     print `try_auto_click error: ...`, but only into `AUTO_REFRESH_LOG_FILE`, which nobody's
+     necessarily checked line-by-line yet) mean this failure mode has been effectively invisible
+     without inspecting that log closely — see the new diagnostics below for how the next report
+     should make this distinguishable from hypothesis 1 immediately.
+  3. **Windows foreground-window/focus-stealing prevention** leaving the launched Chrome window
+     backgrounded or minimized (a real, Windows-specific OS behavior — a GUI window opened by a
+     process that wasn't itself the foreground app often doesn't get focus automatically). Ranked
+     below 1–2 because being unfocused-but-visible shouldn't alone stop `Runtime.evaluate`-based
+     clicks (those run synchronously in the JS engine regardless of focus) — it would only fully
+     explain the stall if the window were minimized enough that layout metrics themselves collapse
+     (`offsetWidth`/`offsetHeight` going to 0), which folds back into hypothesis 1's territory rather
+     than being a fully separate explanation.
+  4. **Cookie-consent banner or other overlay** — investigated and assessed as **likely a dead end**
+     for directly blocking the click: `__ikw_findAndClick`'s `.click()` is a programmatic DOM call,
+     not a coordinate-based pointer click, so it bypasses hit-testing/occlusion entirely regardless of
+     what visually covers the target. (Contrast `booking/reschedule.py`, which pre-sets a
+     `CookieScriptConsent` cookie via `consent_cookie()` specifically so the banner never renders at
+     all for *that* flow — `auth/session.py`'s login flow does not do this, but for a different
+     reason: it's not needed for the click itself to work, only relevant if a banner somehow shifts
+     layout in a way that feeds back into hypothesis 1.) Kept as a cheap diagnostic (see below) in
+     case it correlates with something else, not because the overlay itself is expected to be the
+     cause.
+  5. **A different bundled Chrome/Edge build or version on Windows** with a CDP quirk specific to
+     `Page.addScriptToEvaluateOnNewDocument`. Ranked low for the same structural reason as 3: this
+     can't by itself explain the independent fallback poll also failing, since that doesn't depend on
+     this CDP method at all.
+  6. **Enterprise-managed/policy-restricted Chrome blocking automation flags outright.** Ranked lowest
+     — the reporter's own description ("Chrome opens to info-kierowca.pl/login correctly") confirms
+     the debug port, `Page.navigate`, and basic CDP control are all working; a policy that blocked
+     automation would most likely have prevented that initial navigation too.
+  7. **Cross-reference, not Windows-specific per se:** `browser/clicking.py`'s `__ikw_text()` has a
+     known dead-regex bug in its whitespace-collapsing logic (`\\s+` inside a Python triple-quoted
+     string not actually reaching the JS engine as `\s+` — separately identified and being fixed in
+     that file). Different font rendering/text-wrapping on Windows could make an otherwise-latent bug
+     manifest there specifically even though it isn't itself a Windows issue. Worth checking once that
+     fix lands, but not ranked above 1–2 since it wouldn't explain a *total* stall on its own — a
+     dead regex just means "some extra whitespace differences aren't collapsed," which mostly still
+     matches via `indexOf`'s substring semantics rather than breaking every match.
+
+  `try_auto_click()`/`wait_for_cookies()` already log a periodic heartbeat
+  (`auto-click heartbeat: no target matched yet ...`) into `AUTO_REFRESH_LOG_FILE` whenever the JS
+  ran but matched nothing, from an earlier fix — this closed a real diagnostic gap, since previously
+  that case and a fully-broken CDP connection both produced total silence, indistinguishable from
+  each other; that heartbeat's `reason`/`url`/`host` remains the first thing to check on a stuck run.
+
+  **New diagnostics added (2026-08-11), not a guessed fix** — the goal is to make whichever hypothesis
+  above is correct legible from `AUTO_REFRESH_LOG_FILE` alone on the next report, rather than needing
+  another blind round-trip: `CLICK_LOGIC_JS`'s `__ikw_pageDiag()`/`__ikw_withPageDiag()` merge
+  `viewport_width`/`viewport_height`/`device_pixel_ratio` (hypothesis 1/3) and
+  `consent_overlay_present` (hypothesis 4) onto every diagnostics dict `__ikw_findAndClick()` returns
+  — both `try_auto_click()`'s own successful-click print and `wait_for_cookies()`'s stuck heartbeat
+  now include them. `AUTO_CLICK_OBSERVER_JS` also sets a `window.__ikw_diag.observer_injected` marker
+  the instant it *executes* for the current document, surfaced the same way — this is a materially
+  stronger signal than the raw `Page.addScriptToEvaluateOnNewDocument` CDP acknowledgment (which only
+  confirms Chrome accepted the registration call, not that the script ever ran): `register_and_navigate()`
+  (replacing a direct call to `cdp_client.inject_and_navigate()`, which discards that response) now
+  captures and logs the registration identifier too, so a future report can tell apart "registration
+  itself failed" from "registration succeeded but never fired for this document" from "it fired but
+  found nothing" — three previously-indistinguishable failure modes now three different log lines.
+  If a future report reproduces this, check `AUTO_REFRESH_LOG_FILE` for: whether "auto-click observer
+  script registered: identifier=..." appears at all (rules hypothesis 5/6 in or out); whether
+  `observer_injected=True` shows up on a later heartbeat (rules out "the script simply never executed");
+  and the `viewport=`/`dpr=`/`consent_overlay=` values themselves against a known-good Linux run.
+
+  No code behavior was changed based on any of the above (e.g. no `--force-device-scale-factor` was
+  added) — per the same caution that made the `--lang=pl-PL` guess wrong the first time, this waits
+  for the new diagnostics to actually point at one hypothesis before touching Chrome flags again.
+
+  Separately, the observer's own back-navigation guard was found to have a real gap. The observer
+  watches attribute
   changes as well as insertions (a tile revealed via a class/hidden toggle rather than a new node
   would otherwise only get clicked on the slower Python-side fallback poll), and disconnects itself
   the instant it clicks the final tile (a `sessionStorage` flag, `__ikw_findAndClick`, stops the
   fallback from re-clicking it too) — so backing out from the QR page to a different login method
-  doesn't get auto-clicked straight back. Text-matching only considers visible elements
+  doesn't get auto-clicked straight back **as long as the back-navigation stays on the same origin
+  where the flag got set.** That flag is deliberately origin-scoped (see `CLICKABLE_HELPERS_JS`'s own
+  comment) — but the login chain genuinely crosses at least one real origin boundary
+  (info-kierowca.pl → the gov.pl/login.gov.pl family), and the flag is only ever *set* on whichever
+  origin the final tile happens to live on. Backing up far enough to reach an earlier, different-origin
+  page in the chain used to hand the observer a brand-new document with no stop-flag in sight — since
+  `Page.addScriptToEvaluateOnNewDocument` re-injects the observer into *every* new document regardless
+  of origin — and it would auto-click forward all over again, undoing the user's own intentional back
+  navigation. **Fixed (2026-08-11)**: rather than trying to make the in-page flag reach further (there
+  is no single browser storage that legitimately spans multiple origins — that's what origin isolation
+  is for), the fix is Python-side. `wait_for_cookies()` now keeps its own `reached_target` latch,
+  set the moment it sees the final target has been reached — either by clicking it itself, or by
+  `try_auto_click()` returning `reason == 'stopped'` (meaning the observer got there first, since that
+  reason means `__ikw_stopped()` already saw the sessionStorage flag). Once set, the loop stops calling
+  `try_auto_click()` at all for the rest of the run (closing the fallback poll's own exposure to the
+  same gap — it shares `__ikw_findAndClick()`/`__ikw_stopped()` with the observer, so it was equally
+  vulnerable, not a separate ignorant mechanism) *and* calls the new `remove_observer_script()`
+  (`Page.removeScriptToEvaluateOnNewDocument`, using the identifier `register_and_navigate()` captured
+  at registration time) so no future document — on any origin, reached by forward or backward
+  navigation — gets the observer injected again at all. This closes the gap without needing the
+  in-page flag to somehow reach further than one origin. Not yet extended to the `profil_zaufany`
+  login path (`auth/providers.py`'s `ProfilZaufanyProvider`/`CDPProfilZaufanyBrowser`) — that's a
+  different click-chooser mechanism entirely (`auth_providers.CLICK_FUNCTION`, not
+  `AUTO_CLICK_OBSERVER_JS`) and out of scope for this change; worth auditing for the same class of
+  issue separately. **`booking/reschedule.py`'s own click sequence was checked and assessed as
+  structurally immune to this same issue**, not fixed here (that file is out of scope for this
+  change): it registers no persistent observer via `Page.addScriptToEvaluateOnNewDocument` at all —
+  `wait_and_click()`/`wait_and_click_enabled()`/`_poll_until_truthy()` are a bounded, linear,
+  one-shot polling sequence (each step tries to click exactly one specific target for up to a fixed
+  timeout, then moves on or gives up) run from a detached subprocess that simply exits once `main()`
+  finishes — there is nothing left running to re-click anything once a user navigates back, whether
+  that's during the run (bounded by each step's own ≤20s timeout) or after it's already exited.
+  Text-matching only considers visible elements
   (`__ikw_isVisible`) and, among equal-length matches, prefers the deeper/more specific element
   (`querySelectorAll` document order would otherwise let a wrapping `<div>` win over its own label).
   Then waits **indefinitely** for you to scan the QR and captures cookies the moment they appear.
@@ -168,6 +339,38 @@ automation. Regenerate the static snapshots with `tools/fetch_word_centers.py` /
   run on every future document via `Page.addScriptToEvaluateOnNewDocument`).
 - `src/info_kierowca_notifier/browser/chrome.py` and `browser/clicking.py` — shared Chrome discovery/lifecycle and
   conservative click-safety primitives consumed by both auth and booking; neither module imports a domain flow.
+  `chrome.py` owns `ensure_private_profile_dir()` (0700 profile dirs — they hold live session
+  cookies) and `chrome_debugging_args()`; every launcher must go through both rather than
+  hand-rolling flags. `CLICKABLE_HELPERS_JS` is a Python **raw** string, so its JS regexes take a
+  single backslash: `__ikw_text()` carried `/\\s+/g` until 2026-08-11, which reaches the browser as
+  "literal backslash followed by s" — a sequence page text never contains — so whitespace was never
+  collapsed and every *exact* text match (`exact=true`, i.e. `SUMMARY_BUTTON_TEXT` and the
+  highest-stakes `CONFIRM_SUMMARY_TEXT`) silently failed on any button whose label wrapped across
+  lines. The sibling helpers (`\b`, `\d`) were always right; match them.
+- `src/info_kierowca_notifier/booking/transaction.py` — fail-closed post-submit verification and
+  privacy-safe diagnostics for the confirm path: scrapes `/cases` booking cards
+  (`BOOKING_CARDS_JS`), classifies what changed (`classify_cards()`), and records a sanitised
+  trace (`DiagnosticRecorder`, `os.open(..., 0o600)` + `O_EXCL`). Also the home of the shared
+  exam-centre vocabulary (`CENTER_HELPERS_JS` for the browser side, `normalize_center()`/
+  `centers_compatible()`/`center_conflict()`/`target_center()` for the Python side) that
+  `reschedule.py` matches slots and summary modals with — keep the JS `__ikw_normCenter()` and the
+  Python `normalize_center()` in step, since one reads the DOM and the other reads config/hit dicts.
+  Two 2026-08-11 fixes here:
+  - `classify_cards()` keyed VERIFIED_SUCCESS on `len(old_active) == 1 and len(current_active) == 1`,
+    so anyone holding two active bookings (theory + practical is the ordinary case) could **never**
+    verify a success even on a perfect match. `current_slot_date` then stayed stale, and a stale
+    `current_slot_date` re-arms `notifier.is_urgent()` — so once the 900s cooldown expired, the next
+    hit beating the *old* date could trigger another real confirm click, possibly for a slot worse
+    than the one just booked. It now keys on the target card's own identity: exactly one matching
+    card, that card not already active in the baseline, and the active-booking count not growing (a
+    reschedule replaces, it doesn't add). VERIFIED_UNCHANGED generalises the same way. An empty
+    baseline still verifies nothing.
+  - `run_post_submit()` set `verification_target = None` on *any* exception, including the very
+    first attempt — the likeliest moment for a destroyed execution context or socket timeout, right
+    after `create_page_target()`/`navigate_target()`. One transient blip permanently disabled
+    verification for the rest of the budget, reporting UNKNOWN for a reschedule that actually
+    succeeded. Only `cdp.TargetNotFoundError`/`StaleTargetError` (a target genuinely gone) stop
+    retrying now; transient errors cost one attempt and are recorded as `verification_attempt_failed`.
 - `src/info_kierowca_notifier/booking/reschedule.py` — launches Chrome in its own dedicated profile (port `9555`, distinct
   from `src/info_kierowca_notifier/auth/session.py`'s and from a regular browsing profile) and injects the cookies
   already saved in `session.json` via `cdp_client.set_cookies()` before navigating to `/cases`, so
@@ -234,15 +437,77 @@ automation. Regenerate the static snapshots with `tools/fetch_word_centers.py` /
     slot by hand every time. Rewritten to reuse the same find-the-most-specific-matching-element-
     then-walk-up-to-a-clickable-ancestor pattern as `click_text_js`/`__ikw_findAndClick` (already
     proven live elsewhere in this project), matching on both the exam label and time substrings
-    together. This fix itself is still unverified against a real confirm-reschedule run — the
-    underlying `wait_and_verify_summary()` check (`document.body`'s whole visible text for the
-    expected date/time/exam-type substrings, no live-verified selector for the modal exists) is
-    unchanged — so confirm the full flow actually finds/clicks/verifies the right thing before ever
+    together. This fix itself is still unverified against a real confirm-reschedule run — so
+    confirm the full flow actually finds/clicks/verifies the right thing before ever
     enabling `auto_confirm_reschedule` for real.
+  - **2026-08-11 matching/safety pass** (a security review and a code review independently found
+    overlapping bugs in exactly this path; all of the below is logic-level reasoning + the new
+    Node-DOM tests in `tests/test_reschedule_slot_matching.py`, **none of it re-verified against
+    the live site** — the same caveat the rest of this feature carries):
+    - `select_slot_js()` matched exam-label + time **anywhere in the document**, and its
+      `t.length <= best[1].length` tie-break preferred the *last* equal-length match in document
+      order. Two visible date groups sharing a time/type therefore let the *later* date's row win,
+      and the exam centre was never compared at all even though the hit dict carries it as `word`
+      — so a same date/time/type slot at the wrong centre (in practice the existing booking's own)
+      could be selected and confirmed. Now: the query is scoped to the subtree of the smallest
+      visible element containing the target **date + label + time together**, the row must be
+      unambiguous *within that subtree* (any disjoint second match abstains), and a centre named
+      inside the group must be compatible with the target's. Every refusal returns a named reason
+      (`date_group_not_found`, `ambiguous_date_group`, `ambiguous_slot_row`, `center_conflict`, …)
+      that `_print_abstention()` logs once to `RESCHEDULE_LOG_FILE` — a fail-closed abstention used
+      to be indistinguishable from "the page never rendered".
+    - `wait_and_verify_summary()` read `document.body`, which includes the date-picker page still
+      mounted *behind* the modal and already showing the expanded date group — so it could pass on
+      the page behind a modal showing a different slot. Now scoped to the visible modal container
+      (`MODAL_SELECTOR`, the same `[role="dialog"]/[aria-modal="true"]/dialog` set
+      `transaction.PAGE_SNAPSHOT_JS` already records as `dialogs`), and it additionally requires a
+      **positive** centre match — from the modal, falling back to the page. No modal, several
+      plausible modals, a conflicting centre, or no centre named anywhere all refuse. `center_unknown`
+      (page named none) and `center_unverifiable` (the *target* named none, i.e. a hand-written
+      `--target-slot`) are deliberately distinct reasons. **This is the strictest new rule and the
+      most likely to need a live-DOM adjustment**: if a real run refuses with `center_unknown`, the
+      picker simply doesn't name the centre where this looks, and that's what needs revisiting —
+      not the rule.
+    - The final confirm click no longer goes through `_poll_until_truthy()`. That helper swallows
+      every exception including `socket.timeout` (`cdp.cdp_call`'s socket has a 5s timeout) and
+      retries — but `Runtime.evaluate` runs to completion in the page whether or not the response
+      comes back, so a timed-out confirm may already have submitted, and the next iteration would
+      click it again. `click_confirm_once()` instead makes the page the record: `confirm_click_js()`
+      sets a sessionStorage marker (`CONFIRM_MARKER_KEY`) immediately *before* `.click()` and clears
+      it again only when the click demonstrably didn't fire, so "marker present" means exactly "a
+      click fired" and survives the navigation that click causes. A retry only ever happens on
+      positive evidence nothing was clicked; a lost response returns `CONFIRM_ALREADY_CLICKED` and
+      the flow goes straight to verification. A failing *probe* never falls through to a click.
+    - `target_beats_current_slot()` re-reads `current_slot_date` from `config.json` right before the
+      submit click and aborts if the target isn't strictly earlier (mirroring `notifier.is_urgent()`
+      rather than importing it — notifier imports this module). The detached child can reach this
+      point a minute or more after `run_check()` judged the slot urgent, and previously only re-read
+      the ntfy topic. Fails closed on a missing/unparseable date.
+    - Everything after the submit click is best-effort: `recorder.save()` goes through
+      `save_diagnostic()`, and the observation/cooldown steps are individually guarded, so a failed
+      diagnostic write (`O_EXCL` collision, full/unwritable state dir) can no longer propagate out
+      and skip both the `current_slot_date` update *and* every `push_ntfy()` below it — which is
+      exactly when the user most needs telling. Pushes now name the diagnostic by basename via
+      `diagnostic_reference()`: the full path starts with `$HOME`, so interpolating it leaked the
+      local OS username to ntfy.sh.
+    - `record_confirm_cooldown()` returns a bool instead of swallowing failures (`except Exception:
+      pass` silently removed the one gate on repeat confirm attempts); `try_select_target_slot()`
+      refuses to submit if it can't arm, and `booking.launch` withholds `--confirm-reschedule`.
+      `write_private_json()` replaces the old write-then-chmod for both this file and `config.json`
+      — `os.open(..., 0o600)` on the temp file closes the umask window in which a world-readable
+      temp copy of the whole config existed.
+    - The Chrome launch here now uses `ensure_private_profile_dir()` + `chrome_debugging_args()`
+      (as `auth/session.py` already did) instead of a bare `mkdir()` and hand-built flags: this
+      profile has live session cookies injected into it and was being created 0755.
+    - Dead code removed: `wait_and_verify_booking()` (no callers, and it called
+      `classify_cards(cards, wanted, [])` with an empty baseline, which returns `UNKNOWN`
+      unconditionally — so reinstating it as its docstring's "compatibility wrapper" would have
+      silently broken) and `transaction.wait_for_booking_cards()`.
   - After `CONFIRM_SUMMARY_TEXT` is clicked, also by explicit user request (the
     button's own "i przejdź dalej" wording implies at least one more screen, so this deliberately
     doesn't try to read anything off of whatever page that click lands on): waits a couple seconds,
-    navigates to `/cases`, and `wait_and_verify_booking()` checks whether a booking now shows there
+    navigates to `/cases` **in a separate CDP target** (the transaction tab is never navigated), and
+    `transaction.run_post_submit()`/`classify_cards()` check whether a booking now shows there
     as our exact slot with a "Potwierdzona" (confirmed) status — not just date/time/exam-type match,
     since `/cases` also lists past/cancelled entries side by side (an "Anulowana" card right next to
     a "Potwierdzona" one, per screenshots) that could otherwise false-positive. The confirm click
@@ -273,8 +538,9 @@ automation. Regenerate the static snapshots with `tools/fetch_word_centers.py` /
       confirmed-but-unverified-on-`/cases`, and confirmed-and-verified. Scoped to only that stage —
       the earlier, lower-stakes `auto_select_slot`-only steps already got their own "slot found"
       push before the browser opened, and aren't worth a second alert on top of the log file.
-    - `paths.RESCHEDULE_CONFIRM_COOLDOWN_FILE` is written right before the real submit click is
-      attempted (regardless of its outcome), and
+    - `paths.RESCHEDULE_CONFIRM_COOLDOWN_FILE` is armed by `trigger_open_browser()` at **launch
+      time** (moved there 2026-08-11) and refreshed by the child right before the real submit click
+      is attempted (regardless of its outcome), and
       `notifier.confirm_reschedule_cooldown_active()` (checked in `trigger_open_browser()` before
       ever appending `--confirm-reschedule`) withholds that flag for
       `notifier.RESCHEDULE_CONFIRM_COOLDOWN_SECONDS` (900s, not user-configurable) after. This
@@ -284,7 +550,14 @@ automation. Regenerate the static snapshots with `tools/fetch_word_centers.py` /
       immediately attempt *another* real confirm click before a human has had any chance to see the
       push from the point above and step in. During the cooldown, `auto_select_slot` alone still
       runs normally (just without `--confirm-reschedule`) — only the actual submit step is held
-      back.
+      back. Writing it in the child only (as it was until 2026-08-11) left ~90s between launch and
+      that write — Chrome start, `/cases` load, baseline capture, up to four 20s click waits — in
+      which the sole guard was the port-9555 probe, and that probe fails *open* for the whole of
+      Chrome's startup, so a second poll cycle in that window launched a duplicate confirm flow.
+      Arming at launch closes it; the cost is that a run giving up before the submit click would
+      burn 15 minutes for nothing, so `try_select_target_slot()` calls `release_confirm_cooldown()`
+      on every pre-submit abort path. A crash between arming and that release leaves the gate armed,
+      which is the safe direction.
   - A `--no-auto-click` flag skips both clicks and just leaves the logged-in `/cases` tab open —
     used by `src/info_kierowca_notifier/app.py`'s "Open browser" toolbar button (`trigger_open_browser(auto_click=False)`) so
     a manual troubleshooting click doesn't also kick off the reschedule flow; the automatic
@@ -302,10 +575,15 @@ automation. Regenerate the static snapshots with `tools/fetch_word_centers.py` /
     poll thread keeps running through it, which is why the missing-config path is the silent
     `setup_incomplete` outcome rather than a critical notification every tick).
   - Settings opens `/settings` in a modal (see toolbar below) rather than navigating there; `GET
-    /settings` itself is unchanged and reuses `render_wizard()` — passed the existing `config.json`
-    so the form comes back prefilled — rather than a separate edit page; submitting posts to the
-    same `/setup` endpoint first-run setup uses, so `build_config()` stays the single place config
-    validation lives.
+    /settings` reuses `render_wizard()` — passed the existing `config.json` so the form comes back
+    prefilled — rather than a separate edit page; submitting posts to the same `/setup` endpoint
+    first-run setup uses, so `build_config()` stays the single place config validation lives. It also
+    now calls `build_pkk_prefill()` and passes the result in as `pkk_profiles`, the same as `GET /`
+    already did — see the PKK-prefill paragraph above (under "Once `session.json` exists...") for
+    what that changes in the wizard's PKK section. It didn't used to: a returning user (session
+    already present, as it almost always is by the time they open Settings) previously always saw
+    the plain manual PKK field + category pills there regardless, which was the actual bug this was
+    fixed for.
   - "Check frequency" (in the merged "Automation" fieldset) is a range slider
     (`#poll_interval_slider`) over `POLL_INTERVAL_STEPS`, a hand-picked non-linear array
     (finer-grained near the low end, coarser near the high end) so it offers many more real
@@ -360,12 +638,35 @@ automation. Regenerate the static snapshots with `tools/fetch_word_centers.py` /
     `build_pkk_prefill()`'s result — calls `client.fetch_pkk_profiles()` and maps each profile's
     `categoryName` to a `categories.json` id via `pkk_category_id()`, dropping any that don't map
     rather than guessing (an emptied list falls back to today's plain manual fields with no
-    special-casing needed). With prefill data, the wizard shows a linked "pkkNumber — category"
-    `<select>` (auto-selecting the first entry — most accounts only have one PKK profile) in place
-    of the bare PKK field + category pills, with an "Enter manually instead" link to swap back (and
-    a reverse link). `GET /setup` is the escape hatch — the login screen's skip link, and a stable
-    direct URL — and always renders the plain manual-only wizard with no prefill, regardless of
-    session state; `/settings` likewise never fetches a prefill. `_handle_setup` returns
+    special-casing needed). `GET /settings` calls `build_pkk_prefill()` the same way (it internally
+    no-ops to `[]` when `session.json` is absent, so this is safe unconditionally) and passes the
+    result into `render_wizard()` too — this is what actually fixed the bug that triggered this
+    whole investigation: `/settings` used to render `render_wizard(existing_config)` with no
+    `pkk_profiles` at all, so a returning user always saw the manual field + pills even though a
+    session (and thus real prefill data) almost always already existed by then. With prefill data,
+    `web/templates.py`'s `WIZARD_PAGE` picks one of three presentations off `PKK_PROFILES.length`
+    (`__PKK_PROFILES_JSON__`, the same list on both `/` and `/settings` now): zero profiles keeps
+    today's plain `#pkk-manual-block` (editable, unmasked `#profile_number` + clickable category
+    pills) untouched; exactly one profile shows `#pkk-single-block` — the *same* `#profile_number`
+    reveal-input DOM node (not a duplicate — physically moved there via `insertBefore`, see
+    `pkkRevealWrap` in the script) made read-only and pre-filled, plus a plain non-interactive
+    "License category: X" label instead of pills, since the category is bound to that one profile
+    rather than user-chosen (the label stays live via a hook in `setCategory()`, so it can't go
+    stale relative to whatever's actually about to be submitted — see the comment on
+    `updatePkkSingleCategoryLabel()`); two or more profiles keeps the `<select>` (auto-selecting the
+    first entry) but masks every option's label to last-4-digits (`••••1234 — B`, derived from
+    `pkkNumber.slice(-4)`) behind its own `.reveal`-styled toggle button (`reveal-pkk-select`) that
+    rewrites all `<option>` `textContent`s at once — which also updates the closed `<select>`'s own
+    displayed text for free, since that's just the selected option's text. All three keep the
+    existing "Enter manually instead" link to the full manual block, and its reverse "Use my PKK
+    profile instead" link, working as before. On `/settings` specifically, since `EXISTING_CONFIG`'s
+    own init code runs after this and always wins for the actually-submitted `profile_number`/
+    `category` (unchanged, pre-existing behavior — see its own masking of `#profile_number` there),
+    a small extra step re-syncs the *visible* `<select>` selection to whichever profile's
+    `pkkNumber` matches the saved config, so the dropdown doesn't visually show profile 0 while a
+    different profile's data is what Save would actually submit. `GET /setup` is the escape hatch —
+    the login screen's skip link, and a stable direct URL — and always renders the plain manual-only
+    wizard with no prefill, regardless of session state. `_handle_setup` returns
     `needs_login` in its JSON response so the first-run "done" screen's Chrome/QR hint only shows
     when `session.json` didn't already exist by submit time — still true on the skip path, which
     still triggers `trigger_auto_refresh()` on submit exactly like every first run did before this
@@ -471,6 +772,11 @@ automation. Regenerate the static snapshots with `tools/fetch_word_centers.py` /
 - `~/.local/state/info-kierowca-notifier/notifier.log` — rotating log (2MB x3 backups).
 - `~/.local/state/info-kierowca-notifier/status.json` — current status + history, what the
   dashboard reads and serves at `GET /status.json`.
+- `~/.local/state/info-kierowca-notifier/reschedule.log` — plain append-only log of
+  `booking/reschedule.py`'s own `print()`s when auto-triggered, including every fail-closed
+  abstention reason from the slot/summary matching; chmod 0600 like every other state file (it
+  inherited the umask until 2026-08-11). `reschedule-diagnostics/` (0700) holds the per-transaction
+  sanitised traces, and `reschedule-confirm-cooldown` is the 15-minute repeat-confirm gate.
 - `~/.local/state/info-kierowca-notifier/auto-refresh.log` — plain append-only log of
   `src/info_kierowca_notifier/auth/session.py`'s own `print()`s when auto-triggered (see `src/info_kierowca_notifier/auth/session.py`
   above); check this first when a relogin gets stuck partway through the login click-through.

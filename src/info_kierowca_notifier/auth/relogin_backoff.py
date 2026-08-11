@@ -50,7 +50,11 @@ class RetryBackoff:
             return None
 
     def _save(self, state):
-        self.path.parent.mkdir(parents=True, exist_ok=True)
+        # See relogin_control._atomic_write()'s comment: mode= only applies
+        # at creation, so the explicit chmod also backfills a directory
+        # (STATE_DIR in every real caller) that predates this fix.
+        self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        self.path.parent.chmod(0o700)
         temporary = self.path.with_suffix(self.path.suffix + ".tmp")
         try:
             with temporary.open("w", encoding="utf-8") as f:

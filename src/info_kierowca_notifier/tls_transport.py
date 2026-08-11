@@ -148,6 +148,56 @@ class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
         return None
 
 
+def _redirect_origin(url: str):
+    """(scheme, host, port) for comparing whether a redirect changed origin.
+
+    Deliberately not ``_origin()`` above: that function only tracks https
+    origins (it's used to pick a TLS context) and returns None for anything
+    non-https, including plain HTTP localhost CDP traffic that also goes
+    through ``urlopen()``. Reusing it here would make two *different*
+    non-https endpoints both compare as None == None — "same origin" — and
+    silently skip stripping credentials on an http-to-http redirect across
+    hosts/ports. This helper distinguishes any scheme/host/port combination
+    from any other, https included.
+    """
+    parsed = urllib.parse.urlsplit(url)
+    if not parsed.hostname:
+        return None
+    try:
+        port = parsed.port
+    except ValueError:
+        port = None
+    return (parsed.scheme.lower(), parsed.hostname.lower(), port)
+
+
+class _CookieSafeRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Never forward credential headers across an origin change on redirect.
+
+    The stock HTTPRedirectHandler copies every header from the original
+    request — including Cookie and Authorization — onto the redirected
+    request regardless of the destination host or scheme. This application's
+    info-kierowca.pl session cookie must never leave that origin (see
+    client.py's do_request/COOKIE_NAMES): without this, a compromised or
+    malicious redirect target could have the cookie handed to it
+    automatically. Strip those headers whenever the redirect target's origin
+    differs from the request that produced it — including a same-host
+    downgrade from https to http, or a cross-port hop between two plain HTTP
+    endpoints (see _redirect_origin() above for why a plain scheme/host
+    check isn't enough there).
+    """
+
+    _CREDENTIAL_HEADERS = ("Cookie", "Authorization")
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        new_req = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if new_req is None:
+            return None
+        if _redirect_origin(req.full_url) != _redirect_origin(newurl):
+            for header in self._CREDENTIAL_HEADERS:
+                new_req.remove_header(header)
+        return new_req
+
+
 def _origin(url: str) -> Optional[str]:
     parsed = urllib.parse.urlsplit(url)
     if parsed.scheme.lower() != "https" or not parsed.hostname:
@@ -296,14 +346,24 @@ def urlopen(request, *, timeout: float):
 
     HTTP localhost CDP calls can use this too; ``urllib`` ignores the TLS
     context for non-HTTPS URLs.
+
+    Every request goes through an opener whose redirect handling is
+    _CookieSafeRedirectHandler instead of urllib's default — see that
+    class's docstring for why: a redirect must never carry this
+    application's session cookie (or any Authorization header) to a
+    different origin.
     """
     origin = _origin(_request_url(request))
     if origin is None:
-        return urllib.request.urlopen(request, timeout=timeout, context=ssl_context())
+        opener = urllib.request.build_opener(_CookieSafeRedirectHandler())
+        return opener.open(request, timeout=timeout)
     context, _backend = _resolved_context(origin, timeout)
     # This is the only send of the caller's request. Native/certifi selection
     # has already been resolved with a bodyless, credential-free HEAD probe.
-    return urllib.request.urlopen(request, timeout=timeout, context=context)
+    opener = urllib.request.build_opener(
+        urllib.request.HTTPSHandler(context=context), _CookieSafeRedirectHandler()
+    )
+    return opener.open(request, timeout=timeout)
 
 
 def reset_for_tests() -> None:

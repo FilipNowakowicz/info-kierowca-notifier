@@ -15,6 +15,7 @@ from info_kierowca_notifier.paths import (
     AUTO_REFRESH_LOG_FILE,
     AUTO_REFRESH_RESTART_REQUEST,
     RELOGIN_BACKOFF_FILE,
+    ensure_state_dir,
 )
 
 AUTO_REFRESH_SCRIPT = Path(auto_refresh_session.__file__)
@@ -135,8 +136,14 @@ def trigger_auto_refresh(logger, config, force=False, notify_phone=True):
     if automatic:
         cmd.append("--automatic")
     try:
-        AUTO_REFRESH_LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
-        with open(AUTO_REFRESH_LOG_FILE, "a") as logf:
+        ensure_state_dir()
+        # os.open()'s own mode applies before any data is written, matching
+        # notifier.save_json()'s pattern; the explicit chmod after also
+        # backfills a log file created before this fix existed (mode is only
+        # honored by O_CREAT when the file doesn't already exist).
+        fd = os.open(AUTO_REFRESH_LOG_FILE, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+        os.chmod(AUTO_REFRESH_LOG_FILE, 0o600)
+        with os.fdopen(fd, "a") as logf:
             logf.write(f"\n--- {datetime.now().isoformat()} launching: {cmd!r} ---\n")
             logf.flush()
             subprocess.Popen(

@@ -226,6 +226,34 @@ class OriginTests(unittest.TestCase):
         insert.assert_called_once_with("h", 1, target, "87654321")
         self.assertIn("i.value !== code", auth_providers.SUBMIT_OTP_FUNCTION)
 
+    def test_host_suffix_matching_rejects_lookalike_hosts(self):
+        matches = auth_providers._host_matches_suffix
+        self.assertTrue(matches("info-kierowca.pl", "info-kierowca.pl"))
+        self.assertTrue(matches("app.info-kierowca.pl", "info-kierowca.pl"))
+        self.assertFalse(matches("evilinfo-kierowca.pl", "info-kierowca.pl"))
+        self.assertFalse(matches("info-kierowca.pl.evil.example", "info-kierowca.pl"))
+
+    def test_redirect_status_rejects_lookalike_info_kierowca_host(self):
+        """A bare hostname.endswith("info-kierowca.pl") (the pre-fix check)
+        would also match "evilinfo-kierowca.pl" and report "redirected" —
+        i.e. authentication success — for a domain that was never
+        info-kierowca.pl at all, before allowed_auth_redirect() ever got a
+        chance to reject it."""
+        from info_kierowca_notifier.browser import cdp as cdp_client
+        from unittest.mock import Mock, patch
+        target = cdp_client.PageTarget("auth", "https://evilinfo-kierowca.pl/", "", "ws")
+        browser = auth_providers.CDPProfilZaufanyBrowser("h", 1, target, Mock(), target.url)
+        with patch("info_kierowca_notifier.auth.providers.cdp_client.get_page_target", return_value=target):
+            self.assertRaises(AuthenticationFailure, browser.redirect_status)
+
+    def test_redirect_status_accepts_genuine_info_kierowca_subdomain(self):
+        from info_kierowca_notifier.browser import cdp as cdp_client
+        from unittest.mock import Mock, patch
+        target = cdp_client.PageTarget("auth", "https://app.info-kierowca.pl/dashboard", "", "ws")
+        browser = auth_providers.CDPProfilZaufanyBrowser("h", 1, target, Mock(), target.url)
+        with patch("info_kierowca_notifier.auth.providers.cdp_client.get_page_target", return_value=target):
+            self.assertEqual(browser.redirect_status(), "redirected")
+
     def test_live_no_profile_alert_url_is_classified_without_waiting(self):
         from info_kierowca_notifier.browser import cdp as cdp_client
         from unittest.mock import Mock, patch

@@ -4,7 +4,8 @@ import json
 import shutil
 import subprocess
 import unittest
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 from info_kierowca_notifier.auth import session as auto_refresh_session
 from info_kierowca_notifier.auth import providers as auth_providers
@@ -181,13 +182,159 @@ console.log(JSON.stringify({result: RESULT, clicked}));
         )
         self.assertEqual(result["matched_text"], "Aplikacja mObywatel")
 
-    def test_auto_click_abstains_for_non_click_outcome(self):
+    def test_auto_click_returns_diagnostics_without_printing_for_non_click_outcome(self):
+        # try_auto_click() now surfaces every completed eval's diagnostics
+        # (not just a successful click) so a stuck run can be told apart
+        # from a CDP connection that never worked at all — see
+        # wait_for_cookies()'s heartbeat log. It still prints nothing itself
+        # for a non-click outcome; only wait_for_cookies decides whether/how
+        # often to log that.
+        diagnostics = {"clicked": False, "reason": "ambiguous_match"}
         with patch.object(
-            auto_refresh_session.cdp_client,
-            "evaluate_in_page",
-            return_value={"clicked": False, "reason": "ambiguous_match"},
+            auto_refresh_session.cdp_client, "evaluate_in_page", return_value=diagnostics
+        ):
+            stream = io.StringIO()
+            with contextlib.redirect_stdout(stream):
+                result = auto_refresh_session.try_auto_click("127.0.0.1", 9333, target="correct-tab")
+        self.assertEqual(result, diagnostics)
+        self.assertEqual(stream.getvalue(), "")
+
+    def test_auto_click_still_abstains_on_eval_exception(self):
+        with patch.object(
+            auto_refresh_session.cdp_client, "evaluate_in_page", side_effect=RuntimeError("boom"),
         ):
             self.assertIsNone(auto_refresh_session.try_auto_click("127.0.0.1", 9333, target="correct-tab"))
+
+    def test_click_logic_js_carries_windows_stall_diagnostics(self):
+        # See CLAUDE.md's auth/session.py bullet: viewport/DPR/consent-overlay
+        # fields and the observer_injected marker exist specifically so a
+        # future stuck report can distinguish "DOM genuinely never matches"
+        # from a Windows-specific rendering/registration difference, instead
+        # of guessing again the way the ruled-out --lang=pl-PL theory did.
+        js = auto_refresh_session.CLICK_LOGIC_JS
+        for expected in (
+            "__ikw_pageDiag", "viewport_width", "viewport_height",
+            "device_pixel_ratio", "observer_injected", "consent_overlay_present",
+            "__ikw_withPageDiag",
+        ):
+            self.assertIn(expected, js)
+        self.assertIn("__ikw_diag.observer_injected = true", auto_refresh_session.AUTO_CLICK_OBSERVER_JS)
+
+    def test_wait_for_cookies_stops_forwarding_once_final_target_reached(self):
+        # Task: navigating back after the auto-click has reached its final
+        # target (targets[0], "Aplikacja mObywatel") must never trigger
+        # another auto-click — not even via the Python-side fallback poll,
+        # which is a mechanism entirely separate from the injected
+        # observer's own (origin-scoped) sessionStorage stop-flag.
+        chrome = Mock()
+        chrome.poll.side_effect = [None, None, None, None, 1]
+        click_results = [
+            {"clicked": False, "reason": "not_found"},
+            {
+                "clicked": True,
+                "requested_label": auto_refresh_session.AUTO_CLICK_TARGETS[0],
+                "matched_text": "Aplikacja mObywatel", "page_host": "login.gov.pl",
+                "tag": "DIV", "element_id": "", "element_class": "", "href": "",
+            },
+        ]
+        with patch.object(
+            auto_refresh_session.cdp_client, "fetch_cookies", side_effect=RuntimeError("mid-navigation"),
+        ), patch.object(
+            auto_refresh_session, "try_auto_click", side_effect=click_results,
+        ) as click_mock, patch.object(
+            auto_refresh_session, "remove_observer_script",
+        ) as remove_mock, patch.object(
+            auto_refresh_session.time, "sleep", return_value=None,
+        ):
+            result = auto_refresh_session.wait_for_cookies(
+                "127.0.0.1", 9333, None, chrome, target="tab", observer_identifier="script-1",
+            )
+        self.assertIsNone(result)
+        # Exactly the two calls above happen; two further loop iterations run
+        # (chrome_proc.poll() keeps returning None) but must not call
+        # try_auto_click again once the final target's been reached.
+        self.assertEqual(click_mock.call_count, 2)
+        remove_mock.assert_called_once_with("127.0.0.1", 9333, "tab", "script-1")
+
+    def test_wait_for_cookies_latches_on_observer_reaching_target_first(self):
+        # The injected observer can reach targets[0] before our own 0.5s
+        # fallback poll does; __ikw_stopped()'s 'stopped' reason is how the
+        # fallback finds out, and must be treated the same as clicking it
+        # ourselves — including unregistering the observer script.
+        chrome = Mock()
+        chrome.poll.side_effect = [None, None, 1]
+        with patch.object(
+            auto_refresh_session.cdp_client, "fetch_cookies", side_effect=RuntimeError("mid-navigation"),
+        ), patch.object(
+            auto_refresh_session, "try_auto_click",
+            side_effect=[{"clicked": False, "reason": "stopped"}],
+        ) as click_mock, patch.object(
+            auto_refresh_session, "remove_observer_script",
+        ) as remove_mock, patch.object(
+            auto_refresh_session.time, "sleep", return_value=None,
+        ):
+            auto_refresh_session.wait_for_cookies(
+                "127.0.0.1", 9333, None, chrome, target="tab", observer_identifier="script-9",
+            )
+        self.assertEqual(click_mock.call_count, 1)
+        remove_mock.assert_called_once_with("127.0.0.1", 9333, "tab", "script-9")
+
+    def test_register_and_navigate_returns_registration_identifier(self):
+        target = SimpleNamespace(id="target-1", websocket_url="ws://127.0.0.1:9333/devtools/x")
+
+        def fake_cdp_call(sock, req_id, method, params=None):
+            if method == "Page.addScriptToEvaluateOnNewDocument":
+                return {"identifier": "script-123"}
+            return {}
+
+        socket_cm = Mock()
+        socket_cm.__enter__ = Mock(return_value=object())
+        socket_cm.__exit__ = Mock(return_value=False)
+        with patch.object(
+            auto_refresh_session.cdp_client, "get_page_target", return_value=target,
+        ), patch.object(
+            auto_refresh_session.cdp_client, "cdp_socket", return_value=socket_cm,
+        ), patch.object(
+            auto_refresh_session.cdp_client, "cdp_call", side_effect=fake_cdp_call,
+        ) as call_mock:
+            identifier = auto_refresh_session.register_and_navigate(
+                "127.0.0.1", 9333, target, "https://info-kierowca.pl/login", "// script"
+            )
+        self.assertEqual(identifier, "script-123")
+        methods_called = [call.args[2] for call in call_mock.call_args_list]
+        self.assertEqual(
+            methods_called,
+            ["Page.enable", "Page.addScriptToEvaluateOnNewDocument", "Page.navigate"],
+        )
+
+    def test_remove_observer_script_is_a_noop_without_an_identifier(self):
+        with patch.object(auto_refresh_session.cdp_client, "get_page_target") as get_target:
+            auto_refresh_session.remove_observer_script("127.0.0.1", 9333, "tab", None)
+        get_target.assert_not_called()
+
+    def test_remove_observer_script_calls_cdp_remove_and_swallows_failures(self):
+        target = SimpleNamespace(id="target-1", websocket_url="ws://127.0.0.1:9333/devtools/x")
+        socket_cm = Mock()
+        socket_cm.__enter__ = Mock(return_value=object())
+        socket_cm.__exit__ = Mock(return_value=False)
+        with patch.object(
+            auto_refresh_session.cdp_client, "get_page_target", return_value=target,
+        ), patch.object(
+            auto_refresh_session.cdp_client, "cdp_socket", return_value=socket_cm,
+        ), patch.object(
+            auto_refresh_session.cdp_client, "cdp_call",
+        ) as call_mock:
+            auto_refresh_session.remove_observer_script("127.0.0.1", 9333, target, "script-123")
+        call_mock.assert_called_once_with(
+            call_mock.call_args[0][0], 1, "Page.removeScriptToEvaluateOnNewDocument",
+            {"identifier": "script-123"},
+        )
+        # A dead/stale target must not raise out of this best-effort helper.
+        with patch.object(
+            auto_refresh_session.cdp_client, "get_page_target",
+            side_effect=auto_refresh_session.cdp_client.StaleTargetError("gone"),
+        ):
+            auto_refresh_session.remove_observer_script("127.0.0.1", 9333, target, "script-123")
 
     def test_browser_click_js_uses_conservative_shared_helper(self):
         js = open_logged_in_browser.click_text_js("Zmień termin")
