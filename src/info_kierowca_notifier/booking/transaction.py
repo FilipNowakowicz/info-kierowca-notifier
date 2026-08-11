@@ -3,6 +3,7 @@ import json
 import os
 import re
 import time
+import unicodedata
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
@@ -55,7 +56,108 @@ def sanitize(value, key=""):
     return value if value is None or isinstance(value, (bool, int, float)) else sanitize_text(value)
 
 
-BOOKING_CARDS_JS = r"""
+# --- exam-centre ("word") identity -------------------------------------------------
+# notifier.py's hit_dicts carry the centre a slot belongs to as `word` (the
+# API's wordName, e.g. "WORD Warszawa M/E Odolany"), and that value was being
+# copied into the transaction target and then never compared against anything:
+# select_slot_js() matched on exam label + time alone, wait_and_verify_summary()
+# on date/time/label alone, and matches_target() on date/time/type/status alone.
+# A slot at the *wrong* centre (in practice: the existing booking's own centre,
+# which is what the reschedule picker shows) with the same date, time and exam
+# type therefore matched every check on the way to the irreversible confirm
+# click. These helpers are the shared vocabulary for comparing a centre name
+# scraped out of the DOM against the one the target slot claims.
+#
+# Two directions, deliberately different:
+#   * conflict  — a centre was found and it is NOT the target's. Always fatal,
+#     everywhere (selection, summary verification, post-booking cards).
+#   * unknown   — no centre string was found at all. Tolerated while *selecting*
+#     (nothing irreversible has happened yet, and the row markup may simply not
+#     repeat the centre name), but NOT before the confirm click — see
+#     reschedule.wait_and_verify_summary(), which requires a positive match.
+# All of this is derived from screenshots and the API's own naming, never from
+# a live DOM: if a real run reports center_unverified, the page's actual centre
+# markup is what needs looking at, not this rule.
+CENTER_PREFIXES = ("WORD", "MORD", "PORD", "ZORD", "DORD")
+CENTER_LABEL_RE = re.compile(
+    r"\b(?:%s)\b[^,;|\n]{0,48}" % "|".join(CENTER_PREFIXES), re.I
+)
+
+CENTER_HELPERS_JS = r"""
+function __ikw_centerLabels(text) {
+  return String(text || '').match(/\b(?:WORD|MORD|PORD|ZORD|DORD)\b[^,;|\n]{0,48}/gi) || [];
+}
+function __ikw_normCenter(value) {
+  return String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[\/.,\-]/g, ' ').toLowerCase().replace(/\s+/g, ' ').trim();
+}
+function __ikw_centerCompatible(found, wanted) {
+  var a = __ikw_normCenter(found), b = __ikw_normCenter(wanted);
+  if (!a || !b) return true;
+  return a === b || a.indexOf(b + ' ') === 0 || b.indexOf(a + ' ') === 0;
+}
+function __ikw_centerVerdict(text, wanted) {
+  // 'unverifiable' (the target names no centre) is deliberately distinct from
+  // 'unknown' (the page names none): both refuse before the confirm click, but
+  // only one of them means the DOM needs looking at.
+  if (!__ikw_normCenter(wanted)) return 'unverifiable';
+  var labels = __ikw_centerLabels(text), verdict = 'unknown';
+  for (var i = 0; i < labels.length; i++) {
+    if (__ikw_centerCompatible(labels[i], wanted)) verdict = 'match';
+    else return 'conflict';
+  }
+  return verdict;
+}
+"""
+
+
+def normalize_center(value):
+    """Casefolded, de-accented, punctuation-flattened centre name.
+
+    Mirrors __ikw_normCenter() in CENTER_HELPERS_JS above — keep the two in
+    step, since one side reads the DOM and the other reads config/hit dicts.
+    """
+    text = unicodedata.normalize("NFD", str(value or ""))
+    text = "".join(ch for ch in text if not unicodedata.combining(ch))
+    for char in "/.,-":
+        text = text.replace(char, " ")
+    return " ".join(text.casefold().split())
+
+
+def centers_compatible(found, wanted):
+    """True unless both sides name a centre and they name different ones.
+
+    Prefix-tolerant in both directions so "WORD Warszawa" (a page header) and
+    "WORD Warszawa M/E Odolany" (the API's full name for one of its sites)
+    aren't treated as a conflict, while "WORD Warszawa M/E Bemowo" is.
+    """
+    left, right = normalize_center(found), normalize_center(wanted)
+    if not left or not right:
+        return True
+    return (left == right or left.startswith(right + " ") or
+            right.startswith(left + " "))
+
+
+def center_conflict(found, wanted):
+    """Both sides name a centre, and they disagree."""
+    return bool(normalize_center(found) and normalize_center(wanted) and
+                not centers_compatible(found, wanted))
+
+
+def target_center(target):
+    """The centre a transaction target claims, under any of its spellings."""
+    for key in ("center", "word_id", "word"):
+        value = (target or {}).get(key)
+        if value:
+            return value
+    return ""
+
+
+def extract_center_labels(text):
+    return [match.strip() for match in CENTER_LABEL_RE.findall(str(text or ""))]
+
+
+BOOKING_CARDS_JS = CENTER_HELPERS_JS + r"""
 (function() {
   function visible(e) { var r=e.getBoundingClientRect(), s=getComputedStyle(e); return r.width>0&&r.height>0&&s.display!=='none'&&s.visibility!=='hidden'; }
   var status=/\b(?:Potwierdzona|Anulowana|Nieaktywna|Aktywna|Confirmed|Cancelled|Canceled|Inactive|Active)\b/i;
@@ -71,9 +173,10 @@ BOOKING_CARDS_JS = r"""
     var times=text.match(/\b(?:[01]\d|2[0-3]):[0-5]\d\b/g)||[];
     var st=(text.match(/\b(?:Potwierdzona|Anulowana|Nieaktywna|Aktywna|Confirmed|Cancelled|Canceled|Inactive|Active)\b/i)||[])[0]||'';
     var exam=(text.match(/Egzamin (?:teoretyczny|praktyczny)|Theoretical|Practice/i)||[])[0]||'';
+    var center=(__ikw_centerLabels(text)[0]||'').trim();
     var attrs={}; ['data-testid','data-status','role'].forEach(function(n){var v=el.getAttribute(n);if(v&&v.length<80)attrs[n]=v;});
-    var key=[st,exam,dates[0]||'',times[0]||'',JSON.stringify(attrs)].join('|');
-    if (!seen.has(key)) { seen.add(key); out.push({status:st,exam_type:exam,date:dates[0]||'',time:times[0]||'',attributes:attrs}); }
+    var key=[st,exam,dates[0]||'',times[0]||'',center,JSON.stringify(attrs)].join('|');
+    if (!seen.has(key)) { seen.add(key); out.push({status:st,exam_type:exam,date:dates[0]||'',time:times[0]||'',center:center,attributes:attrs}); }
   });
   return out.slice(0,20);
 })()
@@ -118,6 +221,7 @@ def normalize_card(card):
         "exam_type": sanitize_text(card.get("exam_type"), 100),
         "date": sanitize_text(card.get("date"), 20),
         "time": sanitize_text(card.get("time"), 10),
+        "center": sanitize_text(card.get("center"), 80),
         "attributes": sanitize(card.get("attributes", {})),
     }
 
@@ -134,36 +238,79 @@ def normalize_exam_type(value):
 
 
 def matches_target(card, target):
+    """This exact card *is* the slot we tried to book: active, same date, same
+    time, same exam type, and — new as of 2026-08-11 — not visibly at a
+    different exam centre than the target's (see the centre helpers above; a
+    card with no readable centre is tolerated rather than treated as a
+    mismatch, because BOOKING_CARDS_JS scrapes the centre out of free text and
+    a card that simply doesn't repeat it must not silently become unverifiable
+    forever)."""
     return (active(card) and card.get("date") == target["date"] and
             card.get("time") == target["time"] and
             normalize_exam_type(card.get("exam_type")) ==
-            normalize_exam_type(target.get("exam_type")))
+            normalize_exam_type(target.get("exam_type")) and
+            not center_conflict(card.get("center"), target_center(target)))
 
 
 def same_booking(left, right):
     return (left.get("date") == right.get("date") and
             left.get("time") == right.get("time") and
             normalize_exam_type(left.get("exam_type")) ==
-            normalize_exam_type(right.get("exam_type")))
+            normalize_exam_type(right.get("exam_type")) and
+            not center_conflict(left.get("center"), right.get("center")))
+
+
+def _same_active_set(current_active, old_active):
+    """Every active booking still pairs with a baseline one, and vice versa."""
+    return (len(current_active) == len(old_active) and
+            all(any(same_booking(now, old) for old in old_active) for now in current_active) and
+            all(any(same_booking(now, old) for now in current_active) for old in old_active))
 
 
 def classify_cards(cards, target, baseline):
+    """Fail-closed verdict on what /cases shows after the confirm click.
+
+    Keyed on the *target card's own identity*, not on the account having
+    exactly one booking. Until 2026-08-11 both branches required
+    ``len(old_active) == 1 and len(current_active) == 1``, so anyone holding
+    two active bookings at once (theory + practical is the ordinary case) could
+    never reach VERIFIED_SUCCESS even on a perfect match — which left
+    current_slot_date permanently stale, and a stale current_slot_date re-arms
+    notifier.is_urgent() for slots no better than the one just booked, i.e. the
+    900s cooldown expiring could hand another *real* confirm click to a worse
+    slot. The replacement evidence is:
+
+      * exactly one visible card matches the target (zero is not success, two
+        is ambiguous),
+      * that card was not already active in the baseline (otherwise the
+        booking we "verified" is one that predates our click), and
+      * the number of active bookings did not grow — a reschedule replaces a
+        booking, so a *new* active card appearing alongside every old one
+        looks like a double booking and stays UNKNOWN for a human to read.
+
+    VERIFIED_UNCHANGED likewise generalises: every previously-active booking is
+    still there, unchanged, and nothing was added.
+    """
     cards = [normalize_card(c) for c in cards]
+    baseline = [normalize_card(c) for c in (baseline or [])]
     matches = [c for c in cards if matches_target(c, target)]
     if len(matches) > 1:
         return UNKNOWN
-    old_active = [c for c in (baseline or []) if active(c)]
+    old_active = [c for c in baseline if active(c)]
     current_active = [c for c in cards if active(c)]
+    if not old_active:
+        # No usable baseline: we cannot tell a booking we made from one that
+        # was always there. capture_stable_booking_baseline() failing is
+        # exactly this case, and it must not verify anything.
+        return UNKNOWN
     if len(matches) == 1:
-        if (len(old_active) != 1 or len(current_active) != 1 or
-                matches_target(old_active[0], target)):
+        if any(matches_target(old, target) for old in old_active):
+            return UNKNOWN
+        if len(current_active) > len(old_active):
             return UNKNOWN
         return VERIFIED_SUCCESS
-    if len(old_active) == 1 and len(current_active) == 1:
-        old = old_active[0]
-        now = current_active[0]
-        if same_booking(now, old):
-            return VERIFIED_UNCHANGED
+    if _same_active_set(current_active, old_active):
+        return VERIFIED_UNCHANGED
     return UNKNOWN
 
 
@@ -206,14 +353,6 @@ def capture_stable_booking_baseline(host, port, target, timeout=12, interval=0.5
             stable_count, last_key = 0, None
         sleep(interval)
     return last_cards, candidates
-
-
-def wait_for_booking_cards(host, port, target, timeout=12, interval=0.5):
-    """Compatibility wrapper for callers that only need the stable card list."""
-    cards, _candidates = capture_stable_booking_baseline(
-        host, port, target, timeout=timeout, interval=interval
-    )
-    return cards
 
 
 def capture_page(host, port, target, elapsed):
@@ -317,6 +456,7 @@ def run_post_submit(host, port, transaction_target, recorder, *, timeout=24, int
             transaction_target_lost = True
             break
         if verification_target:
+            candidates = []
             try:
                 try:
                     candidates = capture_booking_diagnostic_candidates(
@@ -344,7 +484,20 @@ def run_post_submit(host, port, transaction_target, recorder, *, timeout=24, int
                     "diagnostic_candidates": candidates, "error": type(exc).__name__,
                     "result": UNKNOWN,
                 })
-                verification_target = None
+                # Only a target that is genuinely gone ends verification. Until
+                # 2026-08-11 *any* exception dropped verification_target, and
+                # the likeliest moment for one is the very first attempt —
+                # right after create_page_target()/navigate_target(), while
+                # /cases is still loading (destroyed execution context, socket
+                # timeout). One such blip permanently disabled verification for
+                # the rest of the budget, so a reschedule that really did
+                # succeed reported UNKNOWN and left current_slot_date stale.
+                # Transient errors now just cost this one attempt.
+                if isinstance(exc, cdp_client.TargetNotFoundError):
+                    verification_target = None
+                    recorder.state("verification_target_lost", error=type(exc).__name__)
+                else:
+                    recorder.state("verification_attempt_failed", error=type(exc).__name__)
                 consecutive_unchanged = 0
                 unchanged_ready = False
         sleep(interval)

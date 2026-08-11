@@ -168,6 +168,38 @@ automation. Regenerate the static snapshots with `tools/fetch_word_centers.py` /
   run on every future document via `Page.addScriptToEvaluateOnNewDocument`).
 - `src/info_kierowca_notifier/browser/chrome.py` and `browser/clicking.py` — shared Chrome discovery/lifecycle and
   conservative click-safety primitives consumed by both auth and booking; neither module imports a domain flow.
+  `chrome.py` owns `ensure_private_profile_dir()` (0700 profile dirs — they hold live session
+  cookies) and `chrome_debugging_args()`; every launcher must go through both rather than
+  hand-rolling flags. `CLICKABLE_HELPERS_JS` is a Python **raw** string, so its JS regexes take a
+  single backslash: `__ikw_text()` carried `/\\s+/g` until 2026-08-11, which reaches the browser as
+  "literal backslash followed by s" — a sequence page text never contains — so whitespace was never
+  collapsed and every *exact* text match (`exact=true`, i.e. `SUMMARY_BUTTON_TEXT` and the
+  highest-stakes `CONFIRM_SUMMARY_TEXT`) silently failed on any button whose label wrapped across
+  lines. The sibling helpers (`\b`, `\d`) were always right; match them.
+- `src/info_kierowca_notifier/booking/transaction.py` — fail-closed post-submit verification and
+  privacy-safe diagnostics for the confirm path: scrapes `/cases` booking cards
+  (`BOOKING_CARDS_JS`), classifies what changed (`classify_cards()`), and records a sanitised
+  trace (`DiagnosticRecorder`, `os.open(..., 0o600)` + `O_EXCL`). Also the home of the shared
+  exam-centre vocabulary (`CENTER_HELPERS_JS` for the browser side, `normalize_center()`/
+  `centers_compatible()`/`center_conflict()`/`target_center()` for the Python side) that
+  `reschedule.py` matches slots and summary modals with — keep the JS `__ikw_normCenter()` and the
+  Python `normalize_center()` in step, since one reads the DOM and the other reads config/hit dicts.
+  Two 2026-08-11 fixes here:
+  - `classify_cards()` keyed VERIFIED_SUCCESS on `len(old_active) == 1 and len(current_active) == 1`,
+    so anyone holding two active bookings (theory + practical is the ordinary case) could **never**
+    verify a success even on a perfect match. `current_slot_date` then stayed stale, and a stale
+    `current_slot_date` re-arms `notifier.is_urgent()` — so once the 900s cooldown expired, the next
+    hit beating the *old* date could trigger another real confirm click, possibly for a slot worse
+    than the one just booked. It now keys on the target card's own identity: exactly one matching
+    card, that card not already active in the baseline, and the active-booking count not growing (a
+    reschedule replaces, it doesn't add). VERIFIED_UNCHANGED generalises the same way. An empty
+    baseline still verifies nothing.
+  - `run_post_submit()` set `verification_target = None` on *any* exception, including the very
+    first attempt — the likeliest moment for a destroyed execution context or socket timeout, right
+    after `create_page_target()`/`navigate_target()`. One transient blip permanently disabled
+    verification for the rest of the budget, reporting UNKNOWN for a reschedule that actually
+    succeeded. Only `cdp.TargetNotFoundError`/`StaleTargetError` (a target genuinely gone) stop
+    retrying now; transient errors cost one attempt and are recorded as `verification_attempt_failed`.
 - `src/info_kierowca_notifier/booking/reschedule.py` — launches Chrome in its own dedicated profile (port `9555`, distinct
   from `src/info_kierowca_notifier/auth/session.py`'s and from a regular browsing profile) and injects the cookies
   already saved in `session.json` via `cdp_client.set_cookies()` before navigating to `/cases`, so
@@ -234,15 +266,77 @@ automation. Regenerate the static snapshots with `tools/fetch_word_centers.py` /
     slot by hand every time. Rewritten to reuse the same find-the-most-specific-matching-element-
     then-walk-up-to-a-clickable-ancestor pattern as `click_text_js`/`__ikw_findAndClick` (already
     proven live elsewhere in this project), matching on both the exam label and time substrings
-    together. This fix itself is still unverified against a real confirm-reschedule run — the
-    underlying `wait_and_verify_summary()` check (`document.body`'s whole visible text for the
-    expected date/time/exam-type substrings, no live-verified selector for the modal exists) is
-    unchanged — so confirm the full flow actually finds/clicks/verifies the right thing before ever
+    together. This fix itself is still unverified against a real confirm-reschedule run — so
+    confirm the full flow actually finds/clicks/verifies the right thing before ever
     enabling `auto_confirm_reschedule` for real.
+  - **2026-08-11 matching/safety pass** (a security review and a code review independently found
+    overlapping bugs in exactly this path; all of the below is logic-level reasoning + the new
+    Node-DOM tests in `tests/test_reschedule_slot_matching.py`, **none of it re-verified against
+    the live site** — the same caveat the rest of this feature carries):
+    - `select_slot_js()` matched exam-label + time **anywhere in the document**, and its
+      `t.length <= best[1].length` tie-break preferred the *last* equal-length match in document
+      order. Two visible date groups sharing a time/type therefore let the *later* date's row win,
+      and the exam centre was never compared at all even though the hit dict carries it as `word`
+      — so a same date/time/type slot at the wrong centre (in practice the existing booking's own)
+      could be selected and confirmed. Now: the query is scoped to the subtree of the smallest
+      visible element containing the target **date + label + time together**, the row must be
+      unambiguous *within that subtree* (any disjoint second match abstains), and a centre named
+      inside the group must be compatible with the target's. Every refusal returns a named reason
+      (`date_group_not_found`, `ambiguous_date_group`, `ambiguous_slot_row`, `center_conflict`, …)
+      that `_print_abstention()` logs once to `RESCHEDULE_LOG_FILE` — a fail-closed abstention used
+      to be indistinguishable from "the page never rendered".
+    - `wait_and_verify_summary()` read `document.body`, which includes the date-picker page still
+      mounted *behind* the modal and already showing the expanded date group — so it could pass on
+      the page behind a modal showing a different slot. Now scoped to the visible modal container
+      (`MODAL_SELECTOR`, the same `[role="dialog"]/[aria-modal="true"]/dialog` set
+      `transaction.PAGE_SNAPSHOT_JS` already records as `dialogs`), and it additionally requires a
+      **positive** centre match — from the modal, falling back to the page. No modal, several
+      plausible modals, a conflicting centre, or no centre named anywhere all refuse. `center_unknown`
+      (page named none) and `center_unverifiable` (the *target* named none, i.e. a hand-written
+      `--target-slot`) are deliberately distinct reasons. **This is the strictest new rule and the
+      most likely to need a live-DOM adjustment**: if a real run refuses with `center_unknown`, the
+      picker simply doesn't name the centre where this looks, and that's what needs revisiting —
+      not the rule.
+    - The final confirm click no longer goes through `_poll_until_truthy()`. That helper swallows
+      every exception including `socket.timeout` (`cdp.cdp_call`'s socket has a 5s timeout) and
+      retries — but `Runtime.evaluate` runs to completion in the page whether or not the response
+      comes back, so a timed-out confirm may already have submitted, and the next iteration would
+      click it again. `click_confirm_once()` instead makes the page the record: `confirm_click_js()`
+      sets a sessionStorage marker (`CONFIRM_MARKER_KEY`) immediately *before* `.click()` and clears
+      it again only when the click demonstrably didn't fire, so "marker present" means exactly "a
+      click fired" and survives the navigation that click causes. A retry only ever happens on
+      positive evidence nothing was clicked; a lost response returns `CONFIRM_ALREADY_CLICKED` and
+      the flow goes straight to verification. A failing *probe* never falls through to a click.
+    - `target_beats_current_slot()` re-reads `current_slot_date` from `config.json` right before the
+      submit click and aborts if the target isn't strictly earlier (mirroring `notifier.is_urgent()`
+      rather than importing it — notifier imports this module). The detached child can reach this
+      point a minute or more after `run_check()` judged the slot urgent, and previously only re-read
+      the ntfy topic. Fails closed on a missing/unparseable date.
+    - Everything after the submit click is best-effort: `recorder.save()` goes through
+      `save_diagnostic()`, and the observation/cooldown steps are individually guarded, so a failed
+      diagnostic write (`O_EXCL` collision, full/unwritable state dir) can no longer propagate out
+      and skip both the `current_slot_date` update *and* every `push_ntfy()` below it — which is
+      exactly when the user most needs telling. Pushes now name the diagnostic by basename via
+      `diagnostic_reference()`: the full path starts with `$HOME`, so interpolating it leaked the
+      local OS username to ntfy.sh.
+    - `record_confirm_cooldown()` returns a bool instead of swallowing failures (`except Exception:
+      pass` silently removed the one gate on repeat confirm attempts); `try_select_target_slot()`
+      refuses to submit if it can't arm, and `booking.launch` withholds `--confirm-reschedule`.
+      `write_private_json()` replaces the old write-then-chmod for both this file and `config.json`
+      — `os.open(..., 0o600)` on the temp file closes the umask window in which a world-readable
+      temp copy of the whole config existed.
+    - The Chrome launch here now uses `ensure_private_profile_dir()` + `chrome_debugging_args()`
+      (as `auth/session.py` already did) instead of a bare `mkdir()` and hand-built flags: this
+      profile has live session cookies injected into it and was being created 0755.
+    - Dead code removed: `wait_and_verify_booking()` (no callers, and it called
+      `classify_cards(cards, wanted, [])` with an empty baseline, which returns `UNKNOWN`
+      unconditionally — so reinstating it as its docstring's "compatibility wrapper" would have
+      silently broken) and `transaction.wait_for_booking_cards()`.
   - After `CONFIRM_SUMMARY_TEXT` is clicked, also by explicit user request (the
     button's own "i przejdź dalej" wording implies at least one more screen, so this deliberately
     doesn't try to read anything off of whatever page that click lands on): waits a couple seconds,
-    navigates to `/cases`, and `wait_and_verify_booking()` checks whether a booking now shows there
+    navigates to `/cases` **in a separate CDP target** (the transaction tab is never navigated), and
+    `transaction.run_post_submit()`/`classify_cards()` check whether a booking now shows there
     as our exact slot with a "Potwierdzona" (confirmed) status — not just date/time/exam-type match,
     since `/cases` also lists past/cancelled entries side by side (an "Anulowana" card right next to
     a "Potwierdzona" one, per screenshots) that could otherwise false-positive. The confirm click
@@ -273,8 +367,9 @@ automation. Regenerate the static snapshots with `tools/fetch_word_centers.py` /
       confirmed-but-unverified-on-`/cases`, and confirmed-and-verified. Scoped to only that stage —
       the earlier, lower-stakes `auto_select_slot`-only steps already got their own "slot found"
       push before the browser opened, and aren't worth a second alert on top of the log file.
-    - `paths.RESCHEDULE_CONFIRM_COOLDOWN_FILE` is written right before the real submit click is
-      attempted (regardless of its outcome), and
+    - `paths.RESCHEDULE_CONFIRM_COOLDOWN_FILE` is armed by `trigger_open_browser()` at **launch
+      time** (moved there 2026-08-11) and refreshed by the child right before the real submit click
+      is attempted (regardless of its outcome), and
       `notifier.confirm_reschedule_cooldown_active()` (checked in `trigger_open_browser()` before
       ever appending `--confirm-reschedule`) withholds that flag for
       `notifier.RESCHEDULE_CONFIRM_COOLDOWN_SECONDS` (900s, not user-configurable) after. This
@@ -284,7 +379,14 @@ automation. Regenerate the static snapshots with `tools/fetch_word_centers.py` /
       immediately attempt *another* real confirm click before a human has had any chance to see the
       push from the point above and step in. During the cooldown, `auto_select_slot` alone still
       runs normally (just without `--confirm-reschedule`) — only the actual submit step is held
-      back.
+      back. Writing it in the child only (as it was until 2026-08-11) left ~90s between launch and
+      that write — Chrome start, `/cases` load, baseline capture, up to four 20s click waits — in
+      which the sole guard was the port-9555 probe, and that probe fails *open* for the whole of
+      Chrome's startup, so a second poll cycle in that window launched a duplicate confirm flow.
+      Arming at launch closes it; the cost is that a run giving up before the submit click would
+      burn 15 minutes for nothing, so `try_select_target_slot()` calls `release_confirm_cooldown()`
+      on every pre-submit abort path. A crash between arming and that release leaves the gate armed,
+      which is the safe direction.
   - A `--no-auto-click` flag skips both clicks and just leaves the logged-in `/cases` tab open —
     used by `src/info_kierowca_notifier/app.py`'s "Open browser" toolbar button (`trigger_open_browser(auto_click=False)`) so
     a manual troubleshooting click doesn't also kick off the reschedule flow; the automatic
@@ -471,6 +573,11 @@ automation. Regenerate the static snapshots with `tools/fetch_word_centers.py` /
 - `~/.local/state/info-kierowca-notifier/notifier.log` — rotating log (2MB x3 backups).
 - `~/.local/state/info-kierowca-notifier/status.json` — current status + history, what the
   dashboard reads and serves at `GET /status.json`.
+- `~/.local/state/info-kierowca-notifier/reschedule.log` — plain append-only log of
+  `booking/reschedule.py`'s own `print()`s when auto-triggered, including every fail-closed
+  abstention reason from the slot/summary matching; chmod 0600 like every other state file (it
+  inherited the umask until 2026-08-11). `reschedule-diagnostics/` (0700) holds the per-transaction
+  sanitised traces, and `reschedule-confirm-cooldown` is the 15-minute repeat-confirm gate.
 - `~/.local/state/info-kierowca-notifier/auto-refresh.log` — plain append-only log of
   `src/info_kierowca_notifier/auth/session.py`'s own `print()`s when auto-triggered (see `src/info_kierowca_notifier/auth/session.py`
   above); check this first when a relogin gets stuck partway through the login click-through.

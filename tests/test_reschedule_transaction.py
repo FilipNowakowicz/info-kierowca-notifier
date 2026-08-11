@@ -1,4 +1,9 @@
+import contextlib
+import datetime
+import inspect
+import io
 import json
+import logging
 import os
 import tempfile
 import unittest
@@ -6,6 +11,7 @@ from pathlib import Path
 from unittest import mock
 
 from info_kierowca_notifier.browser import cdp as cdp_client
+from info_kierowca_notifier.booking import launch as booking_launch
 from info_kierowca_notifier.booking import reschedule as browser
 from info_kierowca_notifier.booking import transaction as rt
 
@@ -16,6 +22,11 @@ def card(status="Potwierdzona", exam="Egzamin praktyczny", date="10/08/2026", ti
 
 TARGET = {"exam_type": "Egzamin praktyczny", "date": "10/08/2026", "time": "12:30"}
 OLD = card(date="20/08/2026", time="09:00")
+# A second, unrelated active booking — theory alongside practical is the
+# ordinary case for anyone still taking both exams.
+THEORY = card(exam="Egzamin teoretyczny", date="05/09/2026", time="08:00")
+CENTER = "WORD Warszawa M/E Odolany"
+OTHER_CENTER = "WORD Warszawa M/E Bemowo"
 
 
 class BookingClassificationTests(unittest.TestCase):
@@ -69,6 +80,65 @@ class BookingClassificationTests(unittest.TestCase):
 
     def test_old_booking_still_active_is_verified_unchanged(self):
         self.assertEqual(rt.classify_cards([OLD], TARGET, [OLD]), rt.VERIFIED_UNCHANGED)
+
+    def test_two_active_bookings_can_still_verify_the_target(self):
+        # Regression: classify_cards() used to demand exactly one active
+        # booking account-wide, so a theory + practical holder could never
+        # reach VERIFIED_SUCCESS — current_slot_date then stayed stale, which
+        # re-arms is_urgent() and can hand a later cycle another real confirm
+        # click for a slot no better than the one just booked.
+        self.assertEqual(
+            rt.classify_cards([card(), THEORY], TARGET, [OLD, THEORY]),
+            rt.VERIFIED_SUCCESS,
+        )
+
+    def test_two_unchanged_bookings_are_verified_unchanged(self):
+        self.assertEqual(
+            rt.classify_cards([OLD, THEORY], TARGET, [OLD, THEORY]),
+            rt.VERIFIED_UNCHANGED,
+        )
+
+    def test_target_added_alongside_every_old_booking_is_unknown(self):
+        # Looks like an extra booking rather than a moved one.
+        self.assertEqual(
+            rt.classify_cards([OLD, THEORY, card()], TARGET, [OLD, THEORY]),
+            rt.UNKNOWN,
+        )
+
+    def test_target_already_active_in_the_baseline_is_never_success(self):
+        self.assertEqual(
+            rt.classify_cards([card(), THEORY], TARGET, [card(), THEORY]),
+            rt.UNKNOWN,
+        )
+
+    def test_matching_card_at_a_different_centre_is_not_the_target(self):
+        target = dict(TARGET, center=CENTER)
+        wrong = dict(card(), center=OTHER_CENTER)
+        right = dict(card(), center=CENTER)
+        self.assertFalse(rt.matches_target(wrong, target))
+        self.assertTrue(rt.matches_target(right, target))
+        self.assertNotEqual(rt.classify_cards([wrong], target, [OLD]), rt.VERIFIED_SUCCESS)
+        self.assertEqual(rt.classify_cards([right], target, [OLD]), rt.VERIFIED_SUCCESS)
+
+    def test_card_without_a_readable_centre_still_matches(self):
+        # BOOKING_CARDS_JS scrapes the centre out of free text; a card that
+        # simply doesn't repeat it must not become permanently unverifiable.
+        self.assertTrue(rt.matches_target(card(), dict(TARGET, center=CENTER)))
+
+    def test_centre_comparison_tolerates_accents_punctuation_and_prefixes(self):
+        self.assertTrue(rt.centers_compatible("WORD Warszawa", CENTER))
+        self.assertTrue(rt.centers_compatible("word warszawa m.e. odolany", CENTER))
+        self.assertFalse(rt.centers_compatible(OTHER_CENTER, CENTER))
+        self.assertFalse(rt.center_conflict("", CENTER))
+        self.assertFalse(rt.center_conflict(CENTER, ""))
+        self.assertTrue(rt.center_conflict(OTHER_CENTER, CENTER))
+        self.assertEqual(rt.normalize_center("MORD Kraków"), "mord krakow")
+
+    def test_transaction_target_centre_is_read_under_any_spelling(self):
+        self.assertEqual(rt.target_center({"center": CENTER}), CENTER)
+        self.assertEqual(rt.target_center({"word_id": CENTER}), CENTER)
+        self.assertEqual(rt.target_center({"word": CENTER}), CENTER)
+        self.assertEqual(rt.target_center({}), "")
 
     def test_exam_label_case_and_whitespace_are_normalized_but_datetime_is_exact(self):
         formatted = card(exam="  EGZAMIN   PRAKTYCZNY ")
@@ -469,6 +539,303 @@ class SeparateTargetFlowTests(unittest.TestCase):
         self.assertEqual(result, rt.UNKNOWN)
         navigate.assert_called_once_with("h", 1, verifier, "https://info-kierowca.pl/cases")
         self.assertGreaterEqual(page.call_count, 2)
+
+
+class FakeConfirmPage:
+    """Stands in for a page whose confirm button is clicked through CDP.
+
+    Mirrors the real contract that makes the retry safe: the marker is set by
+    the click expression itself, in the page, *before* the click — so it is
+    already true even when we never get the response back.
+    """
+
+    def __init__(self, *, has_button=True, lose_click_response=False, probe_error=False):
+        self.has_button = has_button
+        self.lose_click_response = lose_click_response
+        self.probe_error = probe_error
+        self.marker = False
+        self.clicks = 0
+
+    def evaluate(self, host, port, js, target=None):
+        if "__ikw_clickByText" in js:
+            if self.marker:
+                return {"clicked": False, "reason": "already_clicked"}
+            if not self.has_button:
+                return {"clicked": False, "reason": "not_found"}
+            self.marker = True
+            self.clicks += 1
+            if self.lose_click_response:
+                raise TimeoutError("socket timed out after the click ran")
+            return {"clicked": True, "reason": "clicked", "matched_text": "Potwierdź"}
+        if self.probe_error:
+            raise TimeoutError("probe timed out")
+        return self.marker
+
+
+class Clock:
+    def __init__(self):
+        self.now = 0
+
+    def monotonic(self):
+        return self.now
+
+    def sleep(self, seconds):
+        self.now += seconds
+
+
+class ConfirmClickOnceTests(unittest.TestCase):
+    def click(self, page, timeout=5):
+        clock = Clock()
+        with contextlib.redirect_stdout(io.StringIO()):
+            return browser.click_confirm_once(
+                "h", 1, browser.CONFIRM_SUMMARY_TEXT, timeout=timeout,
+                evaluate=page.evaluate, sleep=clock.sleep, monotonic=clock.monotonic,
+            )
+
+    def test_a_normal_click_happens_exactly_once(self):
+        page = FakeConfirmPage()
+        self.assertEqual(self.click(page), browser.CONFIRM_CLICKED)
+        self.assertEqual(page.clicks, 1)
+
+    def test_a_lost_response_is_never_retried_into_a_second_submission(self):
+        # cdp_call()'s socket has a 5s timeout and Runtime.evaluate runs to
+        # completion in the page regardless of whether we read the reply, so a
+        # timed-out confirm may well have submitted the reservation change.
+        page = FakeConfirmPage(lose_click_response=True)
+        self.assertEqual(self.click(page), browser.CONFIRM_ALREADY_CLICKED)
+        self.assertEqual(page.clicks, 1)
+
+    def test_a_failing_probe_never_falls_through_to_a_click(self):
+        page = FakeConfirmPage(probe_error=True)
+        self.assertIsNone(self.click(page))
+        self.assertEqual(page.clicks, 0)
+
+    def test_a_button_that_never_appears_submits_nothing(self):
+        page = FakeConfirmPage(has_button=False)
+        self.assertIsNone(self.click(page))
+        self.assertEqual(page.clicks, 0)
+
+    def test_the_marker_is_set_before_the_click_and_cleared_only_on_failure(self):
+        js = browser.confirm_click_js(browser.CONFIRM_SUMMARY_TEXT)
+        set_at = js.index("__ikw_confirmMarker('set')")
+        click_at = js.index("__ikw_clickByText(text,")
+        clear_at = js.index("__ikw_confirmMarker('clear')")
+        self.assertLess(set_at, click_at)
+        self.assertLess(click_at, clear_at)
+        self.assertIn("sessionStorage", js)
+
+    def test_the_confirm_button_does_not_go_through_the_retrying_poller(self):
+        source = inspect.getsource(browser.try_select_target_slot)
+        self.assertIn("click_confirm_once(host, port, CONFIRM_SUMMARY_TEXT", source)
+        self.assertNotIn("wait_and_click_enabled(host, port, CONFIRM_SUMMARY_TEXT", source)
+
+
+class VerificationRetryTests(unittest.TestCase):
+    @mock.patch.object(rt, "capture_booking_diagnostic_candidates", return_value=[])
+    @mock.patch.object(rt, "capture_booking_cards")
+    @mock.patch.object(rt, "capture_page")
+    @mock.patch.object(cdp_client, "navigate_target")
+    @mock.patch.object(cdp_client, "create_page_target")
+    def test_a_transient_error_does_not_disable_verification(
+            self, create, navigate, page, cards, candidates):
+        # The first verification attempt runs right after the verifier target
+        # is created and pointed at /cases — the likeliest moment for a
+        # destroyed execution context or a socket timeout. That used to clear
+        # verification_target permanently, so a reschedule that really did
+        # succeed could only ever report UNKNOWN.
+        transaction = cdp_client.PageTarget("tx", "", "", "ws://tx")
+        create.return_value = cdp_client.PageTarget("verify", "", "", "ws://verify")
+        stable = {"url": "https://info-kierowca.pl/summary", "buttons": [], "forms": [], "dialogs": []}
+        page.return_value = stable
+        cards.side_effect = [RuntimeError("execution context destroyed"), [OLD], [card()]]
+        recorder = rt.DiagnosticRecorder(TARGET, [OLD], "transient")
+        recorder.data["post_submit_pages"].append(stable)
+        with contextlib.redirect_stdout(io.StringIO()):
+            result = rt.run_post_submit(
+                "h", 1, transaction, recorder, timeout=2, interval=0,
+                monotonic=mock.Mock(side_effect=[0, 0, 0, 1, 1, 2, 2, 3]),
+                sleep=lambda _: None,
+            )
+        self.assertEqual(result, rt.VERIFIED_SUCCESS)
+        self.assertEqual(cards.call_count, 3)
+        states = [entry["state"] for entry in recorder.data["states"]]
+        self.assertIn("verification_attempt_failed", states)
+        self.assertNotIn("verification_target_lost", states)
+
+    @mock.patch.object(rt, "capture_booking_diagnostic_candidates", return_value=[])
+    @mock.patch.object(rt, "capture_booking_cards",
+                       side_effect=cdp_client.StaleTargetError("verifier closed"))
+    @mock.patch.object(rt, "capture_page")
+    @mock.patch.object(cdp_client, "navigate_target")
+    @mock.patch.object(cdp_client, "create_page_target")
+    def test_a_target_that_is_gone_stops_verification(
+            self, create, navigate, page, cards, candidates):
+        transaction = cdp_client.PageTarget("tx", "", "", "ws://tx")
+        create.return_value = cdp_client.PageTarget("verify", "", "", "ws://verify")
+        stable = {"url": "https://info-kierowca.pl/summary", "buttons": [], "forms": [], "dialogs": []}
+        page.return_value = stable
+        recorder = rt.DiagnosticRecorder(TARGET, [OLD], "terminal")
+        recorder.data["post_submit_pages"].append(stable)
+        with contextlib.redirect_stdout(io.StringIO()):
+            result = rt.run_post_submit(
+                "h", 1, transaction, recorder, timeout=2, interval=0,
+                monotonic=mock.Mock(side_effect=[0, 0, 0, 1, 1, 3]),
+                sleep=lambda _: None,
+            )
+        self.assertEqual(result, rt.UNKNOWN)
+        self.assertEqual(cards.call_count, 1)
+        self.assertIn(
+            "verification_target_lost",
+            [entry["state"] for entry in recorder.data["states"]],
+        )
+
+
+class ConfirmPreconditionTests(unittest.TestCase):
+    def test_only_a_strictly_earlier_date_may_be_confirmed(self):
+        config = {"current_slot_date": "2026-08-20"}
+        earlier = datetime.datetime.fromisoformat("2026-08-10T12:30:00")
+        same_day = datetime.datetime.fromisoformat("2026-08-20T08:00:00")
+        later = datetime.datetime.fromisoformat("2026-08-25T08:00:00")
+        self.assertTrue(browser.target_beats_current_slot(earlier, config))
+        self.assertFalse(browser.target_beats_current_slot(same_day, config))
+        self.assertFalse(browser.target_beats_current_slot(later, config))
+
+    def test_an_unusable_current_slot_date_fails_closed(self):
+        target = datetime.datetime.fromisoformat("2026-08-10T12:30:00")
+        for config in ({}, {"current_slot_date": ""}, {"current_slot_date": "not a date"}):
+            with self.subTest(config=config):
+                self.assertFalse(browser.target_beats_current_slot(target, config))
+
+    def test_it_rereads_config_when_none_is_supplied(self):
+        target = datetime.datetime.fromisoformat("2026-08-10T12:30:00")
+        with mock.patch.object(browser, "read_config",
+                               return_value={"current_slot_date": "2026-08-20"}) as read:
+            self.assertTrue(browser.target_beats_current_slot(target))
+        read.assert_called_once_with()
+
+
+class OutcomeReportingTests(unittest.TestCase):
+    def test_a_failed_diagnostic_save_never_stops_the_outcome_push(self):
+        recorder = mock.Mock()
+        recorder.save.side_effect = OSError("read-only file system")
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            self.assertIsNone(browser.save_diagnostic(recorder))
+        self.assertIn("Couldn't save", out.getvalue())
+
+    def test_push_notifications_never_carry_the_home_directory_path(self):
+        path = Path.home() / ".local/state/info-kierowca-notifier/reschedule-diagnostics/x.json"
+        reference = browser.diagnostic_reference(path)
+        self.assertIn("x.json", reference)
+        self.assertNotIn(str(Path.home()), reference)
+        self.assertEqual(browser.diagnostic_reference(None), "no diagnostic file")
+
+
+class ConfirmCooldownTests(unittest.TestCase):
+    def test_an_unwritable_cooldown_reports_failure_instead_of_passing_silently(self):
+        with mock.patch.object(browser, "write_private_json",
+                               side_effect=OSError("no space left on device")):
+            with contextlib.redirect_stdout(io.StringIO()) as out:
+                self.assertFalse(browser.record_confirm_cooldown())
+        self.assertIn("NOT armed", out.getvalue())
+
+    def test_an_abandoned_attempt_gives_the_gate_back(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "cooldown"
+            with mock.patch.object(browser, "RESCHEDULE_CONFIRM_COOLDOWN_FILE", path):
+                self.assertTrue(browser.record_confirm_cooldown("LAUNCHED"))
+                self.assertTrue(path.exists())
+                self.assertTrue(browser.release_confirm_cooldown())
+                self.assertFalse(path.exists())
+                self.assertTrue(browser.release_confirm_cooldown())
+
+    def test_state_files_are_owner_only_from_the_moment_they_exist(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "nested" / "state.json"
+            browser.write_private_json(path, {"a": 1})
+            self.assertEqual(json.loads(path.read_text()), {"a": 1})
+            if os.name == "posix":
+                self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(list(path.parent.glob("*.tmp")), [])
+
+    def test_a_failed_write_leaves_no_temporary_file_behind(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "state.json"
+            with mock.patch.object(json, "dumps", side_effect=ValueError("boom")):
+                with self.assertRaises(ValueError):
+                    browser.write_private_json(path, {"a": 1})
+            self.assertEqual(list(Path(tmp).glob("*")), [])
+
+
+class LaunchGateTests(unittest.TestCase):
+    def _trigger(self, cooldown_armed=True, cooldown_active=False):
+        """Run trigger_open_browser() with the browser and child process stubbed.
+
+        Everything the assertions need is captured before the temp dir goes
+        away, since the log file lives inside it.
+        """
+        config = {"auto_select_slot": True, "auto_confirm_reschedule": True}
+        hit = {"word": CENTER, "exam_type": "Practice",
+               "datetime": "2026-08-10T12:30:00", "places": 1}
+        with mock.patch.object(booking_launch.chrome, "chrome_available", return_value=True), \
+             mock.patch.object(booking_launch.urllib.request, "urlopen",
+                               side_effect=OSError("nothing listening")), \
+             mock.patch.object(booking_launch.open_logged_in_browser,
+                               "record_confirm_cooldown",
+                               return_value=cooldown_armed) as record, \
+             mock.patch.object(booking_launch, "confirm_reschedule_cooldown_active",
+                               return_value=cooldown_active), \
+             mock.patch.object(booking_launch.subprocess, "Popen") as popen, \
+             tempfile.TemporaryDirectory() as tmp:
+            log = Path(tmp) / "reschedule.log"
+            with mock.patch.object(booking_launch, "RESCHEDULE_LOG_FILE", log):
+                outcome = booking_launch.trigger_open_browser(
+                    logging.getLogger("test"), config, target_hit=hit
+                )
+            return {
+                "outcome": outcome,
+                "cmd": list(popen.call_args.args[0]) if popen.call_args else [],
+                "record": record,
+                "log_mode": log.stat().st_mode & 0o777 if log.exists() else None,
+                "call_order": [
+                    name for name in ("cooldown", "popen")
+                    if (record.called if name == "cooldown" else popen.called)
+                ],
+            }
+
+    def test_the_cooldown_is_armed_before_the_child_is_launched(self):
+        result = self._trigger()
+        self.assertEqual(result["outcome"], booking_launch.TRIGGER_LAUNCHED)
+        self.assertIn("--confirm-reschedule", result["cmd"])
+        result["record"].assert_called_once_with("LAUNCHED")
+        # Arming happens while building argv, so the flag can only be present
+        # if the gate was already on disk before Popen ran.
+        self.assertEqual(result["call_order"], ["cooldown", "popen"])
+
+    def test_an_unarmable_cooldown_withholds_the_confirm_flag(self):
+        result = self._trigger(cooldown_armed=False)
+        self.assertEqual(result["outcome"], booking_launch.TRIGGER_LAUNCHED)
+        self.assertIn("--target-slot", result["cmd"])
+        self.assertNotIn("--confirm-reschedule", result["cmd"])
+
+    def test_an_active_cooldown_withholds_the_confirm_flag_without_rearming(self):
+        result = self._trigger(cooldown_active=True)
+        self.assertEqual(result["outcome"], booking_launch.TRIGGER_LAUNCHED)
+        self.assertNotIn("--confirm-reschedule", result["cmd"])
+        result["record"].assert_not_called()
+
+    def test_the_reschedule_log_is_owner_only(self):
+        result = self._trigger()
+        if os.name == "posix":
+            self.assertEqual(result["log_mode"], 0o600)
+
+
+class RemovedDeadCodeTests(unittest.TestCase):
+    def test_the_unused_verification_wrappers_are_gone(self):
+        # wait_and_verify_booking() had no callers and, given the baseline rule
+        # in classify_cards(), returned False unconditionally — reinstating it
+        # as a "compatibility wrapper" would have silently broken.
+        self.assertFalse(hasattr(browser, "wait_and_verify_booking"))
+        self.assertFalse(hasattr(rt, "wait_for_booking_cards"))
 
 
 class StateMutationTests(unittest.TestCase):
