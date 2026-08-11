@@ -8,6 +8,7 @@ import http.server
 import json
 import socketserver
 
+from info_kierowca_notifier.web import guard
 from info_kierowca_notifier.web.localization import LOCALIZATION_SCRIPT
 from info_kierowca_notifier.paths import STATUS_FILE, empty_status
 
@@ -301,7 +302,12 @@ setInterval(tickCountdown, 1000);
 PAGE = PAGE.replace("<head>", "<head>" + LOCALIZATION_SCRIPT, 1)
 
 
-class Handler(http.server.BaseHTTPRequestHandler):
+class Handler(guard.LocalRequestGuardMixin, http.server.BaseHTTPRequestHandler):
+    # This surface is read-only, but /status.json still hands out booking
+    # history, so it gets the same Host check as app.py's - see web.guard's
+    # docstring on DNS rebinding.
+    guard_port = PORT
+
     def log_message(self, format, *args):
         pass
 
@@ -313,6 +319,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self):
+        if not self.guard_get():
+            return
         if self.path in ("/", "/index.html"):
             self._send(200, PAGE.encode("utf-8"), "text/html; charset=utf-8")
         elif self.path == "/status.json":
