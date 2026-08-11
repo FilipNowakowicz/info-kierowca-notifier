@@ -35,7 +35,13 @@ class ReloginOwner:
 
 
 def _atomic_write(path, payload):
-    path.parent.mkdir(parents=True, exist_ok=True)
+    # mkstemp() below already creates its temp file at a fixed 0600
+    # regardless of umask, but the directory itself (STATE_DIR in every
+    # real caller) still needs tightening the same way paths.ensure_state_dir()
+    # does elsewhere — mode= only applies at creation time, so the explicit
+    # chmod also backfills a directory that predates this fix.
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    path.parent.chmod(0o700)
     descriptor, temporary_name = tempfile.mkstemp(
         dir=str(path.parent), prefix=f".{path.name}.", suffix=".tmp"
     )

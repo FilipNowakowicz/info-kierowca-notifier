@@ -2,6 +2,7 @@
 import json
 import urllib.error
 import urllib.request
+from urllib.parse import urlsplit
 
 from info_kierowca_notifier import tls_transport
 
@@ -37,7 +38,22 @@ def cookie_is_deletion(value, attrs):
     return "expires=thu, 01 jan 1970" in lowered
 
 
-def parse_set_cookies(headers, session):
+COOKIE_DOMAIN = "info-kierowca.pl"
+
+
+def _is_own_response_url(url):
+    """Whether `url` (a response's *final* URL, after any redirect) is
+    info-kierowca.pl or a subdomain of it — the only origin our session
+    cookie is meant for. Guards parse_set_cookies() against a compromised or
+    malicious redirect target planting cookies into session.json, mirroring
+    the same never-leaves-info-kierowca.pl invariant
+    tls_transport._CookieSafeRedirectHandler enforces on the way out.
+    """
+    host = (urlsplit(str(url or "")).hostname or "").lower()
+    return host == COOKIE_DOMAIN or host.endswith("." + COOKIE_DOMAIN)
+
+
+def parse_set_cookies(headers, session, response_url=None):
     """Merge Set-Cookie headers into session["cookies"].
 
     Deletions must actually delete: a logout/invalidate response carrying
@@ -45,8 +61,14 @@ def parse_set_cookies(headers, session):
     as an empty-string cookie, leaving session.json looking complete to
     booking.reschedule's COOKIE_NAMES check — which then injects blank
     cookies and opens a logged-*out* tab instead of reporting the problem.
+
+    `response_url`, when given, must resolve to info-kierowca.pl (or a
+    subdomain) or these headers are ignored outright — see
+    _is_own_response_url()'s docstring.
     """
     if headers is None:
+        return
+    if response_url is not None and not _is_own_response_url(response_url):
         return
     for raw in headers.get_all("Set-Cookie") or []:
         name, _, rest = raw.partition("=")
@@ -75,7 +97,7 @@ def do_request(url, session, method="GET", json_body=None):
     try:
         with tls_transport.urlopen(req, timeout=TIMEOUT) as resp:
             body = resp.read()
-            parse_set_cookies(resp.headers, session)
+            parse_set_cookies(resp.headers, session, resp.geturl())
             return resp.status, body, resp.headers
     except urllib.error.HTTPError as e:
         body = e.read()

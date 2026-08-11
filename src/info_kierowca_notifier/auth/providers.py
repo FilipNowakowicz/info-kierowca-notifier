@@ -220,11 +220,24 @@ class MObywatelProvider:
         return self.wait_for_cookies()
 
 
+def _host_matches_suffix(host, suffix):
+    """host == suffix or is a strict subdomain of it.
+
+    A bare ``host.endswith(suffix)`` (without the "." separator this
+    enforces) would also match a look-alike host like
+    "evil" + suffix (e.g. "evilinfo-kierowca.pl" for suffix
+    "info-kierowca.pl"). Shared by every host-suffix check in this module —
+    see redirect_status() and REDIRECT_STATUS_FUNCTION below for the two
+    spots that used to compare with a bare endswith() instead.
+    """
+    return host == suffix or host.endswith("." + suffix)
+
+
 def allowed_pz_origin(url):
     parsed = urlparse(url)
     host = (parsed.hostname or "").lower()
     return parsed.scheme == "https" and any(
-        host == suffix or host.endswith("." + suffix)
+        _host_matches_suffix(host, suffix)
         for suffix in ("login.gov.pl", "pz.gov.pl")
     )
 
@@ -232,7 +245,7 @@ def allowed_pz_origin(url):
 def allowed_auth_redirect(url):
     parsed = urlparse(url); host = (parsed.hostname or "").lower()
     return parsed.scheme == "https" and any(
-        host == suffix or host.endswith("." + suffix)
+        _host_matches_suffix(host, suffix)
         for suffix in ("gov.pl", "pwpw.pl", "info-kierowca.pl")
     )
 
@@ -388,7 +401,8 @@ function() {
     return null;
   }
   if (document.querySelector('.alertPage,[class*="alertPage"],.wkProcessUsed')) return 'expired';
-  return location.hostname.endsWith('info-kierowca.pl') ? 'redirected' : null;
+  var h = location.hostname;
+  return (h === 'info-kierowca.pl' || h.endsWith('.info-kierowca.pl')) ? 'redirected' : null;
 }
 """
 
@@ -445,6 +459,19 @@ class CDPProfilZaufanyBrowser:
             result = self._call(PREPARE_CREDENTIAL_FIELD_FUNCTION, [kind], True)
             if result != "ready":
                 raise AuthenticationFailure("credential_form_timeout", PZState.SUBMIT_CREDENTIALS)
+            # _call()'s own origin check only covers up to
+            # PREPARE_CREDENTIAL_FIELD_FUNCTION returning — insert_text_in_target()
+            # below is a separate CDP call, and a cross-origin navigation
+            # landing in the gap between the two would otherwise type the
+            # password into whatever document is now loaded, unchecked.
+            # Re-verify immediately before typing to close that window as
+            # tightly as possible. SUBMIT_CREDENTIALS_FUNCTION still fails
+            # the whole attempt on value_mismatch even if this narrower race
+            # were somehow still hit, so a value can only be *typed*
+            # off-origin this way, never submitted.
+            current = self._current()
+            if not allowed_pz_origin(current.url):
+                raise AuthenticationFailure("unexpected_auth_page", PZState.SUBMIT_CREDENTIALS)
             cdp_client.insert_text_in_target(
                 self.host, self.port, self.target, value
             )
@@ -471,9 +498,10 @@ class CDPProfilZaufanyBrowser:
     def redirect_status(self):
         current = self._current()
         parsed = urlparse(current.url)
-        if (parsed.hostname or "").endswith("info-kierowca.pl"):
+        host = (parsed.hostname or "").lower()
+        if _host_matches_suffix(host, "info-kierowca.pl"):
             return "redirected"
-        if (parsed.hostname or "").endswith("pz.gov.pl") and \
+        if _host_matches_suffix(host, "pz.gov.pl") and \
                 parsed.path == "/ui/au/alert" and \
                 "case=pzip-wk-login-no-profile" in parsed.query:
             return "no_valid_profile"

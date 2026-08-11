@@ -62,6 +62,27 @@ WORD_CENTERS_FILE = DATA_DIR / "word_centers.json"
 CATEGORIES_FILE = DATA_DIR / "categories.json"
 
 
+def ensure_config_dir():
+    """Create CONFIG_DIR (config.json/session.json's home) private to this
+    single-user tool, matching the 0600 those files themselves are already
+    held to. mkdir's own ``mode`` only takes effect the moment the directory
+    is created — ``exist_ok=True`` silently skips it otherwise — so the
+    explicit chmod also backfills a directory created before this existed,
+    when every caller's plain ``mkdir(parents=True, exist_ok=True)`` left it
+    at the umask default (typically 0755).
+    """
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
+    CONFIG_DIR.chmod(0o700)
+    return CONFIG_DIR
+
+
+def ensure_state_dir():
+    """Same as ensure_config_dir(), for STATE_DIR (status.json, logs, locks)."""
+    STATE_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
+    STATE_DIR.chmod(0o700)
+    return STATE_DIR
+
+
 def empty_status():
     """The "nothing has happened yet" status shape, shared by
     notifier.load_status() (its fallback when status.json is missing/
