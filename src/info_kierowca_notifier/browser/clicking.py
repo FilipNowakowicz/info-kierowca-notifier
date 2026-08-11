@@ -56,7 +56,17 @@ function __ikw_clickableAncestor(el) {
   return el;
 }
 function __ikw_text(el) {
-  return (el.innerText || el.textContent || '').replace(/\\s+/g, ' ').trim();
+  // Single backslash on purpose: this whole constant is a Python raw string,
+  // so `\s` reaches the browser as the whitespace class it looks like. It was
+  // `\\s` here until 2026-08-11, which compiled to "a literal backslash
+  // followed by s" — a sequence no page text contains, so nothing was ever
+  // collapsed and __ikw_text() returned raw innerText with its line breaks
+  // intact. That silently broke every *exact* match (exact=true), i.e. the
+  // two highest-stakes buttons in this project: SUMMARY_BUTTON_TEXT and
+  // CONFIRM_SUMMARY_TEXT, for any button whose label wraps across lines.
+  // The sibling helpers below (`\b`, `\d`) were always written correctly —
+  // match them, not the old form.
+  return (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
 }
 function __ikw_pageIsKnownError() {
   var body = __ikw_text(document.body).toLowerCase();

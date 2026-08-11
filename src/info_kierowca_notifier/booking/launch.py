@@ -1,5 +1,6 @@
 """Launch and rate-limit the detached reschedule helper."""
 import json
+import os
 import subprocess
 import sys
 import urllib.request
@@ -49,6 +50,25 @@ def confirm_reschedule_cooldown_active():
     except (FileNotFoundError, ValueError, KeyError, TypeError, json.JSONDecodeError):
         return False
     return (datetime.now() - last).total_seconds() < RESCHEDULE_CONFIRM_COOLDOWN_SECONDS
+
+
+def _restrict_log_permissions(path):
+    """Owner-only, like every other file this project writes under STATE_DIR.
+
+    RESCHEDULE_LOG_FILE was created by a plain open(..., "a") and so inherited
+    the umask (0644 on a typical desktop) while config.json, session.json,
+    status.json and the diagnostic traces are all 0600. It records the exam
+    slot being chased, the centre, and every abstention reason from the click
+    helpers — not credentials, but not something to leave world-readable on a
+    shared machine either. Best-effort: a failure here must never stop the
+    launch it is only annotating.
+    """
+    if os.name != "posix":
+        return
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
 
 
 def trigger_open_browser(logger, config, auto_click=True, target_hit=None):
@@ -140,11 +160,29 @@ def trigger_open_browser(logger, config, auto_click=True, target_hit=None):
         if config.get("auto_confirm_reschedule", False):
             if confirm_reschedule_cooldown_active():
                 logger.info("outcome=confirm_reschedule_skipped detail=cooldown_active")
+            # The cooldown is armed HERE, before the child exists — not by the
+            # child right before its submit click, which is where it used to be
+            # written. That left roughly a minute and a half (Chrome start,
+            # /cases load, baseline capture, up to four 20s click waits) in
+            # which the only thing standing between two concurrent confirm
+            # flows was the port-9555 probe above — and that probe fails *open*
+            # for the whole of Chrome's startup, so a second poll cycle in that
+            # window happily launched a duplicate. Arming first means the
+            # window is closed from the instant we decide to try.
+            #
+            # The cost is that a run which never reaches the submit click would
+            # burn 15 minutes of confirm attempts for nothing, so
+            # reschedule.try_select_target_slot() calls release_confirm_cooldown()
+            # on every path that gives up before submitting. A crash between
+            # here and there leaves the gate armed, which is the safe direction.
+            elif not open_logged_in_browser.record_confirm_cooldown("LAUNCHED"):
+                logger.info("outcome=confirm_reschedule_skipped detail=cooldown_unwritable")
             else:
                 cmd.append("--confirm-reschedule")
     try:
         RESCHEDULE_LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
         with open(RESCHEDULE_LOG_FILE, "a") as logf:
+            _restrict_log_permissions(RESCHEDULE_LOG_FILE)
             logf.write(f"\n--- {datetime.now().isoformat()} launching: {cmd!r} ---\n")
             logf.flush()
             subprocess.Popen(cmd, stdout=logf, stderr=subprocess.STDOUT, start_new_session=True)
