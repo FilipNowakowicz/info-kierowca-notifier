@@ -11,6 +11,7 @@ them — see each module's own docstring for what it does on its own.
 import http.server
 import json
 import os
+import re
 import secrets
 import socket
 import socketserver
@@ -24,6 +25,7 @@ from datetime import date, datetime, timedelta
 from info_kierowca_notifier.auth import session as auto_refresh_session
 from info_kierowca_notifier.auth import credentials as credential_store
 from info_kierowca_notifier.auth import sms as sms_provider
+from info_kierowca_notifier.web import guard
 from info_kierowca_notifier.web import server as dashboard_server
 from info_kierowca_notifier import notifier
 from info_kierowca_notifier import client
@@ -144,6 +146,24 @@ def _wait_for_relogin_and_wake(prior_captured_at, wake_event):
     wake_event.set()
 
 
+# ntfy's own topic rule (its server rejects anything else, so a topic outside
+# this set means pushes silently never arrive). Keeping the saved value inside
+# it also keeps it inert everywhere it's later interpolated - the settings
+# page's JSON blob, and the https://ntfy.sh/<topic> URL push_ntfy() builds.
+NTFY_TOPIC_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+NTFY_TOPIC_ERROR = (
+    "Notification topic may only contain letters, digits, '-' and '_' "
+    "(up to 64 characters)"
+)
+
+
+def generate_ntfy_topic():
+    """A fresh random topic for a first run. token_urlsafe()'s alphabet is
+    exactly NTFY_TOPIC_PATTERN's, and 3 + 32 characters stays well inside its
+    64-character limit."""
+    return "ik-" + secrets.token_urlsafe(24)
+
+
 def build_config(payload):
     """Validate a /setup POST body and assemble it into config.json's schema."""
     def require_str(key, label):
@@ -160,6 +180,8 @@ def build_config(payload):
 
     profile_number = require_str("profile_number", "PKK number")
     ntfy_topic = require_str("ntfy_topic", "Notification topic")
+    if not NTFY_TOPIC_PATTERN.match(ntfy_topic):
+        raise ValueError(NTFY_TOPIC_ERROR)
 
     organization_ids = payload.get("organization_ids")
     if not isinstance(organization_ids, list) or not organization_ids:
@@ -387,8 +409,14 @@ def render_wizard(existing_config=None, pkk_profiles=None):
     page = page.replace("__CATEGORIES_JSON__", categories_json)
     pkk_profiles_json = json.dumps(pkk_profiles or [], ensure_ascii=False).replace("</", "<\\/")
     page = page.replace("__PKK_PROFILES_JSON__", pkk_profiles_json)
-    ntfy_topic = existing_config["ntfy_topic"] if existing_config else "ik-" + secrets.token_urlsafe(24)
-    page = page.replace("__NTFY_TOPIC__", ntfy_topic)
+    ntfy_topic = existing_config["ntfy_topic"] if existing_config else generate_ntfy_topic()
+    # Delivered as JSON into a <script>, like every other value on this page,
+    # rather than substituted into a value="..." attribute. A config.json
+    # written before build_config() validated this field (or edited by hand)
+    # could otherwise carry a quote and close the attribute, turning a stored
+    # topic into script in the settings page.
+    ntfy_topic_json = json.dumps(ntfy_topic, ensure_ascii=False).replace("</", "<\\/")
+    page = page.replace("__NTFY_TOPIC_JSON__", ntfy_topic_json)
     existing_json = (
         json.dumps(existing_config, ensure_ascii=False).replace("</", "<\\/")
         if existing_config else "null"
@@ -397,7 +425,13 @@ def render_wizard(existing_config=None, pkk_profiles=None):
     return page.encode("utf-8")
 
 
-class AppHandler(http.server.BaseHTTPRequestHandler):
+class AppHandler(guard.LocalRequestGuardMixin, http.server.BaseHTTPRequestHandler):
+    # Every mutating endpoint below acts on the request alone (no reply the
+    # caller has to read), and /settings renders config.json into a page, so
+    # both verbs are gated on web.guard's Host/Origin/Content-Type checks -
+    # see that module's docstring for the two attacks this closes.
+    guard_port = PORT
+
     logger = None
     dash_status = None
     wake_event = None
@@ -439,6 +473,8 @@ class AppHandler(http.server.BaseHTTPRequestHandler):
         return notifier.load_json(notifier.CONFIG_FILE) if notifier.CONFIG_FILE.exists() else {}
 
     def do_GET(self):
+        if not self.guard_get():
+            return
         if self.path in ("/", "/index.html"):
             config = self._load_config_or_empty()
             if config_is_complete(config):
@@ -471,6 +507,8 @@ class AppHandler(http.server.BaseHTTPRequestHandler):
             self._send(404, b"not found", "text/plain")
 
     def do_POST(self):
+        if not self.guard_post():
+            return
         if self.path == "/setup":
             self._handle_setup()
         elif self.path == "/login-start":
@@ -703,6 +741,12 @@ class AppHandler(http.server.BaseHTTPRequestHandler):
         topic = (payload.get("topic") or "").strip()
         if not topic:
             self._send_json(400, {"ok": False, "error": "No notification topic set yet."})
+            return
+        # Same charset build_config() enforces: this value goes straight into
+        # the ntfy.sh URL path, so an unchecked one could address a different
+        # path on that host entirely.
+        if not NTFY_TOPIC_PATTERN.match(topic):
+            self._send_json(400, {"ok": False, "error": NTFY_TOPIC_ERROR})
             return
         outcome = notifier.push_ntfy(
             AppHandler.logger, topic,

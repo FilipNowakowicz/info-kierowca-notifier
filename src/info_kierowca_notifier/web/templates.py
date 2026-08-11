@@ -130,7 +130,7 @@ function ikwToast(msg) {
 
 document.getElementById('ikw-quit-btn').addEventListener('click', async () => {
   if (!confirm(ikwI18n.t('Quit info-kierowca-notifier? You will stop getting checked/notified until you start it again.'))) return;
-  try { await fetch('/shutdown', {method: 'POST'}); } catch (e) {}
+  try { await fetch('/shutdown', {method: 'POST', headers: {'Content-Type': 'application/json'}}); } catch (e) {}
   document.body.innerHTML =
     `<div style="padding:4rem;text-align:center;font-family:sans-serif;color:#eee;">${ikwI18n.t('Stopped. You can close this tab.')}</div>`;
 });
@@ -191,7 +191,7 @@ document.getElementById('ikw-browser-btn').addEventListener('click', async () =>
   const btn = document.getElementById('ikw-browser-btn');
   btn.disabled = true;
   try {
-    const res = await fetch('/manual-login', {method: 'POST'});
+    const res = await fetch('/manual-login', {method: 'POST', headers: {'Content-Type': 'application/json'}});
     const data = await res.json();
     ikwToast(ikwI18n.t(data.message || 'Something went wrong.'));
   } catch (e) {
@@ -211,11 +211,11 @@ ikwSessionRefreshBtn.addEventListener('click', async () => {
   if (!confirm(ikwI18n.t('Open Chrome for a fresh QR login now? This replaces your current session.'))) return;
   ikwSessionRefreshBtn.disabled = true;
   try {
-    const res = await fetch('/relogin-now', {method: 'POST'});
+    const res = await fetch('/relogin-now', {method: 'POST', headers: {'Content-Type': 'application/json'}});
     const data = await res.json();
     ikwToast(ikwI18n.t(data.message || 'Something went wrong.'));
     if (data.action === 'already_running' && confirm(ikwI18n.t('A QR login is already open. Close it and restart login?'))) {
-      const restartRes = await fetch('/relogin-restart', {method: 'POST'});
+      const restartRes = await fetch('/relogin-restart', {method: 'POST', headers: {'Content-Type': 'application/json'}});
       const restartData = await restartRes.json();
       ikwToast(ikwI18n.t(restartData.message || 'Something went wrong.'));
     }
@@ -244,7 +244,7 @@ async function ikwTogglePause() {
   // relied on below for `poll` itself).
   const resuming = isPaused;
   try {
-    const res = await fetch(resuming ? '/resume' : '/pause', {method: 'POST'});
+    const res = await fetch(resuming ? '/resume' : '/pause', {method: 'POST', headers: {'Content-Type': 'application/json'}});
     const data = await res.json();
     // poll() (defined in web.server's own script, sharing this
     // page) re-reads the now-updated status.json and redraws the
@@ -366,7 +366,7 @@ function setMethod(method) {
 document.getElementById('method-mobywatel').onclick = () => setMethod('mobywatel');
 document.getElementById('method-pz').onclick = () => setMethod('profil_zaufany');
 document.getElementById('pair-messages').onclick = async () => {
-  const d = await (await fetch('/pair-google-messages', {method:'POST'})).json();
+  const d = await (await fetch('/pair-google-messages', {method:'POST', headers:{'Content-Type':'application/json'}})).json();
   document.getElementById('messages-status').textContent = d.ok ? 'Google Messages Web opened for pairing.' : 'Could not open Google Messages Web.';
 };
 loginBtn.addEventListener('click', async () => {
@@ -382,7 +382,7 @@ loginBtn.addEventListener('click', async () => {
       throw new Error(ikwI18n.t(data.message || 'Could not open Chrome — try the manual option below.'));
     }
     if (data.action === 'already_running' && confirm(ikwI18n.t('A QR login is already open. Close it and restart login?'))) {
-      const restartRes = await fetch('/relogin-restart', {method: 'POST'});
+      const restartRes = await fetch('/relogin-restart', {method: 'POST', headers: {'Content-Type': 'application/json'}});
       const restartData = await restartRes.json();
       if (restartData.action !== 'restart_launched') {
         throw new Error(ikwI18n.t(restartData.message || 'Could not restart the QR login.'));
@@ -795,7 +795,9 @@ WIZARD_PAGE = """<!doctype html>
         <label>Your private notification link — install the <a href="https://ntfy.sh/app" target="_blank" style="color:var(--accent-soft);">ntfy app</a> and subscribe to it exactly:</label>
         <div class="ntfy-row">
           <div class="reveal">
-            <input type="password" id="ntfy_topic" value="__NTFY_TOPIC__" readonly>
+            <!-- Value set from NTFY_TOPIC in the script below, not
+                 substituted into this attribute - see render_wizard(). -->
+            <input type="password" id="ntfy_topic" readonly>
             <button type="button" class="reveal-btn" id="reveal-ntfy" aria-label="Show or hide notification link"></button>
           </div>
           <button type="button" id="copy-ntfy">Copy link</button>
@@ -860,6 +862,7 @@ WIZARD_PAGE = """<!doctype html>
 const CENTERS = __CENTERS_JSON__;
 const CATEGORIES = __CATEGORIES_JSON__;
 const EXISTING_CONFIG = __EXISTING_CONFIG_JSON__;
+const NTFY_TOPIC = __NTFY_TOPIC_JSON__;
 const KNOWN_IDS = new Set(CENTERS.map(c => c.id));
 const loginMethodSelect = document.getElementById('login_method');
 const settingsPzFields = document.getElementById('settings-pz-fields');
@@ -867,7 +870,7 @@ function updateAuthFields() { settingsPzFields.style.display = loginMethodSelect
 loginMethodSelect.addEventListener('change', updateAuthFields);
 updateAuthFields();
 document.getElementById('settings-pair-messages').onclick = async () => {
-  const d=await (await fetch('/pair-google-messages',{method:'POST'})).json();
+  const d=await (await fetch('/pair-google-messages',{method:'POST', headers:{'Content-Type':'application/json'}})).json();
   document.getElementById('settings-messages-status').textContent=d.ok?'Google Messages Web opened for pairing.':'Could not open Google Messages Web.';
 };
 // True when this page is loaded inside the dashboard's Settings modal
@@ -1253,6 +1256,7 @@ const pkkInput = document.getElementById('profile_number');
 const pkkSync = wireReveal(pkkInput, document.getElementById('reveal-pkk'));
 wireReveal(document.getElementById('settings-pz-username'), document.getElementById('reveal-pz-username-settings'));
 const ntfyInput = document.getElementById('ntfy_topic');
+ntfyInput.value = NTFY_TOPIC;
 wireReveal(ntfyInput, document.getElementById('reveal-ntfy'));
 
 // ---- PKK profile picker (prefilled after QR login, see build_pkk_prefill) ----
@@ -1529,7 +1533,7 @@ resetAccountBtn.addEventListener('click', async () => {
   if (!confirm(t("This logs you out and clears your saved settings. You'll need to scan the QR code again. Continue?"))) return;
   resetAccountBtn.disabled = true;
   try {
-    const response = await fetch('/reset-account', {method: 'POST'});
+    const response = await fetch('/reset-account', {method: 'POST', headers: {'Content-Type': 'application/json'}});
     const data = await response.json();
     if (!response.ok || !data.ok) throw new Error(data.error || 'Reset failed');
     if (data.warning) alert(data.warning);

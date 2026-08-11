@@ -114,6 +114,18 @@ automation. Regenerate the static snapshots with `tools/fetch_word_centers.py` /
   `poll()` parses it into a page-level epoch-ms value, and `tickCountdown()` just diffs that against
   `Date.now()` every second — no client-side interval constant involved, so the display can't drift
   out of sync with a Settings-page interval change or the actual post-jitter wait.
+- `src/info_kierowca_notifier/web/guard.py` — the loopback/same-origin checks both HTTP surfaces run
+  before dispatching (`LocalRequestGuardMixin`, mixed into `web/server.py`'s `Handler` and
+  `src/info_kierowca_notifier/app.py`'s `AppHandler`, each setting `guard_port`). Binding 127.0.0.1
+  is not a boundary against a web page the user has open: every request must carry a loopback
+  `Host` we recognise (`127.0.0.1`/`localhost`/`[::1]` + port — this is what stops DNS rebinding
+  reading `/settings`' rendered config or `/status.json`'s history), and every POST must carry one
+  of our own `Origin`s *when the header is present* (absent means a non-browser client such as curl
+  or `already_running()`'s own probe; `null` is rejected) plus `Content-Type: application/json`.
+  That content type is the CSRF fix specifically: it is not CORS-safelisted, so a cross-site POST
+  needs a preflight this server never answers — which is also why every `fetch(..., {method:
+  'POST'})` in `web/templates.py`, including the body-less ones, sends that header. Imports nothing
+  from the project, so neither `app.py` nor `web/server.py` has to depend on the other for it.
 - `tools/pull_session_cookies.py` — pulls session cookies from a running Chrome via remote-debugging
   port; writes them into `session.json`. Manual: you launch Chrome and log in first.
 - `src/info_kierowca_notifier/auth/session.py` — launches Chrome (via `find_chrome()`: `CHROME_CANDIDATES` PATH names
