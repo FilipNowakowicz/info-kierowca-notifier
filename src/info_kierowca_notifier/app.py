@@ -491,10 +491,15 @@ class AppHandler(guard.LocalRequestGuardMixin, http.server.BaseHTTPRequestHandle
             # plain wizard with no PKK prefill, regardless of session state.
             self._send(200, render_wizard())
         elif self.path == "/settings":
+            # Same prefill as first-run "/": build_pkk_prefill() already
+            # returns [] when session.json is missing, so this is a safe
+            # unconditional call, not a behavior change for a session-less
+            # settings visit.
+            pkk_profiles = build_pkk_prefill()
             if notifier.CONFIG_FILE.exists():
-                self._send(200, render_wizard(notifier.load_json(notifier.CONFIG_FILE)))
+                self._send(200, render_wizard(notifier.load_json(notifier.CONFIG_FILE), pkk_profiles=pkk_profiles))
             else:
-                self._send(200, render_wizard())
+                self._send(200, render_wizard(pkk_profiles=pkk_profiles))
         elif self.path == "/login-status":
             self._send_json(200, {
                 "ready": notifier.SESSION_FILE.exists(),

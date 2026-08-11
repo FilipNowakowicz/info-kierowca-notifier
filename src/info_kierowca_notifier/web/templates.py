@@ -475,7 +475,7 @@ WIZARD_PAGE = """<!doctype html>
 
   /* reveal-able inputs (PKK / ntfy link) */
   .reveal { position: relative; margin-bottom: 0.9rem; }
-  .reveal input { margin-bottom: 0; padding-right: 2.5rem; }
+  .reveal input, .reveal select { margin-bottom: 0; padding-right: 2.5rem; }
   .reveal-btn { position: absolute; top: 50%; right: 0.35rem; transform: translateY(-50%);
     background: none; border: none; color: rgba(238,238,238,0.5); cursor: pointer; padding: 0.3rem;
     display: grid; place-items: center; }
@@ -672,19 +672,34 @@ WIZARD_PAGE = """<!doctype html>
     <fieldset>
       <legend>Exam &amp; centers</legend>
       <div id="pkk-auto-block" style="display:none;">
-        <label for="pkk-profile-select">Your PKK profile</label>
-        <select id="pkk-profile-select"></select>
+        <!-- 2+ profiles: masked "...last4 - code" dropdown, with a reveal toggle
+             for the whole option list. See the PKK profile picker script below. -->
+        <div id="pkk-select-block" style="display:none;">
+          <label for="pkk-profile-select">Your PKK profile</label>
+          <div class="reveal">
+            <select id="pkk-profile-select"></select>
+            <button type="button" class="reveal-btn" id="reveal-pkk-select" aria-label="Show or hide PKK number"></button>
+          </div>
+        </div>
+        <!-- Exactly 1 profile: the #profile_number reveal input (moved in from
+             pkk-manual-block below, not duplicated) shown read-only, plus a plain
+             non-clickable category label - the category is bound to this profile,
+             not user-chosen. -->
+        <div id="pkk-single-block" style="display:none;">
+          <label for="profile_number">PKK number</label>
+          <div class="hint" id="pkk-single-category"></div>
+        </div>
         <button type="button" class="cat-more" id="pkk-manual-link">Enter manually instead</button>
       </div>
 
       <div id="pkk-manual-block">
         <label for="profile_number">PKK number</label>
-        <div class="reveal">
+        <div class="reveal" id="pkk-reveal">
           <input type="text" id="profile_number" autocomplete="off" required>
           <button type="button" class="reveal-btn" id="reveal-pkk" aria-label="Show or hide PKK number"></button>
         </div>
 
-        <label>License category</label>
+        <label id="pkk-manual-cat-label">License category</label>
         <div class="cat-group" id="cat-primary"></div>
         <button type="button" class="cat-more" id="cat-more-btn">More categories</button>
         <div class="cat-group cat-rest" id="cat-rest"></div>
@@ -1212,6 +1227,17 @@ let selectedCategory = null;
 function setCategory(id) {
   selectedCategory = id;
   document.querySelectorAll('.cat-pill').forEach((p) => p.classList.toggle('on', p.dataset.id === String(id)));
+  updatePkkSingleCategoryLabel();
+}
+// Keeps the read-only "License category: X" label (single-PKK-profile state,
+// see the PKK profile picker below) in sync with selectedCategory - a plain
+// text snapshot taken once at profile-apply time would otherwise go stale the
+// moment EXISTING_CONFIG's own setCategory() call runs later on /settings.
+function updatePkkSingleCategoryLabel() {
+  const el = document.getElementById('pkk-single-category');
+  if (!el || el.dataset.active !== '1') return;
+  const c = CATEGORIES.find((cat) => cat.id === selectedCategory);
+  el.textContent = `${t('License category')}: ${c ? (c.code || ('Cat ' + c.id)) : ''}`;
 }
 function setCatRestOpen(open) {
   catRest.classList.toggle('open', open);
@@ -1259,21 +1285,30 @@ const ntfyInput = document.getElementById('ntfy_topic');
 ntfyInput.value = NTFY_TOPIC;
 wireReveal(ntfyInput, document.getElementById('reveal-ntfy'));
 
-// ---- PKK profile picker (prefilled after QR login, see build_pkk_prefill) ----
+// ---- PKK profile picker (prefilled after QR login / on Settings, see
+// build_pkk_prefill). Three presentations depending on account profile count:
+//   0 profiles  -> pkk-manual-block only (unchanged: editable field + pills)
+//   1 profile   -> pkk-single-block: the *same* #profile_number reveal input
+//                  (moved here, not duplicated), made read-only, plus a plain
+//                  non-clickable category label - the category is bound to
+//                  the profile, not user-chosen
+//   2+ profiles -> pkk-select-block: a <select> of masked "...last4 - code"
+//                  options with a reveal toggle that swaps every option's
+//                  label at once (updating the closed <select>'s own display
+//                  for free, since it reads the selected <option>'s text)
 const PKK_PROFILES = __PKK_PROFILES_JSON__;
 if (PKK_PROFILES.length) {
   const pkkAutoBlock = document.getElementById('pkk-auto-block');
   const pkkManualBlock = document.getElementById('pkk-manual-block');
+  const pkkSelectBlock = document.getElementById('pkk-select-block');
+  const pkkSingleBlock = document.getElementById('pkk-single-block');
   const pkkProfileSelect = document.getElementById('pkk-profile-select');
   const pkkManualLink = document.getElementById('pkk-manual-link');
   const pkkAutoLink = document.getElementById('pkk-auto-link');
-
-  PKK_PROFILES.forEach((p, i) => {
-    const opt = document.createElement('option');
-    opt.value = String(i);
-    opt.textContent = `${p.pkkNumber} — ${p.categoryCode}`;
-    pkkProfileSelect.appendChild(opt);
-  });
+  const pkkRevealWrap = document.getElementById('pkk-reveal');
+  const pkkManualCatLabel = document.getElementById('pkk-manual-cat-label');
+  const pkkSingleCategory = document.getElementById('pkk-single-category');
+  const multiProfile = PKK_PROFILES.length > 1;
 
   function applyPkkProfile(p) {
     pkkInput.value = p.pkkNumber;
@@ -1282,21 +1317,79 @@ if (PKK_PROFILES.length) {
     if (!isTop) expandCatRest();
   }
 
+  function maskedPkk(num) {
+    const last4 = num.slice(-4);
+    return '•'.repeat(Math.max(0, num.length - last4.length)) + last4;
+  }
+
+  function showSingleProfile() {
+    pkkSelectBlock.style.display = 'none';
+    pkkSingleBlock.style.display = 'block';
+    pkkSingleCategory.dataset.active = '1';
+    pkkSingleBlock.insertBefore(pkkRevealWrap, pkkSingleCategory);
+    pkkInput.readOnly = true;
+    pkkInput.type = 'password';
+    pkkSync();
+    applyPkkProfile(PKK_PROFILES[0]);
+  }
+
+  let selectRevealed = false;
+  function refreshSelectOptionLabels() {
+    Array.from(pkkProfileSelect.options).forEach((opt, i) => {
+      const p = PKK_PROFILES[i];
+      opt.textContent = `${selectRevealed ? p.pkkNumber : maskedPkk(p.pkkNumber)} — ${p.categoryCode}`;
+    });
+  }
+
+  function showSelectProfiles() {
+    pkkSingleBlock.style.display = 'none';
+    pkkSelectBlock.style.display = 'block';
+    refreshSelectOptionLabels();
+    applyPkkProfile(PKK_PROFILES[Number(pkkProfileSelect.value || 0)]);
+  }
+
   pkkAutoBlock.style.display = 'block';
   pkkManualBlock.style.display = 'none';
-  applyPkkProfile(PKK_PROFILES[0]);
 
-  pkkProfileSelect.addEventListener('change', () => applyPkkProfile(PKK_PROFILES[Number(pkkProfileSelect.value)]));
+  if (multiProfile) {
+    PKK_PROFILES.forEach((p, i) => {
+      const opt = document.createElement('option');
+      opt.value = String(i);
+      pkkProfileSelect.appendChild(opt);
+    });
+    const selectRevealBtn = document.getElementById('reveal-pkk-select');
+    const syncSelectReveal = () => { selectRevealBtn.innerHTML = selectRevealed ? EYE_OFF : EYE; };
+    syncSelectReveal();
+    selectRevealBtn.addEventListener('click', () => {
+      selectRevealed = !selectRevealed;
+      refreshSelectOptionLabels();
+      syncSelectReveal();
+    });
+    pkkProfileSelect.addEventListener('change', () => applyPkkProfile(PKK_PROFILES[Number(pkkProfileSelect.value)]));
+    showSelectProfiles();
+  } else {
+    showSingleProfile();
+  }
+
   pkkManualLink.addEventListener('click', () => {
     pkkAutoBlock.style.display = 'none';
     pkkManualBlock.style.display = 'block';
     pkkAutoLink.style.display = 'block';
+    if (!multiProfile) {
+      pkkSingleCategory.dataset.active = '0';
+      pkkManualBlock.insertBefore(pkkRevealWrap, pkkManualCatLabel);
+      pkkInput.readOnly = false;
+    }
   });
   pkkAutoLink.addEventListener('click', () => {
     pkkAutoBlock.style.display = 'block';
     pkkManualBlock.style.display = 'none';
     pkkAutoLink.style.display = 'none';
-    applyPkkProfile(PKK_PROFILES[Number(pkkProfileSelect.value)]);
+    if (multiProfile) {
+      showSelectProfiles();
+    } else {
+      showSingleProfile();
+    }
   });
 }
 
@@ -1441,6 +1534,15 @@ if (EXISTING_CONFIG) {
 
   pkkInput.value = EXISTING_CONFIG.profile_number || '';
   if (pkkInput.value) { pkkInput.type = 'password'; pkkSync(); }
+  // The dropdown (2+ PKK profiles) otherwise stays visually on whichever
+  // profile applyPkkProfile() picked at load (index 0) even though the lines
+  // above just overwrote the actually-submitted number/category with the
+  // saved config's own values - sync the visible selection so it doesn't
+  // silently disagree with what Save would submit.
+  if (PKK_PROFILES.length > 1) {
+    const savedProfileIdx = PKK_PROFILES.findIndex((p) => p.pkkNumber === EXISTING_CONFIG.profile_number);
+    if (savedProfileIdx >= 0) document.getElementById('pkk-profile-select').value = String(savedProfileIdx);
+  }
 
   if (EXISTING_CONFIG.category != null) {
     setCategory(EXISTING_CONFIG.category);

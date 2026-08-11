@@ -575,10 +575,15 @@ automation. Regenerate the static snapshots with `tools/fetch_word_centers.py` /
     poll thread keeps running through it, which is why the missing-config path is the silent
     `setup_incomplete` outcome rather than a critical notification every tick).
   - Settings opens `/settings` in a modal (see toolbar below) rather than navigating there; `GET
-    /settings` itself is unchanged and reuses `render_wizard()` — passed the existing `config.json`
-    so the form comes back prefilled — rather than a separate edit page; submitting posts to the
-    same `/setup` endpoint first-run setup uses, so `build_config()` stays the single place config
-    validation lives.
+    /settings` reuses `render_wizard()` — passed the existing `config.json` so the form comes back
+    prefilled — rather than a separate edit page; submitting posts to the same `/setup` endpoint
+    first-run setup uses, so `build_config()` stays the single place config validation lives. It also
+    now calls `build_pkk_prefill()` and passes the result in as `pkk_profiles`, the same as `GET /`
+    already did — see the PKK-prefill paragraph above (under "Once `session.json` exists...") for
+    what that changes in the wizard's PKK section. It didn't used to: a returning user (session
+    already present, as it almost always is by the time they open Settings) previously always saw
+    the plain manual PKK field + category pills there regardless, which was the actual bug this was
+    fixed for.
   - "Check frequency" (in the merged "Automation" fieldset) is a range slider
     (`#poll_interval_slider`) over `POLL_INTERVAL_STEPS`, a hand-picked non-linear array
     (finer-grained near the low end, coarser near the high end) so it offers many more real
@@ -633,12 +638,35 @@ automation. Regenerate the static snapshots with `tools/fetch_word_centers.py` /
     `build_pkk_prefill()`'s result — calls `client.fetch_pkk_profiles()` and maps each profile's
     `categoryName` to a `categories.json` id via `pkk_category_id()`, dropping any that don't map
     rather than guessing (an emptied list falls back to today's plain manual fields with no
-    special-casing needed). With prefill data, the wizard shows a linked "pkkNumber — category"
-    `<select>` (auto-selecting the first entry — most accounts only have one PKK profile) in place
-    of the bare PKK field + category pills, with an "Enter manually instead" link to swap back (and
-    a reverse link). `GET /setup` is the escape hatch — the login screen's skip link, and a stable
-    direct URL — and always renders the plain manual-only wizard with no prefill, regardless of
-    session state; `/settings` likewise never fetches a prefill. `_handle_setup` returns
+    special-casing needed). `GET /settings` calls `build_pkk_prefill()` the same way (it internally
+    no-ops to `[]` when `session.json` is absent, so this is safe unconditionally) and passes the
+    result into `render_wizard()` too — this is what actually fixed the bug that triggered this
+    whole investigation: `/settings` used to render `render_wizard(existing_config)` with no
+    `pkk_profiles` at all, so a returning user always saw the manual field + pills even though a
+    session (and thus real prefill data) almost always already existed by then. With prefill data,
+    `web/templates.py`'s `WIZARD_PAGE` picks one of three presentations off `PKK_PROFILES.length`
+    (`__PKK_PROFILES_JSON__`, the same list on both `/` and `/settings` now): zero profiles keeps
+    today's plain `#pkk-manual-block` (editable, unmasked `#profile_number` + clickable category
+    pills) untouched; exactly one profile shows `#pkk-single-block` — the *same* `#profile_number`
+    reveal-input DOM node (not a duplicate — physically moved there via `insertBefore`, see
+    `pkkRevealWrap` in the script) made read-only and pre-filled, plus a plain non-interactive
+    "License category: X" label instead of pills, since the category is bound to that one profile
+    rather than user-chosen (the label stays live via a hook in `setCategory()`, so it can't go
+    stale relative to whatever's actually about to be submitted — see the comment on
+    `updatePkkSingleCategoryLabel()`); two or more profiles keeps the `<select>` (auto-selecting the
+    first entry) but masks every option's label to last-4-digits (`••••1234 — B`, derived from
+    `pkkNumber.slice(-4)`) behind its own `.reveal`-styled toggle button (`reveal-pkk-select`) that
+    rewrites all `<option>` `textContent`s at once — which also updates the closed `<select>`'s own
+    displayed text for free, since that's just the selected option's text. All three keep the
+    existing "Enter manually instead" link to the full manual block, and its reverse "Use my PKK
+    profile instead" link, working as before. On `/settings` specifically, since `EXISTING_CONFIG`'s
+    own init code runs after this and always wins for the actually-submitted `profile_number`/
+    `category` (unchanged, pre-existing behavior — see its own masking of `#profile_number` there),
+    a small extra step re-syncs the *visible* `<select>` selection to whichever profile's
+    `pkkNumber` matches the saved config, so the dropdown doesn't visually show profile 0 while a
+    different profile's data is what Save would actually submit. `GET /setup` is the escape hatch —
+    the login screen's skip link, and a stable direct URL — and always renders the plain manual-only
+    wizard with no prefill, regardless of session state. `_handle_setup` returns
     `needs_login` in its JSON response so the first-run "done" screen's Chrome/QR hint only shows
     when `session.json` didn't already exist by submit time — still true on the skip path, which
     still triggers `trigger_auto_refresh()` on submit exactly like every first run did before this
