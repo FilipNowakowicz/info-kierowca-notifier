@@ -538,9 +538,16 @@ def extract_info_kierowca_cookies(raw_cookies, all_cookies=False):
 
 
 def write_session_file(cookies):
-    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    """Same atomic-write-at-0600 pattern as notifier.save_json() (see its own
+    docstring for why the old open()-then-chmod-after ordering left a brief
+    world-readable window): os.open()'s mode argument applies before any
+    data is written, and os.rename (Path.replace) carries that mode onto
+    SESSION_FILE when it lands, so no separate chmod is needed afterward.
+    """
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
+    CONFIG_DIR.chmod(0o700)
     tmp = SESSION_FILE.with_suffix(".tmp")
-    with open(tmp, "w") as f:
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
         json.dump({"cookies": cookies, "captured_at": time.time()}, f, indent=2)
     tmp.replace(SESSION_FILE)
-    SESSION_FILE.chmod(0o600)

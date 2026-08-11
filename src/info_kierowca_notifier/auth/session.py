@@ -46,7 +46,9 @@ from info_kierowca_notifier.auth import relogin_control
 
 from info_kierowca_notifier.paths import AUTO_REFRESH_LOCK as LOCK_FILE  # noqa: E402
 from info_kierowca_notifier.paths import AUTO_REFRESH_RESTART_REQUEST as RESTART_REQUEST_FILE  # noqa: E402
-from info_kierowca_notifier.paths import CONFIG_FILE, RELOGIN_BACKOFF_FILE, STATE_DIR  # noqa: E402,F401
+from info_kierowca_notifier.paths import (  # noqa: E402,F401
+    CONFIG_FILE, RELOGIN_BACKOFF_FILE, STATE_DIR, ensure_state_dir,
+)
 from info_kierowca_notifier.auth.relogin_backoff import RetryBackoff  # noqa: E402
 
 PROFILE_DIR = STATE_DIR / "chrome-relogin-profile"
@@ -477,7 +479,7 @@ def acquire_lock(owner):
             if relogin_control.process_alive(pid):
                 return False  # a refresh is already in progress
             # stale lock — the owning process is gone
-    LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
+    ensure_state_dir()
     # Remove leftovers before publishing this owner. Once its lock is visible,
     # the dashboard may legitimately write a request for this token.
     RESTART_REQUEST_FILE.unlink(missing_ok=True)

@@ -13,10 +13,16 @@ real app runs — not a simplified stand-in that could behave differently.
 
 Deliberately never prints session.json/config.json *contents* — only
 existence/size/mtime — since those can hold session cookies and a PKK
-number. Everything else here (paths, process lists, page titles/URLs, short
-page-text snippets) is safe to paste back into a chat.
+number. Captured page state (title/URL/text — see live_test() below) is
+redacted the same way browser.clicking's __ikw_diagnostics/
+__ikw_safeMatchedText are: the URL is truncated to origin+path (no query
+string, which can itself carry a token), and PKK/PESEL/OTP-shaped or
+6+ digit text is replaced with a placeholder before it's logged or written
+to the report file. Everything else here (paths, process lists, redacted
+page titles/URLs/text snippets) is safe to paste back into a chat.
 """
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -25,12 +31,52 @@ import time
 import traceback
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from info_kierowca_notifier.auth import session as ars
 from info_kierowca_notifier.browser import cdp as cdp_client
+from info_kierowca_notifier.browser import chrome as browser_chrome
 from info_kierowca_notifier import paths
 
 REPORT_LINES = []
+
+# Mirrors browser.clicking's __ikw_safeMatchedText redaction pattern
+# (PKK/PESEL/OTP-adjacent keywords, or any 6+ digit run — long enough to
+# catch a PESEL/PKK number or an SMS code, short enough to still redact
+# defensively) so a live-test page snapshot can never carry those into the
+# report file this tool writes to disk and asks the user to paste elsewhere.
+_SENSITIVE_TEXT_RE = re.compile(
+    r"\b(pkk|pesel|otp|one[ -]?time|kod\s+sms)\b|\b\d{6,}\b", re.I
+)
+
+
+def _redact_page_text(text):
+    text = str(text or "")
+    return "[redacted sensitive text]" if _SENSITIVE_TEXT_RE.search(text) else text
+
+
+def _redact_page_url(url):
+    """origin + path only — no query string. Same reasoning as
+    browser.clicking's __ikw_diagnostics page_url field: a query string can
+    itself carry a token or session identifier that a bare hostname/path
+    wouldn't."""
+    try:
+        parsed = urlsplit(str(url or ""))
+        if parsed.scheme not in ("http", "https") or not parsed.hostname:
+            return ""
+        return f"{parsed.scheme}://{parsed.netloc}{parsed.path or '/'}"
+    except Exception:
+        return ""
+
+
+def _redact_page_state(raw):
+    if not isinstance(raw, dict):
+        return raw
+    return {
+        "title": _redact_page_text(raw.get("title", "")),
+        "url": _redact_page_url(raw.get("url", "")),
+        "text": _redact_page_text(raw.get("text", "")),
+    }
 
 
 def log(msg=""):
@@ -109,10 +155,16 @@ def inspect_profile_dir(label, path):
 
 
 def report_chrome_resolution():
+    # CHROME_CANDIDATES/CHROME_MAC_PATH/CHROME_WIN_PATHS/EDGE_WIN_PATHS live
+    # on browser.chrome, not auth.session (ars) — they moved there when
+    # Chrome discovery was split out of auth.session; ars only re-imports
+    # find_chrome() itself. Referencing them off `ars` here previously raised
+    # AttributeError, which (uncaught by this function) aborted main() before
+    # report_processes()/report_state_files()/run_live_tests() ever ran.
     section("Chrome/Edge candidate resolution")
-    for name in ars.CHROME_CANDIDATES:
+    for name in browser_chrome.CHROME_CANDIDATES:
         log(f"PATH candidate {name!r}: {shutil.which(name)}")
-    log(f"CHROME_MAC_PATH exists: {ars.CHROME_MAC_PATH.exists()}")
+    log(f"CHROME_MAC_PATH exists: {browser_chrome.CHROME_MAC_PATH.exists()}")
     try:
         import winreg
         key_path = r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\chrome.exe"
@@ -127,11 +179,11 @@ def report_chrome_resolution():
                 log(f"registry {hive_name}: not found ({e!r})")
     except ImportError:
         log("winreg not available (not on Windows)")
-    for p in ars.CHROME_WIN_PATHS:
+    for p in browser_chrome.CHROME_WIN_PATHS:
         log(f"CHROME_WIN_PATHS candidate: {p} exists={p.exists()}")
-    for p in ars.EDGE_WIN_PATHS:
+    for p in browser_chrome.EDGE_WIN_PATHS:
         log(f"EDGE_WIN_PATHS candidate: {p} exists={p.exists()}")
-    resolved = safe(ars.find_chrome, default="find_chrome() FAILED")
+    resolved = safe(browser_chrome.find_chrome, default="find_chrome() FAILED")
     log(f"--> find_chrome() resolved to: {resolved}")
 
 
@@ -216,11 +268,16 @@ def live_test(profile_dir, port, label, duration=20):
             log(f"[{label}] browser process exited early (code {proc.returncode}) during wait")
             break
         clicked = ars.try_auto_click("127.0.0.1", port)
-        state = safe(lambda: cdp_client.evaluate_in_page(
+        raw_state = safe(lambda: cdp_client.evaluate_in_page(
             "127.0.0.1", port,
             "({title: document.title, url: location.href, "
             "text: (document.body && document.body.innerText || '').slice(0, 300)})",
         ))
+        # Redact before it's ever logged/kept — see _redact_page_state()'s
+        # docstring. `safe()` returns a plain error string on failure, which
+        # _redact_page_state() passes through unchanged (only dicts are
+        # redacted).
+        state = _redact_page_state(raw_state)
         if state != last_state:
             log(f"[{label}] page state: {state}")
             last_state = state
@@ -269,7 +326,9 @@ def write_report():
         out_path.write_text("\n".join(REPORT_LINES), encoding="utf-8")
         print(f"\nReport written to: {out_path}")
         print("Send this file back — it contains no cookies/secrets, only paths,")
-        print("process/browser diagnostics, and short page-state snippets.")
+        print("process/browser diagnostics, and redacted page-state snippets")
+        print("(query strings stripped from URLs; PKK/PESEL/OTP-shaped or")
+        print("6+ digit text replaced with a placeholder).")
     except Exception as e:
         print(f"\nCouldn't write report file ({e!r}) — copy the console output above instead.")
 

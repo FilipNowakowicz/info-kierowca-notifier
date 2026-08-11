@@ -41,5 +41,51 @@ class SessionCookieTests(unittest.TestCase):
         self.assertEqual(session["cookies"], {"session": "value"})
 
 
+class CookieOriginScopeTests(unittest.TestCase):
+    """A redirect that survives past tls_transport._CookieSafeRedirectHandler
+    (see test_tls_transport.py) can still be a compromised/malicious host
+    responding with its own Set-Cookie headers. parse_set_cookies() must
+    ignore those unless the response's own final URL is actually on
+    info-kierowca.pl."""
+
+    def test_own_domain_response_url_is_merged(self):
+        session = {"cookies": {}}
+        client.parse_set_cookies(
+            Headers(["session=value; Path=/"]),
+            session,
+            "https://info-kierowca.pl/bknd/auth/api/v1/jwt/refresh",
+        )
+        self.assertEqual(session["cookies"], {"session": "value"})
+
+    def test_subdomain_response_url_is_merged(self):
+        session = {"cookies": {}}
+        client.parse_set_cookies(
+            Headers(["session=value; Path=/"]), session, "https://api.info-kierowca.pl/x",
+        )
+        self.assertEqual(session["cookies"], {"session": "value"})
+
+    def test_foreign_domain_response_url_is_ignored(self):
+        session = {"cookies": {"existing": "kept"}}
+        client.parse_set_cookies(
+            Headers(["session=stolen; Path=/"]), session, "https://evil.example/steal",
+        )
+        self.assertEqual(session["cookies"], {"existing": "kept"})
+
+    def test_lookalike_domain_response_url_is_ignored(self):
+        session = {"cookies": {}}
+        client.parse_set_cookies(
+            Headers(["session=stolen; Path=/"]), session,
+            "https://evilinfo-kierowca.pl/x",
+        )
+        self.assertEqual(session["cookies"], {})
+
+    def test_no_response_url_falls_back_to_unscoped_behavior(self):
+        """response_url is optional: callers that don't pass it (or pass
+        None) keep the pre-existing behavior."""
+        session = {"cookies": {}}
+        client.parse_set_cookies(Headers(["session=value; Path=/"]), session)
+        self.assertEqual(session["cookies"], {"session": "value"})
+
+
 if __name__ == "__main__":
     unittest.main()

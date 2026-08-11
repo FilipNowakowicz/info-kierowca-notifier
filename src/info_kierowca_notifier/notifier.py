@@ -28,11 +28,11 @@ from info_kierowca_notifier.paths import (  # noqa: F401  (re-exported: other mo
     LOG_FILE,
     PAUSE_FILE,
     SESSION_FILE,
-    STATE_DIR,
     STATUS_FILE,
     WORD_CENTERS_FILE,
     __version__,
     empty_status,
+    ensure_state_dir,
 )
 
 MAX_HISTORY = 200
@@ -130,11 +130,33 @@ def search_start_date(value, *, today=None):
         return today
     return min(max(parsed, today), horizon)
 
+class _PrivateRotatingFileHandler(logging.handlers.RotatingFileHandler):
+    """chmod 0600 the log file every time it's (re)opened.
+
+    Every other state file this project writes (config.json, session.json,
+    status.json) is 0600; plain ``logging.handlers.RotatingFileHandler``
+    creates its file with umask-default permissions (typically 0644) since
+    it just calls the stdlib ``open()``. Overriding ``_open()`` — rather than
+    chmod'ing once after construction — also covers ``doRollover()``, which
+    calls ``_open()`` again after each rotation to reopen the fresh base
+    file; a one-time chmod at startup would only hold until the first
+    rotation.
+    """
+
+    def _open(self):
+        stream = super()._open()
+        try:
+            os.chmod(self.baseFilename, 0o600)
+        except OSError:
+            pass
+        return stream
+
+
 def setup_logger():
-    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    ensure_state_dir()
     logger = logging.getLogger("info-kierowca-notifier")
     logger.setLevel(logging.INFO)
-    handler = logging.handlers.RotatingFileHandler(
+    handler = _PrivateRotatingFileHandler(
         LOG_FILE, maxBytes=2_000_000, backupCount=3
     )
     handler.setFormatter(logging.Formatter("%(asctime)s %(message)s"))
@@ -162,7 +184,8 @@ def load_json(path):
 
 
 def save_json(path, data):
-    """Atomically write `data` to `path`.
+    """Atomically write `data` to `path` at 0600 from the moment it exists —
+    no window where it's readable by other users.
 
     The temp file name carries the writing thread's id: status.json and
     session.json are both written from the poll thread *and* from the app module's
@@ -170,14 +193,25 @@ def save_json(path, data):
     fixed "<name>.tmp" let two concurrent writers scribble over each other's
     half-written temp file — one would then rename the other's partial JSON
     into place and the loser's own rename would raise FileNotFoundError.
+
+    The old plain ``open(tmp, "w")`` created the temp file at the umask
+    default (typically 0644) and only chmod'd *after* the JSON was written
+    and renamed into place — a brief but real window where a freshly
+    (re)written config.json/session.json was world-readable. os.open()'s
+    own mode argument, like os.open(path, flags, 0o600) in
+    booking.transaction's DiagnosticRecorder.save(), applies before any data
+    is written, and os.rename (Path.replace) carries that mode onto `path`
+    when it lands — so `path` is 0600 the instant it appears, with no
+    separate chmod needed afterward.
     """
-    path.parent.mkdir(parents=True, exist_ok=True)
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    path.parent.chmod(0o700)
     tmp = path.with_name(f"{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
     try:
-        with open(tmp, "w") as f:
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as f:
             json.dump(data, f, indent=2)
         tmp.replace(path)
-        path.chmod(0o600)
     except Exception:
         tmp.unlink(missing_ok=True)
         raise
@@ -202,7 +236,7 @@ def is_paused():
 
 def set_paused(paused):
     if paused:
-        PAUSE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        ensure_state_dir()
         PAUSE_FILE.touch()
     else:
         PAUSE_FILE.unlink(missing_ok=True)
@@ -212,9 +246,55 @@ def fastest_of(hits):
     return min(hits, key=lambda h: h["datetime"]) if hits else None
 
 
+def push_signature(hit):
+    """Identity of a hit dict for push/trigger de-duplication.
+
+    Deliberately excludes "places": comparing the full hit dict meant a
+    spot count changing on an otherwise-identical slot (e.g. 3 -> 2, someone
+    else grabbing one) looked like a brand-new hit, re-firing the urgent
+    phone push and another trigger_open_browser() --target-slot call for a
+    slot already being worked on — only the port-9555-busy check in
+    booking.launch stopped a literal duplicate Chrome window on top of that.
+
+    Returns a list, not a tuple: dash_status["last_push_signature"] is
+    persisted to status.json and reloaded on the next process start (see
+    load_status()) — json round-trips a tuple back as a list, and a tuple
+    never compares equal to a list, so a tuple here would make the very
+    first comparison after any restart spuriously "different" and re-fire.
+    """
+    return [hit["word"], hit["exam_type"], hit["datetime"]]
+
+
 def short_word(name):
     prefix = "WORD Warszawa M/E "
     return name[len(prefix):] if name.startswith(prefix) else name
+
+
+# Maps a hit's already-known exam_type to the (dateTime, placeAmount) field
+# pair the search API keys by exam type. Used instead of the previous
+# `exam.get("theoryDateTime") or exam.get("practiceDateTime")`-style
+# fallback, which always preferred the theory fields whenever both were
+# present on the same record — even for a Practice hit — silently attaching
+# the wrong datetime/places to it. That datetime also feeds
+# --target-slot's row-matching and confirm-time verification in
+# booking/reschedule.py, so picking the wrong one is not just a display bug.
+EXAM_TYPE_FIELDS = {
+    "Theoretical": ("theoryDateTime", "placeTheoryAmount"),
+    "Practice": ("practiceDateTime", "placePracticeAmount"),
+}
+
+
+def exam_slot_fields(exam, exam_type):
+    """Return (dt_str, places) for `exam`, keyed explicitly off `exam_type`
+    (already established by the caller) rather than an or-fallback across
+    both exam types' fields. Returns (None, None) for an exam_type this
+    project doesn't recognize, so the caller can skip it exactly like a
+    missing dt_str already does."""
+    fields = EXAM_TYPE_FIELDS.get(exam_type)
+    if fields is None:
+        return None, None
+    dt_field, places_field = fields
+    return exam.get(dt_field), exam.get(places_field)
 
 
 def is_urgent(fastest_dt, config):
@@ -488,12 +568,11 @@ def run_check(logger, dash_status):
             exam_type = exam.get("examType")
             if exam_type not in wanted_types:
                 continue
-            dt_str = exam.get("theoryDateTime") or exam.get("practiceDateTime")
+            dt_str, places = exam_slot_fields(exam, exam_type)
             if not dt_str:
                 continue
             dt = datetime.fromisoformat(dt_str)
             if lower_date <= dt.date() and dt <= max_date and earliest_hour <= dt.hour < latest_hour:
-                places = exam.get("placeTheoryAmount") or exam.get("placePracticeAmount")
                 hits.append((word.get("wordName"), exam_type, dt, places))
 
     hits.sort(key=lambda h: h[2])
@@ -515,7 +594,7 @@ def run_check(logger, dash_status):
         fastest = fastest_of(hit_dicts)
         urgent = is_urgent(datetime.fromisoformat(fastest["datetime"]), config)
         if urgent:
-            if fastest != dash_status.get("last_push_signature"):
+            if push_signature(fastest) != dash_status.get("last_push_signature"):
                 if config.get("phone_alerts", True):
                     push_body = "{} · {} · {} spots".format(
                         datetime.fromisoformat(fastest["datetime"]).strftime("%a %d %b, %H:%M"),
@@ -530,7 +609,7 @@ def run_check(logger, dash_status):
                         priority="urgent",
                     )
                     logger.info("outcome=push_sent detail=%r", fastest)
-                dash_status["last_push_signature"] = fastest
+                dash_status["last_push_signature"] = push_signature(fastest)
                 booking_launch.trigger_open_browser(logger, config, target_hit=fastest)
         else:
             dash_status["last_push_signature"] = None
@@ -573,9 +652,19 @@ def loop(logger, dash_status, interval=None, stop_event=None, wake_event=None):
     `wake_event`, if given, lets the app module's /setup handler cut the current wait
     short the instant a new poll_interval_seconds is saved, instead of the
     dashboard's countdown (and the actual next check) staying stuck on
-    whatever interval was configured when this cycle's wait started — set it
-    and it's cleared right after waking so the *next* cycle's wait isn't
-    accidentally skipped too.
+    whatever interval was configured when this cycle's wait started.
+
+    It's cleared right *before* each wait rather than right after — a save
+    that lands while run_check() is still running would otherwise survive
+    to the wait() call below unconsumed (Event.wait() returning early
+    doesn't itself clear the flag), making it return instantly and then get
+    cleared by the old post-wait clear(), triggering one wasted immediate
+    extra check even though this cycle's wait_s already reflects the fresh
+    config (configured_poll_interval() re-reads config.json every call).
+    Clearing right before wait() discards exactly that stale signal while
+    still catching a save that happens *during* the wait itself: wait()
+    returns early as intended, and the flag it leaves set is what the next
+    loop iteration's pre-wait clear() consumes.
     """
     if stop_event is None:
         stop_event = threading.Event()
@@ -594,8 +683,8 @@ def loop(logger, dash_status, interval=None, stop_event=None, wake_event=None):
         # guessing from the base interval alone.
         dash_status["next_check_at"] = (datetime.now() + timedelta(seconds=wait_s)).isoformat()
         save_status(dash_status)
-        wake_event.wait(wait_s)
         wake_event.clear()
+        wake_event.wait(wait_s)
 
 
 def main():
