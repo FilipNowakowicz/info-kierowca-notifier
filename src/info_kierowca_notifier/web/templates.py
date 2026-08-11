@@ -26,16 +26,6 @@ TOOLBAR_HTML = """
   .ikw-icon-btn:disabled { opacity: 0.5; cursor: default; }
   .ikw-icon-btn svg { width: 1.05rem; height: 1.05rem; }
   #ikw-quit-btn:hover { border-color: rgba(224,104,95,0.7); color: #ffb3ad; }
-  /* Small inline icon button next to web.server's #session-expiry
-     text - deliberately lighter-weight than .ikw-icon-btn (the top toolbar's
-     larger circular badges), since this one sits inline with 0.85rem text
-     rather than floating over the page. */
-  #session-refresh-btn { width: 1.3rem; height: 1.3rem; display: flex; align-items: center; justify-content: center;
-    border-radius: 999px; cursor: pointer; background: rgba(255,255,255,0.07); color: #eee; opacity: 0.55;
-    border: 1px solid rgba(255,255,255,0.18); transition: opacity 0.12s, background 0.12s; }
-  #session-refresh-btn:hover { opacity: 0.9; background: rgba(255,255,255,0.16); }
-  #session-refresh-btn:disabled { opacity: 0.3; cursor: default; }
-  #session-refresh-btn svg { width: 0.8rem; height: 0.8rem; }
   /* Faint permanent dot so the toolbar is discoverable even before its
      hover/focus reveal has ever fired. */
   #ikw-toolbar-hint { position: fixed; top: 1.1rem; right: 1.25rem; width: 0.35rem; height: 0.35rem;
@@ -201,30 +191,11 @@ document.getElementById('ikw-browser-btn').addEventListener('click', async () =>
   }
 });
 
-// web.server's #session-refresh-btn stays display:none (and has no
-// listener) without this script - see its CSS comment there for why. Shown
-// unconditionally rather than only when data.session_expires_estimate is
-// set, since it's also the way to get a *first* estimate going.
-const ikwSessionRefreshBtn = document.getElementById('session-refresh-btn');
-ikwSessionRefreshBtn.style.display = 'flex';
-ikwSessionRefreshBtn.addEventListener('click', async () => {
-  if (!confirm(ikwI18n.t('Open Chrome for a fresh QR login now? This replaces your current session.'))) return;
-  ikwSessionRefreshBtn.disabled = true;
-  try {
-    const res = await fetch('/relogin-now', {method: 'POST', headers: {'Content-Type': 'application/json'}});
-    const data = await res.json();
-    ikwToast(ikwI18n.t(data.message || 'Something went wrong.'));
-    if (data.action === 'already_running' && confirm(ikwI18n.t('A QR login is already open. Close it and restart login?'))) {
-      const restartRes = await fetch('/relogin-restart', {method: 'POST', headers: {'Content-Type': 'application/json'}});
-      const restartData = await restartRes.json();
-      ikwToast(ikwI18n.t(restartData.message || 'Something went wrong.'));
-    }
-  } catch (e) {
-    ikwToast(ikwI18n.t('Could not reach the app.'));
-  } finally {
-    ikwSessionRefreshBtn.disabled = false;
-  }
-});
+// Getting a fresh session on demand lives in Settings now (next to Pair
+// Google Messages Web), not here - see WIZARD_PAGE's #settings-relogin-btn.
+// The dashboard toolbar used to have its own copy of this control; moved out
+// since it's a "sometimes useful" action, not something that needs to be one
+// click away on the main view for every visit.
 
 // Headline becomes the pause/resume control here rather than in
 // web.server, so the plain read-only dashboard (no /pause or
@@ -675,6 +646,8 @@ WIZARD_PAGE = """<!doctype html>
       <legend>Authentication</legend>
       <label for="login_method">Authentication method</label>
       <select id="login_method"><option value="profil_zaufany">Profil Zaufany</option><option value="mobywatel">mObywatel</option></select>
+      <button type="button" class="cat-more" id="settings-relogin-btn">Get new session now</button>
+      <div class="hint" id="settings-relogin-status"></div>
       <div id="settings-pz-fields" style="display:none">
         <label for="settings-pz-username">Profil Zaufany username</label>
         <div class="reveal">
@@ -873,6 +846,33 @@ document.getElementById('settings-pair-messages').onclick = async () => {
   const d=await (await fetch('/pair-google-messages',{method:'POST', headers:{'Content-Type':'application/json'}})).json();
   document.getElementById('settings-messages-status').textContent=d.ok?'Google Messages Web opened for pairing.':'Could not open Google Messages Web.';
 };
+// Moved out of the dashboard toolbar (see web.server.py's #session-expiry
+// and the app module's old TOOLBAR_HTML wiring) - same /relogin-now +
+// /relogin-restart flow, just living in Settings instead of one click away
+// on the main view, since forcing a fresh login is a "sometimes useful"
+// action rather than a routine one. Not scoped to either login_method: a
+// stuck mObywatel session is exactly as real a reason to reach for this as
+// a Profil Zaufany one.
+const settingsReloginBtn = document.getElementById('settings-relogin-btn');
+const settingsReloginStatus = document.getElementById('settings-relogin-status');
+settingsReloginBtn.addEventListener('click', async () => {
+  if (!confirm(t('Open Chrome for a fresh QR login now? This replaces your current session.'))) return;
+  settingsReloginBtn.disabled = true;
+  try {
+    const res = await fetch('/relogin-now', {method: 'POST', headers: {'Content-Type': 'application/json'}});
+    const data = await res.json();
+    settingsReloginStatus.textContent = t(data.message || 'Something went wrong.');
+    if (data.action === 'already_running' && confirm(t('A QR login is already open. Close it and restart login?'))) {
+      const restartRes = await fetch('/relogin-restart', {method: 'POST', headers: {'Content-Type': 'application/json'}});
+      const restartData = await restartRes.json();
+      settingsReloginStatus.textContent = t(restartData.message || 'Something went wrong.');
+    }
+  } catch (e) {
+    settingsReloginStatus.textContent = t('Could not reach the app.');
+  } finally {
+    settingsReloginBtn.disabled = false;
+  }
+});
 // True when this page is loaded inside the dashboard's Settings modal
 // (see TOOLBAR_HTML's #ikw-settings-frame) rather than as its own top-level
 // page (first-run /setup, or a direct /settings visit) — same-origin, so

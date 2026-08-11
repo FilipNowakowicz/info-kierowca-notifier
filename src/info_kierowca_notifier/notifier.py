@@ -372,9 +372,15 @@ def run_check(logger, dash_status):
         return
     session = load_json(SESSION_FILE)
     captured_at = session.get("captured_at")
+    # Only mObywatel needs this on the dashboard: that session ends in a
+    # manual QR rescan, so a countdown is a genuine heads-up. PZ relogs
+    # itself in proactively (see should_proactively_relogin() above) well
+    # before expiry with no action needed, so the same countdown there is
+    # just clutter - same reasoning as the two login_method-gated
+    # notifications above/below this function.
     dash_status["session_expires_estimate"] = (
         datetime.fromtimestamp(captured_at + SESSION_ESTIMATED_LIFETIME_SECONDS).isoformat()
-        if captured_at
+        if captured_at and config.get("login_method", "mobywatel") != "profil_zaufany"
         else None
     )
 

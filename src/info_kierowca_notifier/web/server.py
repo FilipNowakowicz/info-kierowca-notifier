@@ -83,14 +83,13 @@ PAGE = """<!doctype html>
      are handled the way they are above. */
   #countdown { margin-top: 2rem; font-size: 1rem; min-height: 1.25rem; opacity: 0.6; font-variant-numeric: tabular-nums; }
   #meta { margin-top: 0.4rem; font-size: 0.85rem; opacity: 0.45; }
-  /* #session-refresh-btn stays display:none here - only the app module's
-     TOOLBAR_HTML (which backs /relogin-now) reveals and styles it, same
-     reason #headline-wrap's cursor/hover styling is gated on TOOLBAR_HTML
-     adding .ikw-pausable: the plain read-only dashboard has no endpoint
-     behind this button and must not show an affordance it can't act on. */
+  /* Empty (no text, no layout) whenever notifier.py's run_check() decides
+     there's nothing worth showing here - see its own comment on
+     session_expires_estimate for when that is. Forcing a fresh login is a
+     Settings action now (next to Pair Google Messages Web), not a button
+     on this page - see WIZARD_PAGE's #settings-relogin-btn. */
   #session-expiry-wrap { margin-top: 0.15rem; display: flex; align-items: center; justify-content: center; gap: 0.35rem; }
   #session-expiry { font-size: 0.85rem; opacity: 0.45; }
-  #session-refresh-btn { display: none; }
 
   #history {
     margin-top: 3rem;
@@ -129,11 +128,6 @@ PAGE = """<!doctype html>
     <div id="meta"></div>
     <div id="session-expiry-wrap">
       <span id="session-expiry"></span>
-      <button id="session-refresh-btn" type="button" title="Get new session" aria-label="Get new session">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 4v5h-5"/>
-        </svg>
-      </button>
     </div>
   </div>
   <div id="history"></div>

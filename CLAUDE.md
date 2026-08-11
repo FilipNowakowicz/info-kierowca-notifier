@@ -114,6 +114,17 @@ automation. Regenerate the static snapshots with `tools/fetch_word_centers.py` /
   `poll()` parses it into a page-level epoch-ms value, and `tickCountdown()` just diffs that against
   `Date.now()` every second — no client-side interval constant involved, so the display can't drift
   out of sync with a Settings-page interval change or the actual post-jitter wait.
+  `#session-expiry`'s text comes from `status.json`'s `session_expires_estimate`, which
+  `src/info_kierowca_notifier/notifier.py`'s `run_check()` only sets for `login_method: "mobywatel"`
+  — that session ends in a manual QR rescan, so a countdown is a genuine heads-up; a Profil Zaufany
+  session relogs itself in proactively (`should_proactively_relogin()`) with no action needed, so the
+  same countdown there was just clutter, by explicit user request. The "get a new session now"
+  button that used to sit next to this text (`#session-refresh-btn`, revealed only by the app
+  module's `TOOLBAR_HTML`) moved into Settings instead (`#settings-relogin-btn`, next to "Pair
+  Google Messages Web") — same `/relogin-now`+`/relogin-restart` flow, just not one click away on
+  the main view for every visit, since forcing a fresh login is occasional-use rather than routine.
+  Not gated by `login_method` — a stuck mObywatel session is exactly as real a reason to reach for
+  it as a Profil Zaufany one.
 - `src/info_kierowca_notifier/web/guard.py` — the loopback/same-origin checks both HTTP surfaces run
   before dispatching (`LocalRequestGuardMixin`, mixed into `web/server.py`'s `Handler` and
   `src/info_kierowca_notifier/app.py`'s `AppHandler`, each setting `guard_port`). Binding 127.0.0.1
