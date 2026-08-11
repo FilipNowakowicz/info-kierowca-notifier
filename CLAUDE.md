@@ -160,32 +160,160 @@ automation. Regenerate the static snapshots with `tools/fetch_word_centers.py` /
   as a fallback if it doesn't pan out. Launches into a dedicated throwaway
   profile at `info-kierowca.pl/login`, then auto-clicks through the gov.pl → "Aplikacja mObywatel"
   chooser via an injected DOM-mutation-observer (`AUTO_CLICK_TARGETS`/`AUTO_CLICK_OBSERVER_JS` —
-  text-based, will break if the site's login UI text/labels change, **and also if the page renders
-  in a non-Polish language** — `authentication_chrome_args()` passes `--lang=pl-PL` for exactly this
-  reason: the throwaway profile is freshly created every run (see `ensure_private_profile_dir`
-  below) so without it Chrome's default UI language/`Accept-Language` header falls back to the host
-  OS's own display language, and a non-Polish render would make every text match silently fail from
-  the very first page — reported live on Windows 2026-08-11 as "Chrome opens to the login page and
-  just sits there"; **UNVERIFIED against the actual failing machine**, since no repro environment
-  was available, but grounded in `find_chrome()`/`chrome_debugging_args()` never having pinned a
-  language before this fix, and in the fact that a fresh profile's default Accept-Language really
-  does come from the OS locale. `chrome_debugging_args()` (shared with `booking/reschedule.py`'s own
-  separately-built launch args, which do **not** currently get `--lang` — same class of risk there,
-  not yet fixed) also now passes `--remote-allow-origins=*`, the flag Chrome/Edge 111+ require for
-  some CDP clients' websocket handshake to be accepted; `browser/cdp.py`'s handshake never sends an
-  `Origin` header so this shouldn't have been required, but it's cheap insurance against a
-  browser-version-dependent connection failure that only reproduces on whatever exact Chrome/Edge
-  build is bundled on the reporting machine. `try_auto_click()`/`wait_for_cookies()` also now log a
-  periodic heartbeat (`auto-click heartbeat: no target matched yet ...`) into
-  `AUTO_REFRESH_LOG_FILE` whenever the JS ran but matched nothing, closing a real diagnostic gap: previously that case
-  and a fully-broken CDP connection both produced total silence, indistinguishable from each other.
-  If a future report reproduces this, that heartbeat's `reason`/`url`/`host` is the first thing to
-  check. The observer watches attribute
+  text-based, will break if the site's login UI text/labels change).
+
+  **The non-Polish-language theory is ruled out.** A first fix pinned `authentication_chrome_args()`
+  to `--lang=pl-PL`, on the theory that a non-Polish OS locale on Windows made Chrome's default UI
+  language/`Accept-Language` render the login chain in some other language, silently breaking every
+  hardcoded-Polish-text match from the first page — reported live on Windows 2026-08-11 as "Chrome
+  opens to the login page and just sits there." That flag is still in place (harmless, and still
+  worth keeping as insurance), but the reporter has since confirmed the Windows Chrome window shows
+  the *exact same Polish text* as their working Linux machine, and the stall is still there — so the
+  language theory is very likely wrong. This is useful negative information, not just a dead end: it
+  rules out an entire class of "the DOM never rendered the expected text at all" explanations, and
+  narrows the field to something that leaves the visible text correct but still stops the click chain
+  cold right at the very first page. (Unrelated to the language theory but from the same fix:
+  `chrome_debugging_args()` — shared with `booking/reschedule.py`'s own separately-built launch args
+  — also passes `--remote-allow-origins=*`, the flag Chrome/Edge 111+ require for some CDP clients'
+  websocket handshake to be accepted; `browser/cdp.py`'s handshake never sends an `Origin` header so
+  this shouldn't have been required, but it's cheap insurance against a browser-version-dependent
+  connection failure that only reproduces on whatever exact Chrome/Edge build is bundled on the
+  reporting machine — still in place and still worth keeping regardless of the language theory being
+  ruled out.)
+
+  **Fresh ranked hypotheses (2026-08-11), reasoned from `find_chrome()`/`authentication_chrome_args()`,
+  `browser/cdp.py`'s CDP mechanics, and `try_auto_click()`/`wait_for_cookies()`'s fallback poll — all
+  UNVERIFIED, no live Windows machine available to reproduce on.** The key constraint shaping this
+  ranking: `AUTO_CLICK_OBSERVER_JS` (the injected, persistent MutationObserver) and
+  `try_auto_click()`'s Python-side fallback poll (a *fresh* `Runtime.evaluate` call on its own CDP
+  connection, independent of the observer entirely — see `wait_for_cookies()`'s own docstring) are
+  two structurally unrelated mechanisms. A cause that only explains one of them failing (a timing
+  quirk in the injected script, a CDP-version quirk in how `Page.addScriptToEvaluateOnNewDocument`
+  behaves) can't by itself explain a *total, indefinite* stall — the other mechanism should still
+  catch it within ~0.5s. Only a cause that's true regardless of which side is asking (i.e. a real
+  property of the DOM/page itself, or something breaking the CDP transport for both) explains what
+  was reported. Ranked with that in mind:
+  1. **DOM-state/responsive-layout collapse specific to Windows display scaling.** The fixed
+     `--window-size=900,850` doesn't account for Windows per-monitor DPI scaling (a much more common
+     default there than on the Linux/X11 setups this was tested on) the way it might on a
+     scaling-aware compositor — if the resulting CSS viewport ends up small enough to trip a
+     responsive/mobile layout on info-kierowca.pl or the gov.pl chooser, the target tiles could be
+     legitimately `display:none`/`visibility:hidden` (which `__ikw_isVisible` correctly, and
+     silently, excludes) rather than just visually smaller. Ranked first because it's the only class
+     of explanation that's identical regardless of which side (observer or fallback poll) is asking —
+     both read the same DOM.
+  2. **The fallback poll's CDP calls are silently erroring on every cycle**, most plausibly Windows
+     firewall/antivirus software intercepting the rapid repeated loopback WebSocket connect/
+     disconnect cycles `try_auto_click()`'s `evaluate_in_target()` produces (a fresh `cdp_socket()`
+     connection every 0.5s, indefinitely, for however long the QR wait lasts). `wait_for_cookies()`'s
+     `except Exception: pass` around `fetch_cookies()` and `try_auto_click()`'s own catch (which does
+     print `try_auto_click error: ...`, but only into `AUTO_REFRESH_LOG_FILE`, which nobody's
+     necessarily checked line-by-line yet) mean this failure mode has been effectively invisible
+     without inspecting that log closely — see the new diagnostics below for how the next report
+     should make this distinguishable from hypothesis 1 immediately.
+  3. **Windows foreground-window/focus-stealing prevention** leaving the launched Chrome window
+     backgrounded or minimized (a real, Windows-specific OS behavior — a GUI window opened by a
+     process that wasn't itself the foreground app often doesn't get focus automatically). Ranked
+     below 1–2 because being unfocused-but-visible shouldn't alone stop `Runtime.evaluate`-based
+     clicks (those run synchronously in the JS engine regardless of focus) — it would only fully
+     explain the stall if the window were minimized enough that layout metrics themselves collapse
+     (`offsetWidth`/`offsetHeight` going to 0), which folds back into hypothesis 1's territory rather
+     than being a fully separate explanation.
+  4. **Cookie-consent banner or other overlay** — investigated and assessed as **likely a dead end**
+     for directly blocking the click: `__ikw_findAndClick`'s `.click()` is a programmatic DOM call,
+     not a coordinate-based pointer click, so it bypasses hit-testing/occlusion entirely regardless of
+     what visually covers the target. (Contrast `booking/reschedule.py`, which pre-sets a
+     `CookieScriptConsent` cookie via `consent_cookie()` specifically so the banner never renders at
+     all for *that* flow — `auth/session.py`'s login flow does not do this, but for a different
+     reason: it's not needed for the click itself to work, only relevant if a banner somehow shifts
+     layout in a way that feeds back into hypothesis 1.) Kept as a cheap diagnostic (see below) in
+     case it correlates with something else, not because the overlay itself is expected to be the
+     cause.
+  5. **A different bundled Chrome/Edge build or version on Windows** with a CDP quirk specific to
+     `Page.addScriptToEvaluateOnNewDocument`. Ranked low for the same structural reason as 3: this
+     can't by itself explain the independent fallback poll also failing, since that doesn't depend on
+     this CDP method at all.
+  6. **Enterprise-managed/policy-restricted Chrome blocking automation flags outright.** Ranked lowest
+     — the reporter's own description ("Chrome opens to info-kierowca.pl/login correctly") confirms
+     the debug port, `Page.navigate`, and basic CDP control are all working; a policy that blocked
+     automation would most likely have prevented that initial navigation too.
+  7. **Cross-reference, not Windows-specific per se:** `browser/clicking.py`'s `__ikw_text()` has a
+     known dead-regex bug in its whitespace-collapsing logic (`\\s+` inside a Python triple-quoted
+     string not actually reaching the JS engine as `\s+` — separately identified and being fixed in
+     that file). Different font rendering/text-wrapping on Windows could make an otherwise-latent bug
+     manifest there specifically even though it isn't itself a Windows issue. Worth checking once that
+     fix lands, but not ranked above 1–2 since it wouldn't explain a *total* stall on its own — a
+     dead regex just means "some extra whitespace differences aren't collapsed," which mostly still
+     matches via `indexOf`'s substring semantics rather than breaking every match.
+
+  `try_auto_click()`/`wait_for_cookies()` already log a periodic heartbeat
+  (`auto-click heartbeat: no target matched yet ...`) into `AUTO_REFRESH_LOG_FILE` whenever the JS
+  ran but matched nothing, from an earlier fix — this closed a real diagnostic gap, since previously
+  that case and a fully-broken CDP connection both produced total silence, indistinguishable from
+  each other; that heartbeat's `reason`/`url`/`host` remains the first thing to check on a stuck run.
+
+  **New diagnostics added (2026-08-11), not a guessed fix** — the goal is to make whichever hypothesis
+  above is correct legible from `AUTO_REFRESH_LOG_FILE` alone on the next report, rather than needing
+  another blind round-trip: `CLICK_LOGIC_JS`'s `__ikw_pageDiag()`/`__ikw_withPageDiag()` merge
+  `viewport_width`/`viewport_height`/`device_pixel_ratio` (hypothesis 1/3) and
+  `consent_overlay_present` (hypothesis 4) onto every diagnostics dict `__ikw_findAndClick()` returns
+  — both `try_auto_click()`'s own successful-click print and `wait_for_cookies()`'s stuck heartbeat
+  now include them. `AUTO_CLICK_OBSERVER_JS` also sets a `window.__ikw_diag.observer_injected` marker
+  the instant it *executes* for the current document, surfaced the same way — this is a materially
+  stronger signal than the raw `Page.addScriptToEvaluateOnNewDocument` CDP acknowledgment (which only
+  confirms Chrome accepted the registration call, not that the script ever ran): `register_and_navigate()`
+  (replacing a direct call to `cdp_client.inject_and_navigate()`, which discards that response) now
+  captures and logs the registration identifier too, so a future report can tell apart "registration
+  itself failed" from "registration succeeded but never fired for this document" from "it fired but
+  found nothing" — three previously-indistinguishable failure modes now three different log lines.
+  If a future report reproduces this, check `AUTO_REFRESH_LOG_FILE` for: whether "auto-click observer
+  script registered: identifier=..." appears at all (rules hypothesis 5/6 in or out); whether
+  `observer_injected=True` shows up on a later heartbeat (rules out "the script simply never executed");
+  and the `viewport=`/`dpr=`/`consent_overlay=` values themselves against a known-good Linux run.
+
+  No code behavior was changed based on any of the above (e.g. no `--force-device-scale-factor` was
+  added) — per the same caution that made the `--lang=pl-PL` guess wrong the first time, this waits
+  for the new diagnostics to actually point at one hypothesis before touching Chrome flags again.
+
+  Separately, the observer's own back-navigation guard was found to have a real gap. The observer
+  watches attribute
   changes as well as insertions (a tile revealed via a class/hidden toggle rather than a new node
   would otherwise only get clicked on the slower Python-side fallback poll), and disconnects itself
   the instant it clicks the final tile (a `sessionStorage` flag, `__ikw_findAndClick`, stops the
   fallback from re-clicking it too) — so backing out from the QR page to a different login method
-  doesn't get auto-clicked straight back. Text-matching only considers visible elements
+  doesn't get auto-clicked straight back **as long as the back-navigation stays on the same origin
+  where the flag got set.** That flag is deliberately origin-scoped (see `CLICKABLE_HELPERS_JS`'s own
+  comment) — but the login chain genuinely crosses at least one real origin boundary
+  (info-kierowca.pl → the gov.pl/login.gov.pl family), and the flag is only ever *set* on whichever
+  origin the final tile happens to live on. Backing up far enough to reach an earlier, different-origin
+  page in the chain used to hand the observer a brand-new document with no stop-flag in sight — since
+  `Page.addScriptToEvaluateOnNewDocument` re-injects the observer into *every* new document regardless
+  of origin — and it would auto-click forward all over again, undoing the user's own intentional back
+  navigation. **Fixed (2026-08-11)**: rather than trying to make the in-page flag reach further (there
+  is no single browser storage that legitimately spans multiple origins — that's what origin isolation
+  is for), the fix is Python-side. `wait_for_cookies()` now keeps its own `reached_target` latch,
+  set the moment it sees the final target has been reached — either by clicking it itself, or by
+  `try_auto_click()` returning `reason == 'stopped'` (meaning the observer got there first, since that
+  reason means `__ikw_stopped()` already saw the sessionStorage flag). Once set, the loop stops calling
+  `try_auto_click()` at all for the rest of the run (closing the fallback poll's own exposure to the
+  same gap — it shares `__ikw_findAndClick()`/`__ikw_stopped()` with the observer, so it was equally
+  vulnerable, not a separate ignorant mechanism) *and* calls the new `remove_observer_script()`
+  (`Page.removeScriptToEvaluateOnNewDocument`, using the identifier `register_and_navigate()` captured
+  at registration time) so no future document — on any origin, reached by forward or backward
+  navigation — gets the observer injected again at all. This closes the gap without needing the
+  in-page flag to somehow reach further than one origin. Not yet extended to the `profil_zaufany`
+  login path (`auth/providers.py`'s `ProfilZaufanyProvider`/`CDPProfilZaufanyBrowser`) — that's a
+  different click-chooser mechanism entirely (`auth_providers.CLICK_FUNCTION`, not
+  `AUTO_CLICK_OBSERVER_JS`) and out of scope for this change; worth auditing for the same class of
+  issue separately. **`booking/reschedule.py`'s own click sequence was checked and assessed as
+  structurally immune to this same issue**, not fixed here (that file is out of scope for this
+  change): it registers no persistent observer via `Page.addScriptToEvaluateOnNewDocument` at all —
+  `wait_and_click()`/`wait_and_click_enabled()`/`_poll_until_truthy()` are a bounded, linear,
+  one-shot polling sequence (each step tries to click exactly one specific target for up to a fixed
+  timeout, then moves on or gives up) run from a detached subprocess that simply exits once `main()`
+  finishes — there is nothing left running to re-click anything once a user navigates back, whether
+  that's during the run (bounded by each step's own ≤20s timeout) or after it's already exited.
+  Text-matching only considers visible elements
   (`__ikw_isVisible`) and, among equal-length matches, prefers the deeper/more specific element
   (`querySelectorAll` document order would otherwise let a wrapping `<div>` win over its own label).
   Then waits **indefinitely** for you to scan the QR and captures cookies the moment they appear.

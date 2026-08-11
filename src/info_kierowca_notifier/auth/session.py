@@ -110,9 +110,41 @@ function __ikw_stopped() {
   try { return !!sessionStorage.getItem(__IKW_STOP_KEY); } catch (e) { return false; }
 }
 """ + CLICKABLE_HELPERS_JS + """
+function __ikw_pageDiag() {
+  // Windows QR-login-stall diagnostics (see this file's own CLAUDE.md bullet
+  // for the ranked hypotheses this is meant to distinguish between).
+  // Gathered on every eval, clicked or not, and merged onto whatever
+  // __ikw_diagnostics() itself returns (which lives in browser/clicking.py
+  // and isn't extended here) so a stuck heartbeat log already carries
+  // enough to tell "the DOM genuinely never matches" apart from "this
+  // document's viewport/overlay state looks nothing like what was tested on
+  // Linux", without a second round-trip to the reporter. observer_injected
+  // reflects a marker AUTO_CLICK_OBSERVER_JS sets the instant it *executes*
+  // for the current document (see below) — a much stronger signal than the
+  // raw Page.addScriptToEvaluateOnNewDocument CDP ack (logged separately by
+  // register_and_navigate()), which only confirms Chrome accepted the
+  // registration call, not that it actually ran for this document.
+  var diag = {};
+  try {
+    diag.viewport_width = window.innerWidth;
+    diag.viewport_height = window.innerHeight;
+    diag.device_pixel_ratio = window.devicePixelRatio || 1;
+    diag.observer_injected = !!(window.__ikw_diag && window.__ikw_diag.observer_injected);
+    var overlay = document.querySelector(
+      '[class*="cookie" i], [id*="cookie" i], [class*="consent" i], [id*="consent" i]'
+    );
+    diag.consent_overlay_present = !!(overlay && __ikw_isVisible(overlay));
+  } catch (e) {}
+  return diag;
+}
+function __ikw_withPageDiag(result) {
+  var diag = __ikw_pageDiag();
+  for (var key in diag) { result[key] = diag[key]; }
+  return result;
+}
 function __ikw_findAndClick(targets) {
-  if (__ikw_stopped()) return __ikw_diagnostics('', '', null, 'stopped');
-  if (__ikw_pageIsKnownError()) return __ikw_diagnostics('', '', null, 'known_error_page');
+  if (__ikw_stopped()) return __ikw_withPageDiag(__ikw_diagnostics('', '', null, 'stopped'));
+  if (__ikw_pageIsKnownError()) return __ikw_withPageDiag(__ikw_diagnostics('', '', null, 'known_error_page'));
   var all = document.querySelectorAll('button, a, [role="button"], li, div, span');
   for (var ti = 0; ti < targets.length; ti++) {
     var text = targets[ti];
@@ -147,7 +179,7 @@ function __ikw_findAndClick(targets) {
       if (exactCandidates.length === 1) {
         candidates = exactCandidates;
       } else if (candidates.length > 1) {
-        return __ikw_diagnostics(text, '', null, 'ambiguous_match');
+        return __ikw_withPageDiag(__ikw_diagnostics(text, '', null, 'ambiguous_match'));
       }
       var best = candidates[0];
       best[0].click();
@@ -156,10 +188,10 @@ function __ikw_findAndClick(targets) {
       }
       var result = __ikw_diagnostics(text, best[1], best[0], 'clicked');
       result.clicked = true;
-      return result;
+      return __ikw_withPageDiag(result);
     }
   }
-  return __ikw_diagnostics('', '', null, 'not_found');
+  return __ikw_withPageDiag(__ikw_diagnostics('', '', null, 'not_found'));
 }
 """
 
@@ -170,11 +202,14 @@ AUTO_CLICK_JS = CLICK_LOGIC_JS + (
 )
 
 # Persistent version: registered via Page.addScriptToEvaluateOnNewDocument
-# (see cdp_client.inject_and_navigate) so it's already watching the DOM
-# before the first paint of *every* document in this tab — including
-# cross-origin OAuth redirects — and clicks the instant a target appears,
-# instead of waiting on our next poll tick. This is what makes the
-# click-through effectively instant rather than bounded by a sleep interval.
+# (see register_and_navigate() below, which — unlike cdp_client's own
+# inject_and_navigate() — also captures the registration's CDP response so
+# it can later be unregistered; see remove_observer_script()) so it's
+# already watching the DOM before the first paint of *every* document in
+# this tab — including cross-origin OAuth redirects — and clicks the
+# instant a target appears, instead of waiting on our next poll tick. This
+# is what makes the click-through effectively instant rather than bounded
+# by a sleep interval.
 #
 # Watches `attributes` as well as `childList`/`characterData`: some chooser
 # screens reveal the next tile by toggling a class/hidden attribute on an
@@ -186,6 +221,27 @@ AUTO_CLICK_JS = CLICK_LOGIC_JS + (
 # flag above) so a same-document re-render that brings the chooser back
 # (e.g. picking a different login method) doesn't get auto-clicked forward
 # again.
+#
+# That sessionStorage flag is deliberately origin-scoped (see
+# CLICKABLE_HELPERS_JS's own comment on __ikw_findAndClick) — which covers
+# same-origin back-navigation, but not the whole story: this login chain
+# genuinely crosses at least one real origin boundary (info-kierowca.pl ->
+# the gov.pl/login.gov.pl family), and the flag is only ever *set* on
+# whichever origin the final tile happens to live on. Back out far enough to
+# reach an earlier, different-origin page in the chain and this same script
+# gets re-registered (Page.addScriptToEvaluateOnNewDocument fires again for
+# any new document) onto a page where sessionStorage has no flag at all —
+# and would auto-click forward all over again, undoing the user's own
+# intentional back navigation. Sets a `window.__ikw_diag.observer_injected`
+# marker the instant it runs (read by __ikw_pageDiag() above) purely as a
+# Windows-stall diagnostic — confirms this script actually executed for the
+# current document, not just that Chrome accepted the registration call.
+# The actual fix for the cross-origin gap is Python-side, not another
+# in-page flag: wait_for_cookies() unregisters this script outright
+# (remove_observer_script(), via Page.removeScriptToEvaluateOnNewDocument)
+# the moment it sees targets[0] has been reached (by itself or by this
+# observer), so no *future* document — on any origin, forward or backward —
+# gets this script injected again at all.
 #
 # Confirmed live 2026-07-18: on the podmiotyzewnetrzne.login.gov.pl tile
 # chooser specifically, this observer's callback (and a setInterval placed
@@ -201,6 +257,7 @@ AUTO_CLICK_JS = CLICK_LOGIC_JS + (
 AUTO_CLICK_OBSERVER_JS = CLICK_LOGIC_JS + (
     """
 (function(targets) {
+  try { window.__ikw_diag = window.__ikw_diag || {}; window.__ikw_diag.observer_injected = true; } catch (e) {}
   if (__ikw_stopped()) return;
   var scheduled = false;
   var observer = new MutationObserver(schedule);
@@ -250,15 +307,85 @@ def try_auto_click(host, port, target=None):
     if result and result.get("clicked"):
         # The browser's URL/host and non-secret DOM identity are useful
         # when a site markup change needs diagnosis. Do not log page text,
-        # cookies, form values, or any authentication material.
+        # cookies, form values, or any authentication material. The
+        # viewport/DPR/consent-overlay fields are the Windows-stall
+        # diagnostics from __ikw_pageDiag() — cheap to always include here
+        # since a successful click is exactly the moment worth recording
+        # what "known-good" page state looked like, for comparison against a
+        # future stuck report's heartbeat line below.
         print(
             "auto-click result "
             f"label={result['requested_label']!r} matched={result['matched_text']!r} "
             f"url={result.get('page_url', '')!r} host={result['page_host']!r} tag={result['tag']!r} "
             f"id={result['element_id']!r} class={result['element_class']!r} "
-            f"href={result['href']!r}"
+            f"href={result['href']!r} viewport={result.get('viewport_width')}x{result.get('viewport_height')} "
+            f"dpr={result.get('device_pixel_ratio')} observer_injected={result.get('observer_injected')} "
+            f"consent_overlay={result.get('consent_overlay_present')}"
         )
     return result
+
+
+def register_and_navigate(host, port, target, url, script):
+    """Register `script` to run on every future document in `target`, then
+    navigate it to `url` — same effect as cdp_client.inject_and_navigate(),
+    but also returns the Page.addScriptToEvaluateOnNewDocument registration
+    identifier, which that shared helper discards.
+
+    Needed for two things: (1) a Windows QR-login-stall diagnostic — logging
+    whether registration actually succeeded rather than just assuming it did,
+    since a silent registration failure would look identical, from the
+    outside, to a page that simply never matches any click target; and (2)
+    remove_observer_script() below, which needs the identifier to unregister
+    the observer once it's no longer wanted. Duplicates
+    cdp_client.navigate_target()'s three-call body rather than editing
+    browser/cdp.py, which is out of scope for this change (see this file's
+    own module boundary — browser/cdp.py is shared with booking.reschedule).
+    """
+    current = cdp_client.get_page_target(host, port, target.id)
+    with cdp_client.cdp_socket(current.websocket_url) as sock:
+        cdp_client.cdp_call(sock, 1, "Page.enable")
+        result = cdp_client.cdp_call(
+            sock, 2, "Page.addScriptToEvaluateOnNewDocument", {"source": script}
+        )
+        cdp_client.cdp_call(sock, 3, "Page.navigate", {"url": url})
+    identifier = result.get("identifier")
+    print(f"auto-click observer script registered: identifier={identifier!r}")
+    return identifier
+
+
+def remove_observer_script(host, port, target, identifier):
+    """Best-effort unregister of the persistent click-observer once the
+    final auto-click target (targets[0], "Aplikacja mObywatel") has
+    definitely been reached — see AUTO_CLICK_OBSERVER_JS's own comment for
+    why this exists: its sessionStorage stop-flag is origin-scoped, so it
+    already prevents a same-origin back-navigation from re-clicking, but the
+    login chain crosses at least one real origin boundary the flag never
+    reaches. Backing up past that boundary would hand the observer a
+    brand-new document with no stop-flag in sight, and — since
+    Page.addScriptToEvaluateOnNewDocument re-injects it into *every* new
+    document regardless of origin — it would auto-click forward all over
+    again, undoing the user's own intentional back navigation.
+
+    Removing the registration outright, instead of relying on any in-page
+    flag, means no future document in this tab gets the observer at all once
+    we're done — regardless of which origin it's on, forward or backward.
+    Best-effort and silent on failure: by the time this is called the target
+    tab may already be mid-navigation, and nothing past this point is
+    supposed to click anything either way, so a failed unregister here is
+    not itself a correctness problem — it only reopens the (much narrower,
+    already-mostly-covered) origin-scoped gap this closes.
+    """
+    if not identifier:
+        return
+    try:
+        current = cdp_client.get_page_target(host, port, target.id)
+        with cdp_client.cdp_socket(current.websocket_url) as sock:
+            cdp_client.cdp_call(
+                sock, 1, "Page.removeScriptToEvaluateOnNewDocument", {"identifier": identifier}
+            )
+        print("auto-click observer unregistered (final target reached)")
+    except Exception as e:
+        print(f"couldn't unregister auto-click observer (non-fatal): {e!r}")
 
 
 def open_google_messages_pairing(host="127.0.0.1", port=DEFAULT_PORT):
@@ -368,7 +495,9 @@ class ReloginRestartRequested(Exception):
     """Raised only after this helper receives its own cooperative token."""
 
 
-def wait_for_cookies(host, port, timeout, chrome_proc, target=None, should_restart=None):
+def wait_for_cookies(
+    host, port, timeout, chrome_proc, target=None, should_restart=None, observer_identifier=None,
+):
     """timeout=None waits indefinitely — but always bails out the moment
     chrome_proc has exited. Without this, a crashed/killed Chrome left this
     looping forever: fetch_cookies() against a dead debug port just raises,
@@ -393,17 +522,30 @@ def wait_for_cookies(host, port, timeout, chrome_proc, target=None, should_resta
     no-op once __ikw_stopped() is true, so polling this often for however
     long a human takes to scan the QR costs nothing but some idle loopback
     chatter.
+
+    `observer_identifier` (from register_and_navigate()) lets this stop
+    forwarding progress entirely — not just cheaply no-op — once the final
+    auto-click target has definitely been reached: `reached_target` below is
+    a plain Python-side latch, immune to AUTO_CLICK_OBSERVER_JS's own
+    sessionStorage flag being origin-scoped (see that constant's own
+    comment), and this loop stops calling try_auto_click() at all once it's
+    set, on top of unregistering the observer script via
+    remove_observer_script() so no future document — this tab's own
+    fallback poll or the injected observer, on any origin, reached by
+    forward or backward navigation — auto-clicks anything again.
     """
     deadline = None if timeout is None else time.monotonic() + timeout
     # Periodic heartbeat, not per-poll: try_auto_click() now returns a
     # diagnostics dict on every completed eval, not just a successful click,
     # so a stuck run (page rendered in an unexpected language, site markup
-    # changed, stuck on a "wkProcessUsed" error page, ...) can be told apart
-    # from a CDP connection that silently never worked — without spamming
-    # AUTO_REFRESH_LOG_FILE every 0.5s for however long a human takes to
-    # scan the QR.
+    # changed, stuck on a "wkProcessUsed" error page, an unexpectedly small
+    # viewport hiding the target behind a responsive layout, a never-fired
+    # observer registration, ...) can be told apart from a CDP connection
+    # that silently never worked — without spamming AUTO_REFRESH_LOG_FILE
+    # every 0.5s for however long a human takes to scan the QR.
     heartbeat_interval = 30
     next_heartbeat = time.monotonic()
+    reached_target = False
     while deadline is None or time.monotonic() < deadline:
         if should_restart and should_restart():
             raise ReloginRestartRequested
@@ -416,16 +558,34 @@ def wait_for_cookies(host, port, timeout, chrome_proc, target=None, should_resta
                 return cookies
         except Exception:
             pass  # Chrome may be mid-navigation; just retry
-        diagnostics = try_auto_click(host, port, target=target)
-        # try_auto_click() already prints on a successful click; this is
-        # only the "still waiting" case.
-        if diagnostics and not diagnostics.get("clicked") and time.monotonic() >= next_heartbeat:
-            print(
-                "auto-click heartbeat: no target matched yet "
-                f"reason={diagnostics.get('reason')!r} url={diagnostics.get('page_url', '')!r} "
-                f"host={diagnostics.get('page_host', '')!r}"
-            )
-            next_heartbeat = time.monotonic() + heartbeat_interval
+        if not reached_target:
+            diagnostics = try_auto_click(host, port, target=target)
+            # reason == 'stopped' means __ikw_stopped() saw the sessionStorage
+            # flag already set — i.e. some eval (very possibly the injected
+            # observer, faster than our own 0.5s cadence) already clicked
+            # targets[0] before we got here. Treat that the same as clicking
+            # it ourselves: either way the final target has been reached and
+            # nothing should keep trying to click anything, on this document
+            # or the next one.
+            if diagnostics and (
+                diagnostics.get("reason") == "stopped"
+                or (diagnostics.get("clicked") and diagnostics.get("requested_label") == AUTO_CLICK_TARGETS[0])
+            ):
+                reached_target = True
+                remove_observer_script(host, port, target, observer_identifier)
+            # try_auto_click() already prints on a successful click; this is
+            # only the "still waiting" case.
+            elif diagnostics and not diagnostics.get("clicked") and time.monotonic() >= next_heartbeat:
+                print(
+                    "auto-click heartbeat: no target matched yet "
+                    f"reason={diagnostics.get('reason')!r} url={diagnostics.get('page_url', '')!r} "
+                    f"host={diagnostics.get('page_host', '')!r} "
+                    f"viewport={diagnostics.get('viewport_width')}x{diagnostics.get('viewport_height')} "
+                    f"dpr={diagnostics.get('device_pixel_ratio')} "
+                    f"observer_injected={diagnostics.get('observer_injected')} "
+                    f"consent_overlay={diagnostics.get('consent_overlay_present')}"
+                )
+                next_heartbeat = time.monotonic() + heartbeat_interval
         time.sleep(0.5)
     return None
 
@@ -552,14 +712,15 @@ def main():
             cookies = provider.authenticate()
             password = None
         else:
-            cdp_client.inject_and_navigate(
-                "127.0.0.1", args.port, args.url, AUTO_CLICK_OBSERVER_JS, target=login_target
+            observer_identifier = register_and_navigate(
+                "127.0.0.1", args.port, login_target, args.url, AUTO_CLICK_OBSERVER_JS
             )
             provider = auth_providers.MObywatelProvider(lambda: wait_for_cookies(
                 "127.0.0.1", args.port, args.timeout, chrome_proc, target=login_target,
                 should_restart=lambda: relogin_control.restart_requested(
                     RESTART_REQUEST_FILE, owner
                 ),
+                observer_identifier=observer_identifier,
             ))
             cookies = provider.authenticate()
 
