@@ -49,7 +49,10 @@ from info_kierowca_notifier.paths import AUTO_REFRESH_RESTART_REQUEST as RESTART
 from info_kierowca_notifier.paths import (  # noqa: E402,F401
     CONFIG_FILE, RELOGIN_BACKOFF_FILE, STATE_DIR, ensure_state_dir,
 )
-from info_kierowca_notifier.auth.relogin_backoff import RetryBackoff  # noqa: E402
+from info_kierowca_notifier.auth.relogin_backoff import (  # noqa: E402
+    MAX_CONSECUTIVE_AUTOMATIC_FAILURES,
+    RetryBackoff,
+)
 
 PROFILE_DIR = STATE_DIR / "chrome-relogin-profile"
 
@@ -472,6 +475,37 @@ def push_ntfy(title, message, priority="default", tags=None):
     return ntfy_transport.push_ntfy(topic, title, message, priority=priority, tags=tags)
 
 
+def _maybe_notify_relogin_paused(backoff, login_method):
+    """Tell the user, once, the moment automatic Profil Zaufany relogin has
+    just been paused for good by auth.launch.trigger_auto_refresh()'s
+    MAX_CONSECUTIVE_AUTOMATIC_FAILURES gate (see that module's docstring).
+
+    Call right after backoff.record_failure() in every automatic failure
+    path below. Fires exactly on the crossing (failure_count == the
+    threshold, not >=): once paused, trigger_auto_refresh() stops launching
+    new automatic attempts entirely, so record_failure() can't be called
+    again from an automatic run until a manual retry succeeds (clearing the
+    counter) -- a manual attempt's own failure is never recorded here (see
+    every call site's ``if args.automatic:`` guard), so this can't re-fire
+    on top of itself either. No-op for mobywatel: a QR scan never submits a
+    password or a one-time code, so it carries none of the account-lockout
+    risk this gate exists for, and mobywatel is never subject to the gate in
+    the first place (see trigger_auto_refresh's own login_method check).
+    """
+    if login_method != "profil_zaufany":
+        return
+    if backoff.consecutive_failures() != MAX_CONSECUTIVE_AUTOMATIC_FAILURES:
+        return
+    body = (
+        f"Automatic Profil Zaufany login has failed "
+        f"{MAX_CONSECUTIVE_AUTOMATIC_FAILURES} times in a row. To avoid a temporary Profil "
+        "Zaufany lockout, automatic retries are now paused — open Settings and use "
+        "\"Get new session now\" when you're ready to try again."
+    )
+    notify_desktop("info-kierowca: automatic login paused", body, "critical")
+    push_ntfy("info-kierowca: automatic login paused", body, priority="high")
+
+
 def acquire_lock(owner):
     if LOCK_FILE.exists():
         pid = relogin_control.lock_pid(LOCK_FILE)
@@ -746,6 +780,7 @@ def main():
             if args.automatic:
                 delay = backoff.record_failure(failure_reason)
                 print(f"automatic relogin backoff: {delay}s ({failure_reason})")
+                _maybe_notify_relogin_paused(backoff, login_method)
             sys.exit(1)
 
         cdp_client.write_session_file(cookies)
@@ -768,6 +803,7 @@ def main():
         if args.automatic:
             delay = backoff.record_failure(reason)
             print(f"automatic relogin backoff: {delay}s ({reason})")
+            _maybe_notify_relogin_paused(backoff, login_method)
         messages = {
             "invalid_credentials": "Profil Zaufany credentials were rejected.",
             "profil_zaufany_inactive": "This account does not have a valid active Profil Zaufany.",
@@ -788,6 +824,7 @@ def main():
         if args.automatic:
             delay = backoff.record_failure(reason)
             print(f"automatic relogin backoff: {delay}s ({reason})")
+            _maybe_notify_relogin_paused(backoff, login_method)
         body = "Automatic Profil Zaufany login failed: secure credentials are unavailable."
         notify_desktop("info-kierowca: automatic login failed", body, "critical")
         push_ntfy("info-kierowca: automatic login failed", body, priority="default")
@@ -796,6 +833,7 @@ def main():
         if args.automatic:
             delay = backoff.record_failure("authentication_flow_failed")
             print(f"automatic relogin backoff: {delay}s (authentication_flow_failed)")
+            _maybe_notify_relogin_paused(backoff, locals().get("login_method", "mobywatel"))
         raise
     finally:
         if chrome_proc and (not args.keep_open or restart_shutdown):

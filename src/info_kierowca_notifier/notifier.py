@@ -432,6 +432,14 @@ def run_check(logger, dash_status):
         update_status(dash_status, "setup_incomplete", "Waiting for setup to be completed")
         return
 
+    # Recomputed fresh every tick from persisted backoff state (see
+    # automatic_relogin_paused()'s own docstring for why this isn't instead
+    # latched from trigger_auto_refresh()'s return value in one branch below)
+    # so the dashboard's "manual retry required" messaging can't go stale
+    # behind an unrelated network_error/refresh_ok tick, and clears itself
+    # the moment RetryBackoff.record_success() does (any successful login).
+    dash_status["relogin_manual_required"] = auth_launch.automatic_relogin_paused(config)
+
     if not SESSION_FILE.exists():
         logger.info("outcome=auth_missing")
         dash_status["session_expires_estimate"] = None

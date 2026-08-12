@@ -99,6 +99,18 @@ def already_running():
         return False
 
 
+def _login_kind(login_method):
+    """'QR login' / 'Profil Zaufany login' -- the wording fragment for what a
+    (re)login actually is, used across every relogin-trigger message below.
+    Profil Zaufany authenticates with a saved username/password and an SMS
+    code read from Google Messages, not a QR code, so text implying a QR
+    must be scanned is simply wrong for it (see auth/session.py's own notes
+    on this in CLAUDE.md) -- it was previously hardcoded to "QR login"
+    everywhere regardless of the configured method.
+    """
+    return "Profil Zaufany login" if login_method == "profil_zaufany" else "QR login"
+
+
 def check_session_valid():
     """Live probe for the manual 'Open browser' button: does session.json still
     refresh successfully? Same call notifier.run_check() makes at the top
@@ -555,9 +567,11 @@ class AppHandler(guard.LocalRequestGuardMixin, http.server.BaseHTTPRequestHandle
 
     def _handle_manual_login(self):
         """Backing handler for the 'Open browser' button: probes the session
-        live and either opens the Chrome+QR relogin (manually retrying past
-        any automatic cooldown, but preserving a live QR window) or a plain logged-in browser
-        tab. auto_click=False here on purpose: this button is for opening
+        live and either opens a fresh Chrome relogin -- QR or Profil Zaufany,
+        per the configured login_method (manually retrying past any
+        automatic cooldown, but preserving a live login already in
+        progress) -- or a plain logged-in browser tab. auto_click=False here
+        on purpose: this button is for opening
         the site or troubleshooting, not for the reschedule flow, so unlike
         the automatic urgent-slot-hit trigger it must NOT click through to
         the date-picker — it should just land on the site, logged in.
@@ -574,13 +588,20 @@ class AppHandler(guard.LocalRequestGuardMixin, http.server.BaseHTTPRequestHandle
                     "Chromium-based browser was found on this machine — install one to continue.",
             }
         else:
+            login_method = config.get("login_method", "mobywatel")
             outcome = auth_launch.trigger_auto_refresh(
                 AppHandler.logger, config, force=True, notify_phone=False
             )
+            kind = _login_kind(login_method)
+            already_running = (
+                "A Profil Zaufany login is already running — give it a moment to finish."
+                if login_method == "profil_zaufany"
+                else "A QR login is already open — finish scanning there."
+            )
             messages = {
-                auth_launch.TRIGGER_LAUNCHED: "Session looks expired — opening Chrome for a fresh QR login.",
-                auth_launch.TRIGGER_MANUAL_RETRY_LAUNCHED: "Session looks expired — opening Chrome for a fresh QR login.",
-                auth_launch.TRIGGER_ALREADY_RUNNING: "A QR login is already open — finish scanning there.",
+                auth_launch.TRIGGER_LAUNCHED: f"Session looks expired — opening Chrome for a fresh {kind}.",
+                auth_launch.TRIGGER_MANUAL_RETRY_LAUNCHED: f"Session looks expired — opening Chrome for a fresh {kind}.",
+                auth_launch.TRIGGER_ALREADY_RUNNING: already_running,
                 auth_launch.TRIGGER_BACKOFF_ACTIVE: "Automatic relogin is cooling down; use this button to retry now.",
                 auth_launch.TRIGGER_DISABLED: "Session looks expired, but auto_refresh_chrome is turned off in Settings.",
                 auth_launch.TRIGGER_LAUNCH_FAILED: "Session looks expired, but Chrome failed to launch — check the log.",
@@ -590,13 +611,14 @@ class AppHandler(guard.LocalRequestGuardMixin, http.server.BaseHTTPRequestHandle
         self._reply_outcome(outcome, messages)
 
     def _handle_relogin_now(self):
-        """Backing handler for the small refresh icon next to the dashboard's
-        session-expiry estimate. Unlike _handle_manual_login(), this always
-        forces a fresh QR login regardless of whether the current session
-        still passes refresh - the whole point is resetting the ~hour
-        estimate on demand, not recovering from a dead one.
+        """Backing handler for Settings' "Get new session now" button. Unlike
+        _handle_manual_login(), this always forces a fresh login regardless
+        of whether the current session still passes refresh - the whole
+        point is resetting the ~hour estimate on demand, not recovering from
+        a dead one.
         """
         config = self._load_config_or_empty()
+        login_method = config.get("login_method", "mobywatel")
         prior_captured_at = None
         if notifier.SESSION_FILE.exists():
             try:
@@ -610,10 +632,16 @@ class AppHandler(guard.LocalRequestGuardMixin, http.server.BaseHTTPRequestHandle
                 args=(prior_captured_at, AppHandler.wake_event),
                 daemon=True,
             ).start()
+        kind = _login_kind(login_method)
+        already_running = (
+            "A Profil Zaufany login is already running — give it a moment to finish."
+            if login_method == "profil_zaufany"
+            else "A QR login is already open — finish scanning there."
+        )
         messages = {
-            auth_launch.TRIGGER_LAUNCHED: "Opening Chrome for a fresh QR login.",
-            auth_launch.TRIGGER_MANUAL_RETRY_LAUNCHED: "Opening Chrome for a fresh QR login.",
-            auth_launch.TRIGGER_ALREADY_RUNNING: "A QR login is already open — finish scanning there.",
+            auth_launch.TRIGGER_LAUNCHED: f"Opening Chrome for a fresh {kind}.",
+            auth_launch.TRIGGER_MANUAL_RETRY_LAUNCHED: f"Opening Chrome for a fresh {kind}.",
+            auth_launch.TRIGGER_ALREADY_RUNNING: already_running,
             auth_launch.TRIGGER_BACKOFF_ACTIVE: "Automatic relogin is cooling down; retry is available now.",
             auth_launch.TRIGGER_DISABLED: "auto_refresh_chrome is turned off in Settings.",
             auth_launch.TRIGGER_LAUNCH_FAILED: "Chrome failed to launch — check the log.",
@@ -623,13 +651,15 @@ class AppHandler(guard.LocalRequestGuardMixin, http.server.BaseHTTPRequestHandle
         self._reply_outcome(outcome, messages)
 
     def _handle_relogin_restart(self):
-        """Explicit recovery for a forgotten, still-running QR login.
+        """Explicit recovery for a forgotten, still-running login (QR or
+        Profil Zaufany, per the configured login_method).
 
         The helper cooperatively closes its own browser before a replacement
         starts. A failed or unverifiable shutdown is reported without opening
         a second Chrome against the same profile/debug port.
         """
         config = self._load_config_or_empty()
+        login_method = config.get("login_method", "mobywatel")
         prior_captured_at = None
         if notifier.SESSION_FILE.exists():
             try:
@@ -643,21 +673,24 @@ class AppHandler(guard.LocalRequestGuardMixin, http.server.BaseHTTPRequestHandle
                 args=(prior_captured_at, AppHandler.wake_event),
                 daemon=True,
             ).start()
+        kind = _login_kind(login_method)
         messages = {
-            auth_launch.TRIGGER_RESTART_LAUNCHED: "The previous QR login closed — opening a fresh one.",
-            auth_launch.TRIGGER_RESTART_UNAVAILABLE: "That older QR login cannot be restarted safely. Close its Chrome window, then try again.",
-            auth_launch.TRIGGER_SHUTDOWN_FAILED: "The existing QR login did not close. No second browser was opened.",
-            auth_launch.TRIGGER_ALREADY_RUNNING: "A QR login is still running. No second browser was opened.",
+            auth_launch.TRIGGER_RESTART_LAUNCHED: f"The previous {kind} closed — opening a fresh one.",
+            auth_launch.TRIGGER_RESTART_UNAVAILABLE: f"That older {kind} cannot be restarted safely. Close its Chrome window, then try again.",
+            auth_launch.TRIGGER_SHUTDOWN_FAILED: f"The existing {kind} did not close. No second browser was opened.",
+            auth_launch.TRIGGER_ALREADY_RUNNING: f"A {kind} is still running. No second browser was opened.",
             auth_launch.TRIGGER_DISABLED: "auto_refresh_chrome is turned off in Settings.",
-            auth_launch.TRIGGER_LAUNCH_FAILED: "The old QR login closed, but Chrome failed to relaunch — check the log.",
+            auth_launch.TRIGGER_LAUNCH_FAILED: f"The old {kind} closed, but Chrome failed to relaunch — check the log.",
             auth_launch.TRIGGER_NO_BROWSER: "No Chrome, Edge, or other Chromium-based browser was found on this machine — install one to continue.",
         }
         self._reply_outcome(outcome, messages)
 
     def _handle_login_start(self):
-        """Backs the login screen's button: launches Chrome for the QR scan
-        before any config exists yet. force=True is a deliberate retry that
-        bypasses automatic cooldown, but retains a live QR login if one exists.
+        """Backs the login screen's button: launches Chrome for the chosen
+        login method (QR scan for mObywatel, username/password + SMS code
+        for Profil Zaufany) before any config exists yet. force=True is a
+        deliberate retry that bypasses automatic cooldown, but retains a
+        live login already in progress.
         """
         payload = self._read_json_body()
         if payload is None:
@@ -683,11 +716,17 @@ class AppHandler(guard.LocalRequestGuardMixin, http.server.BaseHTTPRequestHandle
             config["pz_credential_present"] = True
         notifier.save_json(notifier.CONFIG_FILE, config)
         outcome = auth_launch.trigger_auto_refresh(AppHandler.logger, config, force=True, notify_phone=False)
+        kind = _login_kind(method)
+        already_running = (
+            "A Profil Zaufany login is already running — give it a moment to finish."
+            if method == "profil_zaufany"
+            else "A QR login is already open — finish scanning there."
+        )
         messages = {
             auth_launch.TRIGGER_NO_BROWSER: "No Chrome, Edge, or other Chromium-based browser was found "
                 "on this machine. Install one and try again.",
-            auth_launch.TRIGGER_MANUAL_RETRY_LAUNCHED: "Opening Chrome for a fresh QR login.",
-            auth_launch.TRIGGER_ALREADY_RUNNING: "A QR login is already open — finish scanning there.",
+            auth_launch.TRIGGER_MANUAL_RETRY_LAUNCHED: f"Opening Chrome for a fresh {kind}.",
+            auth_launch.TRIGGER_ALREADY_RUNNING: already_running,
             auth_launch.TRIGGER_BACKOFF_ACTIVE: "Automatic relogin is cooling down; retry is available now.",
             auth_launch.TRIGGER_LAUNCH_FAILED: "Could not open Chrome — try the manual option below.",
         }

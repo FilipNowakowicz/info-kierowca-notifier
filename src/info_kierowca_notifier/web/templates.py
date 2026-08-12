@@ -308,8 +308,7 @@ LOGIN_PAGE = """<!doctype html>
     <div id="messages-status"></div>
   </div>
   <button id="login-btn">Log in with Profil Zaufany</button>
-  <div id="hint">A Chrome window should open — scan the QR code in the mObywatel app. This page
-  continues on its own once you're logged in.</div>
+  <div id="hint"></div>
   <div id="error"></div>
   <a href="/setup" id="skip">Skip and enter my PKK number manually</a>
 </div>
@@ -353,13 +352,22 @@ loginBtn.addEventListener('click', async () => {
     if (!data.ok || data.action === 'launch_failed' || data.action === 'no_chromium_browser') {
       throw new Error(ikwI18n.t(data.message || 'Could not open Chrome — try the manual option below.'));
     }
-    if (data.action === 'already_running' && confirm(ikwI18n.t('A QR login is already open. Close it and restart login?'))) {
+    const alreadyRunningPrompt = loginMethod === 'profil_zaufany'
+      ? 'A Profil Zaufany login is already running. Close it and restart login?'
+      : 'A QR login is already open. Close it and restart login?';
+    if (data.action === 'already_running' && confirm(ikwI18n.t(alreadyRunningPrompt))) {
       const restartRes = await fetch('/relogin-restart', {method: 'POST', headers: {'Content-Type': 'application/json'}});
       const restartData = await restartRes.json();
       if (restartData.action !== 'restart_launched') {
-        throw new Error(ikwI18n.t(restartData.message || 'Could not restart the QR login.'));
+        const restartFailedMessage = loginMethod === 'profil_zaufany'
+          ? 'Could not restart the Profil Zaufany login.'
+          : 'Could not restart the QR login.';
+        throw new Error(ikwI18n.t(restartData.message || restartFailedMessage));
       }
     }
+    loginHint.textContent = ikwI18n.t(loginMethod === 'profil_zaufany'
+      ? "Logging in automatically with your saved Profil Zaufany credentials and the SMS code from Google Messages. This page continues on its own once you're logged in."
+      : "A Chrome window should open — scan the QR code in the mObywatel app. This page continues on its own once you're logged in.");
     loginHint.classList.add('show');
     loginBtn.textContent = loginMethod === 'profil_zaufany' ? 'Authenticating automatically...' : 'Waiting for QR scan...';
     let elapsed = 0;
@@ -776,7 +784,7 @@ WIZARD_PAGE = """<!doctype html>
       <div class="toggle-row">
         <div class="toggle-text">
           <div class="tt-title">Send a phone alert when your session expires</div>
-          <div class="tt-sub">Buzzes your phone when your login expires and Chrome reopens for you to scan the QR again. Turn off to only get the desktop popup.</div>
+          <div class="tt-sub" id="relogin-alert-sub">Buzzes your phone when your login expires and Chrome reopens for you to scan the QR again. Turn off to only get the desktop popup.</div>
         </div>
         <div class="switch on" id="phone-alerts-relogin" role="switch" aria-checked="true" tabindex="0"></div>
       </div>
@@ -843,7 +851,7 @@ WIZARD_PAGE = """<!doctype html>
 
   <div id="reset-account-block" style="display:none; margin-top:1.5rem; text-align:center;">
     <button type="button" id="reset-account-btn">Reset account</button>
-    <div class="hint" style="margin-top:0.5rem;">Logs you out and clears your saved settings — you'll land back on the QR login screen.</div>
+    <div class="hint" style="margin-top:0.5rem;">Logs you out and clears your saved settings — you'll land back on the login screen to reconnect your account.</div>
   </div>
 </div>
 
@@ -855,7 +863,17 @@ const NTFY_TOPIC = __NTFY_TOPIC_JSON__;
 const KNOWN_IDS = new Set(CENTERS.map(c => c.id));
 const loginMethodSelect = document.getElementById('login_method');
 const settingsPzFields = document.getElementById('settings-pz-fields');
-function updateAuthFields() { settingsPzFields.style.display = loginMethodSelect.value === 'profil_zaufany' ? 'block' : 'none'; }
+const reloginAlertSub = document.getElementById('relogin-alert-sub');
+// Profil Zaufany authenticates with a saved username/password and an SMS
+// code read from Google Messages, not a QR code - so the static markup's
+// QR-specific wording (correct only for mObywatel) needs swapping in for it.
+function updateAuthFields() {
+  const isPz = loginMethodSelect.value === 'profil_zaufany';
+  settingsPzFields.style.display = isPz ? 'block' : 'none';
+  reloginAlertSub.textContent = isPz
+    ? 'Buzzes your phone when your login expires and needs a fresh Profil Zaufany login. Turn off to only get the desktop popup.'
+    : 'Buzzes your phone when your login expires and Chrome reopens for you to scan the QR again. Turn off to only get the desktop popup.';
+}
 loginMethodSelect.addEventListener('change', updateAuthFields);
 updateAuthFields();
 document.getElementById('settings-pair-messages').onclick = async () => {
@@ -872,13 +890,20 @@ document.getElementById('settings-pair-messages').onclick = async () => {
 const settingsReloginBtn = document.getElementById('settings-relogin-btn');
 const settingsReloginStatus = document.getElementById('settings-relogin-status');
 settingsReloginBtn.addEventListener('click', async () => {
-  if (!confirm(t('Open Chrome for a fresh QR login now? This replaces your current session.'))) return;
+  const isPz = loginMethodSelect.value === 'profil_zaufany';
+  const confirmPrompt = isPz
+    ? 'Log back in with Profil Zaufany now? This replaces your current session.'
+    : 'Open Chrome for a fresh QR login now? This replaces your current session.';
+  if (!confirm(t(confirmPrompt))) return;
   settingsReloginBtn.disabled = true;
   try {
     const res = await fetch('/relogin-now', {method: 'POST', headers: {'Content-Type': 'application/json'}});
     const data = await res.json();
     settingsReloginStatus.textContent = t(data.message || 'Something went wrong.');
-    if (data.action === 'already_running' && confirm(t('A QR login is already open. Close it and restart login?'))) {
+    const restartPrompt = isPz
+      ? 'A Profil Zaufany login is already running. Close it and restart login?'
+      : 'A QR login is already open. Close it and restart login?';
+    if (data.action === 'already_running' && confirm(t(restartPrompt))) {
       const restartRes = await fetch('/relogin-restart', {method: 'POST', headers: {'Content-Type': 'application/json'}});
       const restartData = await restartRes.json();
       settingsReloginStatus.textContent = t(restartData.message || 'Something went wrong.');
@@ -1633,7 +1658,7 @@ testPushBtn.addEventListener('click', async () => {
 
 const resetAccountBtn = document.getElementById('reset-account-btn');
 resetAccountBtn.addEventListener('click', async () => {
-  if (!confirm(t("This logs you out and clears your saved settings. You'll need to scan the QR code again. Continue?"))) return;
+  if (!confirm(t("This logs you out and clears your saved settings. You'll need to log in again. Continue?"))) return;
   resetAccountBtn.disabled = true;
   try {
     const response = await fetch('/reset-account', {method: 'POST', headers: {'Content-Type': 'application/json'}});

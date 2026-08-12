@@ -5,7 +5,10 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from info_kierowca_notifier.auth import launch as auth_launch
-from info_kierowca_notifier.auth.relogin_backoff import RetryBackoff
+from info_kierowca_notifier.auth.relogin_backoff import (
+    MAX_CONSECUTIVE_AUTOMATIC_FAILURES,
+    RetryBackoff,
+)
 
 
 class FakeClock:
@@ -61,6 +64,16 @@ class RetryBackoffTests(unittest.TestCase):
             self.path, clock=self.clock, initial_delay=10, max_delay=40, max_state_age=100
         )
         self.assertEqual(restarted.cooldown_remaining(), 10)
+
+    def test_consecutive_failures_tracks_count_and_resets_on_success(self):
+        self.assertEqual(self.backoff.consecutive_failures(), 0)
+        self.backoff.record_failure("failed")
+        self.assertEqual(self.backoff.consecutive_failures(), 1)
+        self.clock.advance(10)
+        self.backoff.record_failure("failed")
+        self.assertEqual(self.backoff.consecutive_failures(), 2)
+        self.backoff.record_success()
+        self.assertEqual(self.backoff.consecutive_failures(), 0)
 
     def test_corrupt_stale_or_future_state_is_discarded(self):
         self.path.write_text("not json", encoding="utf-8")
@@ -172,6 +185,39 @@ class TriggerAutoRefreshBackoffTests(unittest.TestCase):
         self.assertEqual(outcome, auth_launch.TRIGGER_MANUAL_RETRY_LAUNCHED)
         self.assertFalse(self.lock_path.exists())
 
+    def test_automatic_profil_zaufany_attempt_stops_after_consecutive_failure_cap(self):
+        backoff = RetryBackoff(self.state_path)
+        for _ in range(MAX_CONSECUTIVE_AUTOMATIC_FAILURES):
+            backoff.record_failure("invalid_credentials")
+        with patch("info_kierowca_notifier.auth.launch.chrome.chrome_available") as available:
+            outcome = auth_launch.trigger_auto_refresh(
+                self.logger, {"login_method": "profil_zaufany"}
+            )
+        self.assertEqual(outcome, auth_launch.TRIGGER_MANUAL_REQUIRED)
+        available.assert_not_called()
+
+    def test_automatic_mobywatel_attempt_is_never_gated_by_the_failure_cap(self):
+        backoff = RetryBackoff(self.state_path)
+        for _ in range(MAX_CONSECUTIVE_AUTOMATIC_FAILURES + 2):
+            backoff.record_failure("authentication_timeout")
+        with patch("info_kierowca_notifier.auth.launch.chrome.chrome_available", return_value=False):
+            outcome = auth_launch.trigger_auto_refresh(
+                self.logger, {"login_method": "mobywatel"}
+            )
+        # Still gated by the ordinary time-based cooldown, just never by the
+        # consecutive-failure cap that's specific to Profil Zaufany.
+        self.assertEqual(outcome, auth_launch.TRIGGER_BACKOFF_ACTIVE)
+
+    def test_manual_retry_bypasses_the_consecutive_failure_cap(self):
+        backoff = RetryBackoff(self.state_path)
+        for _ in range(MAX_CONSECUTIVE_AUTOMATIC_FAILURES):
+            backoff.record_failure("invalid_credentials")
+        with patch("info_kierowca_notifier.auth.launch.chrome.chrome_available", return_value=False):
+            outcome = auth_launch.trigger_auto_refresh(
+                self.logger, {"login_method": "profil_zaufany"}, force=True
+            )
+        self.assertEqual(outcome, auth_launch.TRIGGER_NO_BROWSER)
+
     def test_manual_retry_removes_malformed_lock_before_launching(self):
         self.lock_path.write_text("not-a-pid", encoding="utf-8")
         process = Mock()
@@ -183,6 +229,54 @@ class TriggerAutoRefreshBackoffTests(unittest.TestCase):
             outcome = auth_launch.trigger_auto_refresh(self.logger, {}, force=True)
         self.assertEqual(outcome, auth_launch.TRIGGER_MANUAL_RETRY_LAUNCHED)
         self.assertFalse(self.lock_path.exists())
+
+
+class AutomaticReloginPausedTests(unittest.TestCase):
+    """auth_launch.automatic_relogin_paused() -- the standalone, side-effect-
+    free check notifier.run_check() calls every tick to drive the
+    dashboard's "manual retry required" state, independent of whether that
+    tick's own check happens to call trigger_auto_refresh() at all."""
+
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.state_path = Path(self.directory.name) / "relogin-backoff.json"
+        self.path_patch = patch.object(auth_launch, "RELOGIN_BACKOFF_FILE", self.state_path)
+        self.path_patch.start()
+        self.addCleanup(self.path_patch.stop)
+
+    def test_false_below_the_cap(self):
+        backoff = RetryBackoff(self.state_path)
+        for _ in range(MAX_CONSECUTIVE_AUTOMATIC_FAILURES - 1):
+            backoff.record_failure("invalid_credentials")
+        self.assertFalse(
+            auth_launch.automatic_relogin_paused({"login_method": "profil_zaufany"})
+        )
+
+    def test_true_at_and_past_the_cap(self):
+        backoff = RetryBackoff(self.state_path)
+        for _ in range(MAX_CONSECUTIVE_AUTOMATIC_FAILURES):
+            backoff.record_failure("invalid_credentials")
+        self.assertTrue(
+            auth_launch.automatic_relogin_paused({"login_method": "profil_zaufany"})
+        )
+
+    def test_false_for_mobywatel_regardless_of_failure_count(self):
+        backoff = RetryBackoff(self.state_path)
+        for _ in range(MAX_CONSECUTIVE_AUTOMATIC_FAILURES + 2):
+            backoff.record_failure("authentication_timeout")
+        self.assertFalse(
+            auth_launch.automatic_relogin_paused({"login_method": "mobywatel"})
+        )
+
+    def test_clears_the_moment_a_success_is_recorded(self):
+        backoff = RetryBackoff(self.state_path)
+        for _ in range(MAX_CONSECUTIVE_AUTOMATIC_FAILURES):
+            backoff.record_failure("invalid_credentials")
+        config = {"login_method": "profil_zaufany"}
+        self.assertTrue(auth_launch.automatic_relogin_paused(config))
+        backoff.record_success()
+        self.assertFalse(auth_launch.automatic_relogin_paused(config))
 
 
 if __name__ == "__main__":

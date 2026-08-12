@@ -105,4 +105,5 @@ def empty_status():
         "paused": False,
         "next_check_at": None,
         "session_expires_estimate": None,
+        "relogin_manual_required": False,
     }

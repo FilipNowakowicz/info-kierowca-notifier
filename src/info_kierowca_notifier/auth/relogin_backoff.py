@@ -9,6 +9,20 @@ import os
 import time
 from pathlib import Path
 
+# Repeatedly retrying a wrong Profil Zaufany password or an expired/rejected
+# SMS code unattended risks tripping the identity provider's own temporary
+# lockout after a handful of failed attempts. Past this many *consecutive*
+# automatic failures, auth.launch.trigger_auto_refresh() stops launching new
+# attempts on its own (see its own docstring) until a deliberate manual retry
+# succeeds -- see auth.session's use of RetryBackoff.consecutive_failures()
+# for the one-time "automatic login paused" notification fired the moment
+# this is first crossed. Deliberately conservative (3, not the 5 the actual
+# lockout is believed to trip at -- by explicit user request) so the app
+# never contributes the failure that pushes a borderline account over the
+# edge. Manual retries (force=True) are never gated by this, only unattended
+# automatic ones are; a plain successful login (record_success()) clears it.
+MAX_CONSECUTIVE_AUTOMATIC_FAILURES = 3
+
 
 class RetryBackoff:
     """Persist failures and decide whether an automatic attempt may start."""
@@ -69,6 +83,12 @@ class RetryBackoff:
         """Return a copy of the valid state, if an automatic retry is delayed."""
         state = self._load()
         return dict(state) if state else None
+
+    def consecutive_failures(self):
+        """Automatic failures recorded since the last success (0 if none, or
+        if the persisted state is missing/stale/malformed -- see _load())."""
+        state = self._load()
+        return state["failure_count"] if state else 0
 
     def cooldown_remaining(self, *, manual=False):
         """Seconds remaining before an automatic retry; manual attempts bypass it."""
