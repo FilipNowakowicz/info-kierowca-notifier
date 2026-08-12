@@ -215,9 +215,18 @@ async function poll() {
     detail.textContent = "";
   } else if (data.outcome === "auth_expired") {
     body.className = "error";
-    headline.textContent = ui("Session expired");
+    // relogin_manual_required (see notifier.run_check()'s own comment on
+    // it) means auth.launch's consecutive-failure gate has stopped
+    // automatic Profil Zaufany attempts outright -- distinct from the
+    // ordinary case where it's still quietly retrying on its own, which
+    // needs no action from anyone.
+    headline.textContent = data.relogin_manual_required
+      ? ui("Session expired — manual retry required")
+      : ui("Session expired");
     subline.textContent = "";
-    detail.textContent = ui("Log back in via browser and update session.json");
+    detail.textContent = data.relogin_manual_required
+      ? ui('Automatic login is paused after repeated failures — open Settings and click "Get new session now."')
+      : ui("Log back in via browser and update session.json");
   } else if (data.outcome === "network_error") {
     // Offline is a normal, self-healing state, not an error worth alarming
     // about — styled like "no result yet" rather than red.

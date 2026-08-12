@@ -9,7 +9,10 @@ from pathlib import Path
 
 from info_kierowca_notifier.auth import relogin_control
 from info_kierowca_notifier.auth import session as auto_refresh_session
-from info_kierowca_notifier.auth.relogin_backoff import RetryBackoff
+from info_kierowca_notifier.auth.relogin_backoff import (
+    MAX_CONSECUTIVE_AUTOMATIC_FAILURES,
+    RetryBackoff,
+)
 from info_kierowca_notifier.browser import chrome
 from info_kierowca_notifier.paths import (
     AUTO_REFRESH_LOG_FILE,
@@ -32,6 +35,7 @@ TRIGGER_DISABLED = "disabled"
 TRIGGER_NO_BROWSER = "no_chromium_browser"
 TRIGGER_ALREADY_RUNNING = "already_running"
 TRIGGER_BACKOFF_ACTIVE = "backoff_active"
+TRIGGER_MANUAL_REQUIRED = "manual_required"
 TRIGGER_LAUNCHED = "launched"
 TRIGGER_MANUAL_RETRY_LAUNCHED = "manual_retry_launched"
 TRIGGER_RESTART_LAUNCHED = "restart_launched"
@@ -43,6 +47,7 @@ TRIGGER_OUTCOMES = (
     TRIGGER_NO_BROWSER,
     TRIGGER_ALREADY_RUNNING,
     TRIGGER_BACKOFF_ACTIVE,
+    TRIGGER_MANUAL_REQUIRED,
     TRIGGER_LAUNCHED,
     TRIGGER_MANUAL_RETRY_LAUNCHED,
     TRIGGER_RESTART_LAUNCHED,
@@ -50,6 +55,26 @@ TRIGGER_OUTCOMES = (
     TRIGGER_SHUTDOWN_FAILED,
     TRIGGER_LAUNCH_FAILED,
 )
+
+
+def automatic_relogin_paused(config):
+    """Whether an automatic Profil Zaufany attempt would currently be
+    refused outright by trigger_auto_refresh()'s consecutive-failure gate
+    (TRIGGER_MANUAL_REQUIRED) -- without actually attempting one.
+
+    Used by notifier.run_check() to surface this on the dashboard every
+    tick, independent of whether that tick's own check happens to hit an
+    auth failure: the underlying condition (RetryBackoff.consecutive_failures()
+    past MAX_CONSECUTIVE_AUTOMATIC_FAILURES) doesn't change just because one
+    tick's request happened to succeed, hit a network error, or land on a
+    proactive-relogin check that never calls trigger_auto_refresh at all.
+    Recomputing this fresh every tick (rather than latching a flag from
+    trigger_auto_refresh()'s own return value) means it can't go stale.
+    """
+    if config.get("login_method") != "profil_zaufany":
+        return False
+    backoff = RetryBackoff(RELOGIN_BACKOFF_FILE)
+    return backoff.consecutive_failures() >= MAX_CONSECUTIVE_AUTOMATIC_FAILURES
 
 
 def trigger_auto_refresh(logger, config, force=False, notify_phone=True):
@@ -68,7 +93,21 @@ def trigger_auto_refresh(logger, config, force=False, notify_phone=True):
     to auto_refresh_session.main(), keeping it a separate detached process.
 
     force=True denotes a deliberate manual retry. It bypasses only persisted
-    automatic-failure backoff; it never replaces an active QR-login process.
+    automatic-failure backoff (both the time-based cooldown and the
+    consecutive-failure pause below); it never replaces an active QR-login
+    process.
+
+    Automatic Profil Zaufany attempts additionally stop being launched at
+    all -- not just delayed -- once RetryBackoff.consecutive_failures()
+    reaches MAX_CONSECUTIVE_AUTOMATIC_FAILURES, returning
+    TRIGGER_MANUAL_REQUIRED instead. Unlike mObywatel's QR scan, a Profil
+    Zaufany attempt submits a real password and, on a mismatched/expired SMS
+    code, a real failed one-time-code attempt -- retrying those unattended
+    forever (the plain time-based cooldown below caps out at once an hour,
+    not never) risks tripping a temporary account lockout on the identity
+    provider's own side. auth.session pushes a one-time notification the
+    moment this threshold is first crossed; only a manual retry (this
+    parameter's force=True) or a successful login clears it.
     A live lock always returns ``already_running`` so a second click cannot
     close a browser while the person is mid-scan. Dead or malformed lock files
     are still removed before launching a new process.
@@ -88,6 +127,16 @@ def trigger_auto_refresh(logger, config, force=False, notify_phone=True):
     backoff = RetryBackoff(RELOGIN_BACKOFF_FILE)
     if not config.get("auto_refresh_chrome", True):
         return TRIGGER_DISABLED
+    if (
+        automatic
+        and config.get("login_method") == "profil_zaufany"
+        and backoff.consecutive_failures() >= MAX_CONSECUTIVE_AUTOMATIC_FAILURES
+    ):
+        logger.info(
+            "outcome=auto_refresh_skipped detail=manual_required consecutive_failures=%d",
+            backoff.consecutive_failures(),
+        )
+        return TRIGGER_MANUAL_REQUIRED
     remaining = backoff.cooldown_remaining(manual=force)
     if remaining:
         logger.info(

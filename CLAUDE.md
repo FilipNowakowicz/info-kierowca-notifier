@@ -333,6 +333,45 @@ automation. Regenerate the static snapshots with `tools/fetch_word_centers.py` /
   (`sys.platform == "darwin"`), quoting the summary/body via `json.dumps()` as safe AppleScript
   string literals rather than interpolating them raw. **UNVERIFIED as of 2026-07-22** — no live Mac
   to test on; worst case it silently no-ops there exactly as before.
+  - **Consecutive-automatic-failure cap for Profil Zaufany (2026-08-12, by explicit user
+    request).** Unlike mObywatel's QR scan, an automatic Profil Zaufany attempt submits a real
+    saved password and, on a mismatched/expired SMS code, a real failed one-time-code attempt —
+    retrying those unattended forever (the plain time-based `RetryBackoff` cooldown below caps out
+    at once an hour, not never) risks tripping a temporary lockout on the identity provider's own
+    side. `auth/relogin_backoff.py`'s `MAX_CONSECUTIVE_AUTOMATIC_FAILURES` (3, deliberately below
+    the actual lockout believed to trip at 5) and `RetryBackoff.consecutive_failures()` back a hard
+    stop in `auth.launch.trigger_auto_refresh()`: once an *automatic* Profil Zaufany attempt's
+    consecutive failure count reaches that cap, the function returns `TRIGGER_MANUAL_REQUIRED`
+    without even launching Chrome, instead of just delaying like the ordinary cooldown does — this
+    persists (a plain hourly retry forever, not a one-time pause) until a deliberate manual retry
+    succeeds (`force=True`, e.g. Settings → "Get new session now", which bypasses this gate
+    entirely, same as it already bypassed the time-based cooldown) or `RetryBackoff.record_success()`
+    clears the counter. mobywatel is never gated by this at all (checked by `login_method` in
+    `trigger_auto_refresh()`) — a QR-scan timeout carries none of the account-lockout risk this
+    exists for. The moment the threshold is first crossed, `auth.session._maybe_notify_relogin_paused()`
+    fires one extra desktop+ntfy notification (on top of the per-failure one already sent) telling
+    the user automatic retries are paused and to log in manually — it fires exactly once at the
+    crossing since no further automatic attempt can run afterward to re-trigger it.
+  - **Dashboard/status.json indicator for the same cap (2026-08-12, follow-up: the one-time push
+    above is easy to miss, and there was previously no other way to discover automatic retries had
+    stopped short of reading `relogin-backoff.json`/the journal by hand).** `auth.launch.automatic_relogin_paused(config)`
+    is a side-effect-free re-check of the same condition `trigger_auto_refresh()` gates on
+    (`login_method == "profil_zaufany"` and `RetryBackoff.consecutive_failures() >=
+    MAX_CONSECUTIVE_AUTOMATIC_FAILURES`) — called fresh every tick by `src/info_kierowca_notifier/notifier.py`'s `run_check()`
+    right after `config.json` loads, writing `dash_status["relogin_manual_required"]`. Deliberately
+    *not* latched from `trigger_auto_refresh()`'s own `TRIGGER_MANUAL_REQUIRED` return value in one
+    branch (e.g. only inside `_handle_auth_expired()`), which would go stale on any tick that takes a
+    different path — a `network_error` tick, a `refresh_ok` tick, or a proactive-relogin tick that
+    never calls `trigger_auto_refresh()` at all still needs the flag to read correctly; recomputing it
+    unconditionally every tick from the persisted backoff file can't drift out of sync the way a
+    once-set boolean could. `src/info_kierowca_notifier/web/server.py`'s dashboard JS branches on it only inside the existing
+    `outcome === "auth_expired"` case: headline becomes "Session expired — manual retry required" and
+    the detail line points at Settings → "Get new session now", instead of the generic (and, for this
+    app's zero-setup flow, already slightly stale) "Log back in via browser and update session.json".
+    Plain informative text, not a clickable link — this file is also served standalone, read-only, by
+    `info-kierowca-dashboard.service` with no Settings modal behind it (see this file's own docstring
+    notes above), so wiring a click handler here would silently do nothing on that path.
+    `paths.empty_status()` carries the key (`False`) for schema consistency with `session_expires_estimate`/`paused`, though the JS treats a missing key as falsy regardless.
 - `src/info_kierowca_notifier/browser/cdp.py` — shared Chrome DevTools Protocol helpers used by `tools/pull_session_cookies.py`,
   `src/info_kierowca_notifier/auth/session.py`, and `src/info_kierowca_notifier/booking/reschedule.py` (cookie reads *and* writes via
   `Storage.getCookies`/`setCookies`, JS eval in the page, navigation, and registering a script to
@@ -728,6 +767,24 @@ automation. Regenerate the static snapshots with `tools/fetch_word_centers.py` /
       so the date-picker is ready the moment the push lands. Here `force=True` only bypasses
       persisted automatic backoff; a live QR-login lock still returns "already_running".
       `trigger_open_browser()` has no equivalent because it does not have automatic retry backoff.
+    - **"QR login" wording was hardcoded everywhere a relogin could be triggered, even for Profil
+      Zaufany (2026-08-12, reported live: Settings' "Get new session now" under a Profil Zaufany
+      account said it was opening Chrome for a QR scan).** Profil Zaufany authenticates with a
+      saved username/password and an SMS code read from Google Messages — there is no QR code to
+      scan for it at all. Fixed by branching every such message on the configured `login_method`:
+      `_login_kind(login_method)` here (returns `"Profil Zaufany login"` vs. `"QR login"`, used by
+      `_handle_manual_login()`, `_handle_relogin_now()`, `_handle_relogin_restart()`, and
+      `_handle_login_start()`'s reply messages) and its client-side mirrors in `web/templates.py`
+      (`WIZARD_PAGE`'s `settings-relogin-btn` confirm dialogs and its Alerts-section relogin-alert
+      hint text, both now swapped by `updateAuthFields()`/click-time reads of `#login_method`'s
+      value; `LOGIN_PAGE`'s post-submit hint text and its own "already open" confirm/error text,
+      swapped on the already-in-scope `loginMethod` JS variable). The reset-account hint and confirm
+      dialog were made method-neutral instead ("log in again", not "scan the QR again") since after
+      a reset the user re-picks the method fresh on `LOGIN_PAGE`. Every new/changed English string
+      got a matching entry in `web/localization.py`'s PL dict (exact-string-keyed, see that file's
+      own docstring) — a changed key without a matching translation update silently falls back to
+      English under the Polish UI language rather than erroring, so this is easy to miss on a future
+      wording change; grep both files together when touching either.
 - `src/info_kierowca_notifier/web/templates.py` — holds `TOOLBAR_HTML`, `LOGIN_PAGE`, and `WIZARD_PAGE`: the three big HTML/JS
   strings `src/info_kierowca_notifier/app.py` serves, moved out verbatim since they made up the bulk of that file's line
   count (~1180 of ~1750 lines) with none of its request-handling logic. Plain string
