@@ -24,7 +24,7 @@ USER_AGENT = (
     "AppleWebKit/537.36 (KHTML, like Gecko) "
     "Chrome/141.0.0.0 Safari/537.36"
 )
-TIMEOUT = 15
+TIMEOUT = 25
 
 
 def cookie_header(session):
@@ -107,7 +107,7 @@ def do_request(url, session, method="GET", json_body=None):
     except urllib.error.HTTPError as e:
         body = e.read()
         return e.code, body, e.headers
-    except (urllib.error.URLError, tls_transport.TLSConfigurationError) as e:
+    except (urllib.error.URLError, TimeoutError, OSError, tls_transport.TLSConfigurationError) as e:
         return None, str(e).encode(), None
 
 
