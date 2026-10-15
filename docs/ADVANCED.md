@@ -2,7 +2,7 @@
 
 This covers running info-kierowca-notifier from source instead of the downloaded binaries
 described in the main [README](../README.md) — for Linux systemd users, developers, or anyone
-who'd rather not run a downloaded binary. Requires Python 3.9+ and the dependencies declared in
+who'd rather not run a downloaded binary. Requires Python 3.10+ and the dependencies declared in
 `pyproject.toml` (HTTPS trust, secure credential storage, and Windows timezone data where needed).
 The release binaries package those dependencies, so they still need no Python installation or
 extra setup.
@@ -15,8 +15,8 @@ extra setup.
    uv sync
    ```
 
-   On Python 3.10+, `truststore` uses the native Windows/macOS/Linux trust store. Python 3.9
-   securely uses the bundled `certifi` CA set instead.
+   `truststore` uses the native Windows/macOS/Linux trust store, with the bundled `certifi` CA
+   set as a fallback.
 
 2. Copy the example config files into `~/.config/info-kierowca-notifier/` (this works the same
    way on Windows, macOS and Linux — Python resolves `~` to your user profile folder either way).
