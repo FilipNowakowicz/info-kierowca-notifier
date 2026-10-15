@@ -22,7 +22,7 @@ phone when a suitable slot appears. If you already have a booked exam, its date 
 - **Sign in once:** Profil Zaufany login and session renewal can run automatically.
 - **Find the right slot:** monitor selected WORD centers, exam types, dates, and times.
 - **Get notified immediately:** see matches on the dashboard and receive optional phone alerts.
-- **Reschedule automatically:** let the app select, verify, and confirm an earlier matching slot.
+- **Reservation assist:** open the right WORD's reservation flow, optionally select the slot and create the reservation for you.
 - **Keep control of your data:** credentials and session stay on your computer.
 - **Use it for free:** open source, MIT-licensed, and subscription-free.
 
@@ -42,9 +42,13 @@ phone when a suitable slot appears. If you already have a booked exam, its date 
 2. Run it. A browser tab opens automatically.
 3. Choose **Profil Zaufany** (recommended), enter your username and password, and pair Google
    Messages Web when prompted. This lets the app complete both the initial login and later
-   session renewals automatically. mObywatel QR login remains available as a manual fallback.
+   session renewals automatically. Google Messages Web needs an Android phone; on an iPhone you
+   can type the SMS code into the login window yourself, so renewals need you each time.
+   mObywatel QR login remains available as a manual fallback.
 4. Confirm the PKK number/license category it found for you (or fill them in manually if needed) and pick your exam center(s).
-5. Set the earliest acceptable exam date and your other search criteria. If you want the app to compare new slots with an exam you already hold, enter that current booked exam date as the comparison point, then choose how you want to be notified.
+5. Enter the date of the exam you're currently booked for — only slots before it count as better —
+   then set the earliest acceptable exam date, your other search criteria, and how you want to be
+   notified.
 
 That's it — from then on, that browser tab is your dashboard, with a **Quit** button whenever you
 want to shut it down.
@@ -69,9 +73,11 @@ Pairing Google Messages Web is required for automatic Profil Zaufany login and
 session recovery. Because the government and Google page structure is external
 and may change, watch one complete live login before relying on unattended recovery.
 
-It checks the same two endpoints info-kierowca.pl's own site uses to show you slots — it just
-does that automatically, on a timer, instead of you refreshing the page by hand. Checking is
-strictly read-only: no booking, no reserving, nothing beyond checking availability.
+It checks the same endpoints info-kierowca.pl's own site uses to show you slots (multi-center or
+single-center search) — it just does that automatically, on a timer, instead of you refreshing
+the page by hand. Checking is strictly read-only: no booking, no reserving, nothing beyond checking
+availability. The site allows about 10 searches per hour, so the app checks every 7 minutes by
+default and waits rather than going over the limit.
 
 If you turn on the reservation assist (on by default, toggle with `auto_open_browser`), a matching
 slot also opens a Chrome window already logged in with your session. Regardless of whether the slot
@@ -81,7 +87,8 @@ available-exams screen so you still choose the slot yourself.
 Settings → Automation has two optional toggles, both off by default: auto-select chooses the exact
 matching slot and advances to the preliminary reservation summary without submitting anything;
 auto-confirm additionally verifies that summary and lets the portal create the reservation, leaving
-the browser open for any required confirmation/payment. See [docs/ADVANCED.md](docs/ADVANCED.md).
+the browser open for any required confirmation/payment. Auto-confirm creates a new reservation — it
+does not cancel your existing booking. See [docs/ADVANCED.md](docs/ADVANCED.md).
 
 The info-kierowca.pl session still expires after roughly an hour. With Profil Zaufany configured,
 the app starts refreshing it five minutes before the estimated expiry: it opens its dedicated

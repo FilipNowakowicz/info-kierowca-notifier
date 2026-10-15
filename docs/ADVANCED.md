@@ -69,16 +69,18 @@ extra setup.
    google-chrome --remote-debugging-port=9222   # macOS: .../Google Chrome.app/Contents/MacOS/Google Chrome
    uv run python tools/pull_session_cookies.py
    ```
-   It talks to Chrome over that debug port on `127.0.0.1` only, pulls the `__Secure-PUDOJT` and
-   `__Secure-PUDOJTMD` cookies for info-kierowca.pl, and writes them straight to `session.json`.
+   It talks to Chrome over that debug port on `127.0.0.1` only, pulls the `__Secure-PUDOJT`,
+   `__Secure-PUDOJTMD` and `__Host-Http-PUDO-DeviceId` cookies for info-kierowca.pl, and writes them
+   straight to `session.json`.
    Nothing is sent anywhere else. Use `--port` if you started Chrome on a different port, and
-   `--all` to dump every cookie for the domain instead of just the two required ones. See the
+   `--all` to dump every cookie for the domain instead of just the three required ones. See the
    script's docstring for the Windows launch command and a security note about the debug port
    (it grants full control of the browser, so don't expose it beyond localhost).
 
    **Option D — DevTools (manual, any browser):** log in to info-kierowca.pl, open DevTools →
-   Application/Storage → Cookies, and copy the `__Secure-PUDOJT` and `__Secure-PUDOJTMD` values
-   into `session.json` by hand.
+   Application/Storage → Cookies, and copy the `__Secure-PUDOJT`, `__Secure-PUDOJTMD` and
+   `__Host-Http-PUDO-DeviceId` values into `session.json` by hand. All three are required — without
+   the device cookie the site rejects the session.
 
 4. Edit `config.json` (or, once it's running, use the **Settings** button on the dashboard — same
    form, prefilled with your current values, saves straight back to `config.json`):
@@ -87,13 +89,14 @@ extra setup.
    |---|---|
    | `login_method` *(managed by the app; `"profil_zaufany"` or `"mobywatel"`)* | Authentication used for initial login and session recovery. Profil Zaufany supports unattended renewal; mObywatel waits for a QR scan. Configure this through the app so credentials are handled safely. |
    | `pz_username` / `pz_credential_present` *(managed by the app)* | Identifies the Profil Zaufany credential stored in the OS vault. The marker records that a secure credential was saved; neither field contains the password. Do not fabricate or copy the marker between machines. |
-   | `organization_ids` | WORD center IDs to watch, up to 5 (defaults are Warsaw-area centers). The search endpoint insists on exactly 5, so fewer picks get padded with unrelated centers whose results are then discarded. |
+   | `search_mode` *(optional, default `"multi"`)* | `"multi"` searches up to 5 centers at once; `"single"` searches exactly one center through the site's single-center search, which reaches further ahead. Set in the setup wizard. |
+   | `organization_ids` | WORD center IDs to watch: up to 5 in multi mode, exactly 1 in single mode. The multi-center endpoint insists on exactly 5, so fewer picks get padded with unrelated centers whose results are then discarded. |
    | `category` | License category (5 = category B) |
    | `profile_number` | Your PKK profile number |
    | `exam_types` | Which exam(s) to watch: `["Theoretical"]`, `["Practice"]`, or both `["Theoretical", "Practice"]` |
    | `ntfy_topic` | Your [ntfy.sh](https://ntfy.sh) topic for phone push (pick a long random string — anyone who knows it can read your notifications) |
    | `current_slot_date` | Date (`"YYYY-MM-DD"`) of your current booked slot. A found slot beats this (turns the dashboard red, and — when `phone_alerts` is on — sends a phone push) only if it's on a strictly earlier date; a different time on the same date doesn't count on its own (see `notifier.is_urgent()`). |
-   | `search_start_date` *(optional)* | Earliest acceptable available exam date (`"YYYY-MM-DD"`). Leave it blank (or omit it in an older config) to search from today. This lower bound is separate from `current_slot_date`; slots before it are ignored even if the API returns them. It must fall within the site's 31-day search horizon. |
+   | `search_start_date` *(optional)* | Earliest acceptable available exam date (`"YYYY-MM-DD"`). Leave it blank (or omit it in an older config) to search from the earliest day the site allows (2 days ahead). Slots before it are ignored even if the API returns them. It must be 2 days to 6 months ahead and before `current_slot_date`. |
    | `poll_interval_seconds` *(optional, default `420`)* | Seconds between checks, clamped to 15–1800. info-kierowca.pl allows about 10 searches per hour; faster settings use them up early and the app then waits for the limit to reset rather than going over it. Set with the dashboard Settings slider, or by hand. |
    | `earliest_slot_hour` / `latest_slot_hour` *(optional, default `0` / `24`)* | Preferred time-of-day window in whole hours, `latest` exclusive. A slot outside `[earliest, latest)` is ignored entirely — no push, no dashboard entry, nothing in history. Defaults span the whole day. Set with the dashboard's dual-handle time slider. |
    | `phone_alerts` *(optional, default `true`)* | Whether a slot that beats your booked date sends a phone push at all. Set to `false` to just watch the dashboard silently; the dashboard's red/gray colouring and `auto_open_browser` still work. |
@@ -151,8 +154,8 @@ extra setup.
 7. Install the [ntfy app](https://ntfy.sh/app) on your phone and subscribe to your `ntfy_topic` to
    get pushes.
 
-**Note:** desktop error notifications use `notify-send` and only work on Linux. On Windows/macOS
-you won't get a popup on errors — check the dashboard or the log file instead, at
+**Note:** desktop error notifications use `notify-send` on Linux and `osascript` on macOS (the
+macOS path is untested). On Windows you won't get a popup on errors — check the dashboard or the log file instead, at
 `~/.local/state/info-kierowca-notifier/notifier.log` (not in the repo directory).
 
 **Being offline is not an error.** If a check can't reach info-kierowca.pl at all (no Wi-Fi, laptop
@@ -198,7 +201,7 @@ dedicated profile and follows the `login_method` saved by the setup wizard:
 
 In both cases the new cookies are written to `session.json`. A lock file
 (`~/.local/state/info-kierowca-notifier/auto-refresh.lock`) stops it firing again on every
-subsequent 60s tick while a relogin is already in flight; it's cleaned up when that run finishes
+subsequent check while a relogin is already in flight; it's cleaned up when that run finishes
 (delete it by hand if a run ever crashes without cleaning up).
 
 If a relogin fails (for example Chrome closes, credentials are rejected, no fresh PZePUAP message
@@ -310,14 +313,14 @@ installed predates the `OnActiveSec=10s` fix below — reinstall it (`cp systemd
 ~/.config/systemd/user/ && systemctl --user daemon-reload && systemctl --user restart
 info-kierowca-notifier.timer`).
 
-**Why `OnActiveSec` matters:** the timer also uses `OnBootSec=1min` + `OnUnitActiveSec=1min` for
-its normal every-60s cadence. Those alone are not enough to resume reliably: `OnBootSec` is
+**Why `OnActiveSec` matters:** the timer also uses `OnBootSec=1min` + `OnUnitActiveSec=7min` for
+its normal cadence (7 minutes stays under the site's ~10 searches/hour limit). Those alone are not enough to resume reliably: `OnBootSec` is
 relative to *boot time*, so if you `start` the timer more than a minute after boot (the usual
 case), that trigger is already in the past and is skipped; `OnUnitActiveSec` has no reference
 point until the service has run at least once under this timer activation. Net effect: the timer
 reports `active` but never actually fires. `OnActiveSec=10s` is relative to when the *timer unit
 itself* starts, so every `start`/`restart` is guaranteed a first run ~10s later regardless of
-uptime, which then gives `OnUnitActiveSec` its reference point for the regular 60s cadence.
+uptime, which then gives `OnUnitActiveSec` its reference point for the regular cadence.
 
 ## Troubleshooting
 

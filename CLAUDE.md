@@ -870,7 +870,7 @@ automation. Regenerate the static snapshots with `tools/fetch_word_centers.py` /
 
 ## systemd units (Linux)
 
-- `info-kierowca-notifier.timer` / `.service` — fires the poller every ~60s.
+- `info-kierowca-notifier.timer` / `.service` — fires the poller every ~7 min (one oneshot search per tick, under the ~10/hour limit; it ignores `poll_interval_seconds`).
 - `info-kierowca-dashboard.service` — long-running dashboard server on port 8787.
 
 Useful commands:
@@ -885,7 +885,7 @@ curl -s http://127.0.0.1:8787/status.json
 ### Known gotcha: timer looks "active" but never fires
 
 `info-kierowca-notifier.timer` combines `OnActiveSec=10s` + `OnBootSec=1min` +
-`OnUnitActiveSec=1min`. `OnActiveSec=10s` was added to fix a real incident: starting the timer well
+`OnUnitActiveSec=7min`. `OnActiveSec=10s` was added to fix a real incident: starting the timer well
 after boot left `OnBootSec` already-elapsed (skipped) and `OnUnitActiveSec` without a reference
 point (service had never run), so `systemctl --user start` reported `active` while `Trigger` stayed
 `n/a` forever — it silently never fired. Don't remove `OnActiveSec`. After any `start`/`restart`,
