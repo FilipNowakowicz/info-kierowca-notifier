@@ -1,0 +1,58 @@
+name: Bug report
+description: Something isn't working
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The maintainer no longer has access to info-kierowca.pl and can't reproduce bugs, so details matter. Polish is welcome.
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      placeholder: v2.5.0
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: How do you run it?
+      options:
+        - Windows (.exe)
+        - macOS
+        - Linux binary
+        - From source
+        - systemd
+    validations:
+      required: true
+  - type: dropdown
+    id: login
+    attributes:
+      label: Login method
+      options:
+        - Profil Zaufany
+        - mObywatel
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What you expected, what happened, and how to reproduce it.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: |
+        From `~/.local/state/info-kierowca-notifier/`: `notifier.log`, `auto-refresh.log`, `reschedule.log`.
+        **Remove personal data first** (PKK number, name, PESEL, cookies, phone number, ntfy topic).
+      render: text
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy
+      options:
+        - label: I removed personal data from logs and screenshots
+          required: true
