@@ -37,9 +37,13 @@ panelu oraz na telefonie. Możesz samodzielnie wybrać termin w otwartej przegl�
 2. Uruchom program. Karta przeglądarki otworzy się automatycznie.
 3. Wybierz **Profil Zaufany** (zalecane), wpisz nazwę użytkownika i hasło oraz sparuj Google
    Messages Web zgodnie z instrukcją. Dzięki temu pierwsze logowanie i późniejsze odnawianie sesji
-   przebiegają automatycznie. Logowanie kodem QR mObywatel pozostaje ręczną opcją zapasową.
+   przebiegają automatycznie. Google Messages Web wymaga telefonu z Androidem; na iPhonie możesz
+   samodzielnie wpisać kod SMS w oknie logowania, więc każde odnowienie sesji wymaga Twojego udziału.
+   Logowanie kodem QR mObywatel pozostaje ręczną opcją zapasową.
 4. Potwierdź wykryty numer PKK/kategorię prawa jazdy (lub wypełnij je ręcznie) oraz wybierz ośrodek/ośrodki egzaminacyjne.
-5. Ustaw najwcześniejszą akceptowalną datę egzaminu i pozostałe kryteria wyszukiwania oraz sposób powiadamiania. Jeśli używasz porównania z już zarezerwowanym egzaminem, podaj również jego datę.
+5. Podaj datę egzaminu, na który jesteś obecnie zapisany — tylko wcześniejsze terminy są
+   traktowane jako lepsze — a następnie ustaw najwcześniejszą akceptowalną datę egzaminu, pozostałe
+   kryteria wyszukiwania i sposób powiadamiania.
 
 Od tej pory otwarta karta przeglądarki jest Twoim panelem; znajduje się w niej przycisk **Zakończ** do wyłączenia programu.
 
@@ -65,9 +69,9 @@ Profil Zaufany i odnawiania sesji. Struktura stron rządowych i Google może si�
 zmienić, dlatego przed włączeniem trybu bezobsługowego obserwuj jedno pełne
 logowanie na żywo.
 
-Program sprawdza te same dwa endpointy, których używa strona info-kierowca.pl do wyświetlania terminów. Robi to automatycznie, według zegara, zamiast ręcznego odświeżania strony. Sprawdzanie jest ściśle tylko do odczytu: nie rezerwuje ani nie wykonuje żadnego działania poza sprawdzeniem dostępności.
+Program sprawdza te same endpointy, których używa strona info-kierowca.pl do wyświetlania terminów (wyszukiwanie dla kilku ośrodków lub jednego). Robi to automatycznie, według zegara, zamiast ręcznego odświeżania strony. Sprawdzanie jest ściśle tylko do odczytu: nie rezerwuje ani nie wykonuje żadnego działania poza sprawdzeniem dostępności. Strona pozwala na około 10 wyszukiwań na godzinę, dlatego domyślnie program sprawdza co 7 minut i czeka, zamiast przekraczać limit.
 
-Jeśli włączysz wspomaganie rezerwacji (domyślnie włączone, przełącznik `auto_open_browser`), pasujący termin otworzy zalogowane okno Chrome w zwykłym procesie rezerwacji dla WORD-u, w którym znaleziono lepszy termin. Domyślnie program zatrzymuje się na ekranie dostępnych egzaminów, a termin wybierasz samodzielnie. W Ustawienia → Automatyzacja są dwa opcjonalne przełączniki, oba domyślnie wyłączone: pierwszy wybiera dokładnie znaleziony termin i przechodzi do „Podsumowania wstępnej rezerwacji” bez wysyłania rezerwacji; drugi, wymagający pierwszego, po sprawdzeniu podsumowania pozwala portalowi utworzyć rezerwację i pozostawia przeglądarkę otwartą na potrzeby ewentualnego potwierdzenia lub płatności. Szczegóły i zabezpieczenia opisano w [docs/ADVANCED.md](docs/ADVANCED.md).
+Jeśli włączysz wspomaganie rezerwacji (domyślnie włączone, przełącznik `auto_open_browser`), pasujący termin otworzy zalogowane okno Chrome w zwykłym procesie rezerwacji dla WORD-u, w którym znaleziono lepszy termin. Domyślnie program zatrzymuje się na ekranie dostępnych egzaminów, a termin wybierasz samodzielnie. W Ustawienia → Automatyzacja są dwa opcjonalne przełączniki, oba domyślnie wyłączone: pierwszy wybiera dokładnie znaleziony termin i przechodzi do „Podsumowania wstępnej rezerwacji” bez wysyłania rezerwacji; drugi, wymagający pierwszego, po sprawdzeniu podsumowania pozwala portalowi utworzyć rezerwację i pozostawia przeglądarkę otwartą na potrzeby ewentualnego potwierdzenia lub płatności. Automatyczne potwierdzenie tworzy nową rezerwację — nie anuluje obecnej. Szczegóły i zabezpieczenia opisano w [docs/ADVANCED.md](docs/ADVANCED.md).
 
 Sesja info-kierowca.pl nadal wygasa po około godzinie. Po skonfigurowaniu Profilu Zaufanego
 aplikacja rozpoczyna jej odnawianie pięć minut przed szacowanym wygaśnięciem: otwiera dedykowany
