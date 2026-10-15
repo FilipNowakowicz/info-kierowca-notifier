@@ -216,8 +216,24 @@ async function ikwTogglePause() {
   // relied on below for `poll` itself).
   const resuming = isPaused;
   try {
-    const res = await fetch(resuming ? '/resume' : '/pause', {method: 'POST', headers: {'Content-Type': 'application/json'}});
-    const data = await res.json();
+    let res = await fetch(resuming ? '/resume' : '/pause', {method: 'POST', headers: {'Content-Type': 'application/json'}});
+    let data = await res.json();
+    if (resuming && data.action === 'expired_rate_limit_choice') {
+      const expired = data.expired_at ? new Date(Number(data.expired_at) * 1000) : null;
+      const when = expired && !Number.isNaN(expired.getTime())
+        ? expired.toLocaleTimeString(ikwI18n.lang() === 'pl' ? 'pl-PL' : 'en-GB', {hour: '2-digit', minute: '2-digit'})
+        : '';
+      const question = when
+        ? ikwI18n.t(`The search limit expired at ${when}. Check for available slots now? Choose Cancel to start the normal countdown instead.`)
+        : ikwI18n.t('The search limit has expired. Check for available slots now? Choose Cancel to start the normal countdown instead.');
+      const checkNow = confirm(question);
+      res = await fetch('/resume', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({expired_rate_limit_choice: checkNow ? 'check_now' : 'wait'})
+      });
+      data = await res.json();
+    }
     // poll() (defined in web.server's own script, sharing this
     // page) re-reads the now-updated status.json and redraws the
     // headline/icon immediately, instead of waiting up to 5s for its
@@ -297,10 +313,10 @@ LOGIN_PAGE = """<!doctype html>
   <p class="lead">Choose how the notifier should authenticate. Profil Zaufany can recover expired sessions automatically after setup.</p>
   <div class="methods"><button id="method-pz" class="on">Profil Zaufany</button><button id="method-mobywatel">mObywatel</button></div>
   <div id="pz-fields" style="display:block">
-    <label for="pz-username">Profil Zaufany username</label>
+    <label for="pz-username">Profil Zaufany email address</label>
     <div class="reveal">
       <input id="pz-username" type="password" autocomplete="username">
-      <button type="button" class="reveal-btn" id="reveal-pz-username" aria-label="Show or hide Profil Zaufany username"></button>
+      <button type="button" class="reveal-btn" id="reveal-pz-username" aria-label="Show or hide Profil Zaufany email address"></button>
     </div>
     <label for="pz-password">Profil Zaufany password</label><input id="pz-password" type="password" autocomplete="current-password">
     <div class="pz-pairing-description">Required for automatic Profil Zaufany login: pairing lets the app read the one-time SMS code from Google Messages.</div>
@@ -501,6 +517,52 @@ WIZARD_PAGE = """<!doctype html>
     border: 1px solid rgba(217,140,140,0.4); border-radius: 7px; cursor: pointer; font-size: 0.88rem; font-weight: 500; }
   #reset-account-btn:hover { background: rgba(217,140,140,0.1); border-color: rgba(217,140,140,0.7); }
 
+/* search mode */
+.search-mode-group {
+  display: flex;
+  gap: 0.6rem;
+  margin-bottom: 1rem;
+}
+
+.search-mode-option {
+  flex: 1;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.55rem;
+  padding: 0.7rem;
+  margin: 0;
+  border: 1px solid #3d3d3d;
+  border-radius: 7px;
+  background: #262626;
+  cursor: pointer;
+}
+
+.search-mode-option:has(input:checked) {
+  background: var(--accent-dim);
+  border-color: var(--accent);
+}
+
+.search-mode-option input {
+  margin-top: 0.2rem;
+  accent-color: var(--accent);
+}
+
+.search-mode-option span {
+  display: flex;
+  flex-direction: column;
+}
+
+.search-mode-option b {
+  font-size: 0.9rem;
+}
+
+.search-mode-option small {
+  margin-top: 0.15rem;
+  font-size: 0.78rem;
+  opacity: 0.55;
+  line-height: 1.3;
+}
+
   /* combobox + selected centers */
   .combobox { position: relative; margin-bottom: 0.8rem; }
   .combobox input[type=text] { margin-bottom: 0; }
@@ -658,10 +720,10 @@ WIZARD_PAGE = """<!doctype html>
       <button type="button" class="cat-more" id="settings-relogin-btn">Get new session now</button>
       <div class="hint" id="settings-relogin-status"></div>
       <div id="settings-pz-fields" style="display:none">
-        <label for="settings-pz-username">Profil Zaufany username</label>
+        <label for="settings-pz-username">Profil Zaufany email address</label>
         <div class="reveal">
           <input id="settings-pz-username" type="password" autocomplete="username">
-          <button type="button" class="reveal-btn" id="reveal-pz-username-settings" aria-label="Show or hide Profil Zaufany username"></button>
+          <button type="button" class="reveal-btn" id="reveal-pz-username-settings" aria-label="Show or hide Profil Zaufany email address"></button>
         </div>
         <label for="settings-pz-password">Profil Zaufany password</label><input id="settings-pz-password" type="password" autocomplete="new-password" placeholder="Leave blank to keep the saved password">
         <div class="hint" id="password-status">No Profil Zaufany password is saved. Enter it to enable automatic login.</div>
@@ -723,6 +785,27 @@ WIZARD_PAGE = """<!doctype html>
 
       <div class="divider"></div>
 
+    <label>Search mode</label>
+    <div class="search-mode-group">
+        <label class="search-mode-option">
+            <input type="radio" name="search_mode" value="single">
+            <span>
+                <b id="search-mode-single-title">Single center</b>
+                <small id="search-mode-single-desc">All dates made available by the selected WORD</small>
+            </span>
+        </label>
+
+        <label class="search-mode-option">
+            <input type="radio" name="search_mode" value="multi" checked>
+            <span>
+                <b id="search-mode-multi-title">Multiple centers</b>
+                <small id="search-mode-multi-desc">Earliest slots made available by the selected WORD centers (up to 5 centers)</small>
+            </span>
+        </label>
+    </div>
+
+    <div class="divider"></div>
+
       <label for="center-search">WORD centers to watch (__CENTER_COUNT__ nationwide)</label>
       <div class="combobox">
         <input type="text" id="center-search" placeholder="Click to browse all centers, or type to filter..." autocomplete="off">
@@ -730,21 +813,6 @@ WIZARD_PAGE = """<!doctype html>
       </div>
       <div id="selected-centers"></div>
       <div class="center-count" id="center-count"></div>
-    </fieldset>
-
-    <fieldset>
-      <legend>Alerts</legend>
-      <div class="booking-note" id="booking-note" role="note">
-        <span class="booking-note-text">Before continuing, you need an existing booked exam. This app changes the date of that booking; it does not create a new booking.</span>
-        <button type="button" class="booking-note-dismiss" id="dismiss-booking-note" aria-label="Dismiss booking prerequisite message">Got it</button>
-      </div>
-      <label for="current_slot_date_display">Required: date of the booking to reschedule</label>
-      <div class="datepick" id="datepick">
-        <input type="text" class="datepick-input" id="current_slot_date_display" placeholder="Select a date" readonly required>
-        <input type="hidden" id="current_slot_date">
-        <div class="calendar" id="calendar"></div>
-      </div>
-      <div class="hint">Enter the date of the existing booking that you want the app to reschedule.</div>
 
       <label for="search_start_date_display" style="margin-top:1rem;">Earliest acceptable exam date (optional)</label>
       <div class="datepick" id="search-start-datepick">
@@ -753,7 +821,22 @@ WIZARD_PAGE = """<!doctype html>
         <input type="hidden" id="search_start_date">
         <div class="calendar" id="search-start-calendar"></div>
       </div>
-      <div class="hint">Ignore slots before this date. Leave blank to search from today; the site searches at most 31 days ahead.</div>
+      <div class="hint" id="search-start-hint"></div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Alerts</legend>
+      <div class="booking-note" id="booking-note" role="note">
+        <span class="booking-note-text">Enter your currently booked exam date. The app uses it only as a comparison point for finding earlier slots — it does not change or cancel your existing reservation.</span>
+        <button type="button" class="booking-note-dismiss" id="dismiss-booking-note" aria-label="Dismiss booking prerequisite message">Got it</button>
+      </div>
+      <label for="current_slot_date_display">Required: current booked exam date</label>
+      <div class="datepick" id="datepick">
+        <input type="text" class="datepick-input" id="current_slot_date_display" placeholder="Select a date" readonly required>
+        <input type="hidden" id="current_slot_date">
+        <div class="calendar" id="calendar"></div>
+      </div>
+      <div class="hint">This date is only a comparison point for alerts and reservation automation. If you have an active reservation, the portal may require you to cancel it and wait for cancellation confirmation before creating a new one.</div>
 
       <div class="freq-head" style="margin-top:1rem;">
         <label for="time_from_slider">Preferred time of day</label>
@@ -767,7 +850,7 @@ WIZARD_PAGE = """<!doctype html>
       </div>
       <input type="hidden" id="earliest_slot_hour" value="0">
       <input type="hidden" id="latest_slot_hour" value="24">
-      <div class="hint" style="margin-top:-0.15rem;">A slot outside this window won't trigger an alert or open the reschedule browser. Checking and the dashboard still show everything found.</div>
+      <div class="hint" style="margin-top:-0.15rem;">A slot outside this window won't trigger an alert or open the reservation browser. Checking and the dashboard still show everything found.</div>
 
       <div class="divider"></div>
 
@@ -814,16 +897,16 @@ WIZARD_PAGE = """<!doctype html>
       <!-- Steps must stay within notifier.MIN_POLL_INTERVAL_SECONDS/MAX_POLL_INTERVAL_SECONDS
            (see POLL_INTERVAL_STEPS below) - poll_interval_seconds is the hidden field actually
            submitted; the range input is just an index into that array. -->
-      <input type="range" id="poll_interval_slider" min="0" max="18" step="1" value="6">
-      <input type="hidden" id="poll_interval_seconds" value="60">
-      <div class="hint" style="margin-top:-0.35rem;">Checks land a little later than this at random each time (up to +15%), so requests don't all hit the site on one exact, predictable cadence. Faster than a minute means noticeably more requests against a site with no documented rate limits.</div>
+      <input type="range" id="poll_interval_slider" min="0" max="18" step="1" value="14">
+      <input type="hidden" id="poll_interval_seconds" value="420">
+      <div class="hint" style="margin-top:-0.35rem;">info-kierowca.pl allows about 10 searches per hour. Faster than every 6 minutes uses them up early in the hour; the app then waits for the limit to reset instead of going over it.</div>
 
       <div class="divider"></div>
 
       <div class="toggle-row">
         <div class="toggle-text">
-          <div class="tt-title">Open my booking when a slot beats your booked date</div>
-          <div class="tt-sub">Opens a logged-in browser at your booking's "change date" screen. You still pick the date and confirm yourself.</div>
+          <div class="tt-title">Open the reservation page when an earlier slot is found</div>
+          <div class="tt-sub">Opens a logged-in browser on the available-exams screen for the WORD where the better slot was found. You still choose the slot yourself.</div>
         </div>
         <div class="switch on" id="auto_open_browser" role="switch" aria-checked="true" tabindex="0"></div>
       </div>
@@ -832,15 +915,15 @@ WIZARD_PAGE = """<!doctype html>
 
       <div class="toggle-row">
         <div class="toggle-text">
-          <div class="tt-title">Experimental: auto-select the matching slot</div>
-          <div class="tt-sub">Unverified against the live site. Also expands the matching date group and picks the exact exam type/time on the change-date screen, then goes to the summary/review screen. Still stops there — nothing is submitted.</div>
+          <div class="tt-title">Auto-select the matching slot</div>
+          <div class="tt-sub">Also selects the exact matching date/time and advances through the reservation wizard to the preliminary reservation summary. Stops there — nothing is submitted.</div>
         </div>
         <div class="switch" id="auto_select_slot" role="switch" aria-checked="false" tabindex="0"></div>
       </div>
       <div class="toggle-row" id="auto-confirm-row">
         <div class="toggle-text">
-          <div class="tt-title" style="color:#d98c8c;">Experimental: auto-confirm the reservation change</div>
-          <div class="tt-sub">Requires the toggle above. Submits the actual date change with no review step — the one action in this project that can't be undone by closing the browser. Only turn this on once you've watched auto-select pick the right slot reliably.</div>
+          <div class="tt-title" style="color:#d98c8c;">Auto-confirm the reservation</div>
+          <div class="tt-sub">Requires the toggle above. After verifying the preliminary summary, creates the reservation and leaves the browser open for any required confirmation/payment. This action cannot be undone by simply closing the browser. Your existing booking is not cancelled — you may need to cancel it yourself on info-kierowca.pl.</div>
         </div>
         <div class="switch" id="auto_confirm_reschedule" role="switch" aria-checked="false" tabindex="0"></div>
       </div>
@@ -933,9 +1016,7 @@ document.getElementById('dismiss-booking-note').addEventListener('click', () => 
   bookingNote.hidden = true;
 });
 const centerLabelHeading = document.querySelector('label[for="center-search"]');
-centerLabelHeading.textContent = ikwI18n.lang() === 'pl'
-  ? `Ośrodki WORD do obserwowania (${CENTERS.length} w kraju)`
-  : `WORD centers to watch (${CENTERS.length} nationwide)`;
+centerLabelHeading.textContent = t(`WORD centers to watch (${CENTERS.length} nationwide)`);
 function ikwGoDashboard(type) {
   if (IKW_EMBEDDED) {
     window.parent.postMessage({ type }, window.location.origin);
@@ -951,9 +1032,45 @@ const CENTERS_BY_ID = new Map(CENTERS.map(c => [c.id, c]));
 // unrelated fillers whose results get discarded, but that only works up to
 // this many real picks.
 const MAX_CENTERS = 5;
-const selectedIds = new Set(
-  (EXISTING_CONFIG ? EXISTING_CONFIG.organization_ids : []).filter(id => KNOWN_IDS.has(id))
+
+let searchMode = EXISTING_CONFIG
+  ? (EXISTING_CONFIG.search_mode || 'multi')
+  : 'multi';
+
+// Remember each search mode independently. Existing configs that only have
+// organization_ids use that active selection as the migration fallback.
+const legacyOrganizationIds = (EXISTING_CONFIG ? EXISTING_CONFIG.organization_ids : [])
+  .filter(id => KNOWN_IDS.has(id));
+
+let rememberedSingleId = EXISTING_CONFIG && KNOWN_IDS.has(EXISTING_CONFIG.single_organization_id)
+  ? EXISTING_CONFIG.single_organization_id
+  : (legacyOrganizationIds[0] ?? null);
+
+let rememberedMultiIds = EXISTING_CONFIG && Array.isArray(EXISTING_CONFIG.multi_organization_ids)
+  ? EXISTING_CONFIG.multi_organization_ids
+      .filter(id => KNOWN_IDS.has(id))
+      .slice(0, MAX_CENTERS)
+  : (searchMode === 'multi' ? legacyOrganizationIds.slice(0, MAX_CENTERS) : []);
+
+let selectedIds = new Set(
+  searchMode === 'single'
+    ? (rememberedSingleId == null ? [] : [rememberedSingleId])
+    : rememberedMultiIds
 );
+
+// Remember the optional earliest acceptable exam date independently for each
+// search mode. Existing configs only have search_start_date, so migrate that
+// value to the mode that was active when the config was saved; the other mode
+// intentionally starts empty.
+const legacySearchStartDate = EXISTING_CONFIG && typeof EXISTING_CONFIG.search_start_date === 'string'
+  ? EXISTING_CONFIG.search_start_date
+  : '';
+let rememberedSingleSearchStartDate = EXISTING_CONFIG && typeof EXISTING_CONFIG.single_search_start_date === 'string'
+  ? EXISTING_CONFIG.single_search_start_date
+  : (searchMode === 'single' ? legacySearchStartDate : '');
+let rememberedMultiSearchStartDate = EXISTING_CONFIG && typeof EXISTING_CONFIG.multi_search_start_date === 'string'
+  ? EXISTING_CONFIG.multi_search_start_date
+  : (searchMode === 'multi' ? legacySearchStartDate : '');
 
 const searchInput = document.getElementById('center-search');
 const dropdown = document.getElementById('center-dropdown');
@@ -969,7 +1086,7 @@ function renderSelected() {
   if (!selectedIds.size) {
     const empty = document.createElement('div');
     empty.className = 'no-selection';
-    empty.textContent = 'No centers yet — search above to add one.';
+    empty.textContent = ikwI18n.t('No centers yet — search above to add one.');
     selectedList.appendChild(empty);
     centerCount.innerHTML = '';
     return;
@@ -1000,7 +1117,7 @@ function renderSelected() {
     const removeBtn = document.createElement('button');
     removeBtn.type = 'button';
     removeBtn.className = 'remove-btn';
-    removeBtn.title = 'Remove';
+    removeBtn.title = ikwI18n.t('Remove');
     removeBtn.textContent = '×';
     removeBtn.addEventListener('click', () => {
       selectedIds.delete(id);
@@ -1011,8 +1128,74 @@ function renderSelected() {
     selectedList.appendChild(row);
   });
   const n = selectedIds.size;
-  centerCount.innerHTML = ikwI18n.lang() === 'pl' ? `Obserwujesz <b>${n}</b> z ${MAX_CENTERS} ośrodków pod kątem wolnych terminów.` : `Watching <b>${n}</b> of ${MAX_CENTERS} centers for open slots.`;
+
+  if (searchMode === 'single') {
+    centerCount.textContent = ikwI18n.t('Single-center mode — searching all available dates.');
+  } else {
+    centerCount.textContent = ikwI18n.t(`Watching ${n} of ${MAX_CENTERS} centers for open slots.`);
+  }
 }
+
+function updateSearchModeLabels() {
+  document.getElementById('search-mode-single-title').textContent = ikwI18n.t('Single center');
+  document.getElementById('search-mode-single-desc').textContent = ikwI18n.t('All dates made available by the selected WORD');
+  document.getElementById('search-mode-multi-title').textContent = ikwI18n.t('Multiple centers');
+  document.getElementById('search-mode-multi-desc').textContent = ikwI18n.t('Earliest slots made available by the selected WORD centers (up to 5 centers)');
+}
+
+function setSearchMode(mode, saveCurrent = true) {
+  const nextMode = mode === 'single' ? 'single' : 'multi';
+
+  // Save the center and earliest-date selections belonging to the mode we are leaving.
+  // The initial render passes saveCurrent=false so values loaded from config are
+  // restored before the still-empty form controls can overwrite them.
+  if (saveCurrent) {
+    if (searchMode === 'single') {
+      rememberedSingleId = selectedIds.size ? selectedIds.values().next().value : null;
+      rememberedSingleSearchStartDate = sdpValue.value;
+    } else {
+      rememberedMultiIds = Array.from(selectedIds).slice(0, MAX_CENTERS);
+      rememberedMultiSearchStartDate = sdpValue.value;
+    }
+  }
+
+  searchMode = nextMode;
+
+  // Restore the last selection for the mode we are entering. For an old
+  // config with no separate memory yet, seed the missing mode sensibly.
+  if (searchMode === 'single') {
+    if (rememberedSingleId == null && rememberedMultiIds.length) {
+      rememberedSingleId = rememberedMultiIds[0];
+    }
+    selectedIds = new Set(rememberedSingleId == null ? [] : [rememberedSingleId]);
+  } else {
+    if (!rememberedMultiIds.length && rememberedSingleId != null) {
+      rememberedMultiIds = [rememberedSingleId];
+    }
+    selectedIds = new Set(rememberedMultiIds);
+  }
+
+  document.querySelectorAll('input[name="search_mode"]').forEach((radio) => {
+    radio.checked = radio.value === searchMode;
+  });
+
+  restoreSearchStartForMode();
+
+  const searchStartHint = document.getElementById('search-start-hint');
+
+  updateSearchModeLabels();
+  searchStartHint.textContent = ikwI18n.t('Earliest search date: from 2 days from today up to 6 months ahead.');
+
+  updateSearchStartBound();
+  renderSearchStartCalendar();
+  renderSelected();
+}
+
+document.querySelectorAll('input[name="search_mode"]').forEach((radio) => {
+  radio.addEventListener('change', () => {
+    if (radio.checked) setSearchMode(radio.value);
+  });
+});
 
 function closeDropdown() {
   dropdown.style.display = 'none';
@@ -1021,9 +1204,19 @@ function closeDropdown() {
   activeIndex = -1;
 }
 
+function centerLimit() {
+  return searchMode === 'single' ? 1 : MAX_CENTERS;
+}
+
 function selectCenter(id) {
-  if (selectedIds.size >= MAX_CENTERS) return;
-  selectedIds.add(id);
+  if (searchMode === 'single') {
+    selectedIds.clear();
+    selectedIds.add(id);
+  } else {
+    if (selectedIds.size >= MAX_CENTERS) return;
+    selectedIds.add(id);
+  }
+
   renderSelected();
   searchInput.value = '';
   closeDropdown();
@@ -1039,7 +1232,7 @@ function updateActiveItem() {
 
 function renderDropdown(filter) {
   const f = filter.trim().toLowerCase();
-  const atCap = selectedIds.size >= MAX_CENTERS;
+  const atCap = searchMode === 'multi' && selectedIds.size >= MAX_CENTERS;
   currentMatches = atCap ? [] : CENTERS.filter(c => !selectedIds.has(c.id) && (!f || centerLabel(c).toLowerCase().includes(f)));
   activeIndex = currentMatches.length ? 0 : -1;
   dropdown.innerHTML = '';
@@ -1115,7 +1308,7 @@ wireSwitch(document.getElementById('auto_open_browser'));
 // pattern as applyNtfyDim() above. It also gets its own click handler
 // instead of a plain wireSwitch(), since turning it ON needs a confirm()
 // gate first: unlike every other toggle on this page, this one lets the app
-// submit a real reservation change with no human review step, so a misclick
+// create a real reservation with no human review step, so a misclick
 // shouldn't be able to enable it silently.
 const autoSelectSlotSwitch = document.getElementById('auto_select_slot');
 const autoConfirmSwitch = document.getElementById('auto_confirm_reschedule');
@@ -1130,9 +1323,10 @@ function toggleAutoConfirm() {
   if (!autoSelectSlotSwitch.classList.contains('on')) return;  // covers keyboard activation while dimmed
   const turningOn = !autoConfirmSwitch.classList.contains('on');
   if (turningOn && !confirm(t(
-    "This lets the app automatically click through and submit a real reservation date change "
-    + "the moment it finds a matching slot — no review step, and it can't be undone by closing "
-    + "the browser. Are you sure?"
+    "After the matching slot is selected and the preliminary summary is verified, the app will "
+    + "submit a real reservation through the portal. The portal may then require confirmation or "
+    + "payment. Closing the browser does not undo a submitted reservation. Your existing booking is "
+    + "not cancelled — you may need to cancel it yourself on info-kierowca.pl. Are you sure?"
   ))) return;
   setSwitch(autoConfirmSwitch, turningOn);
 }
@@ -1163,7 +1357,7 @@ function fmtInterval(seconds) {
 function updatePollIntervalDisplay() {
   const seconds = POLL_INTERVAL_STEPS[Number(pollSlider.value)];
   pollIntervalHidden.value = seconds;
-  pollIntervalLabel.textContent = ikwI18n.lang() === 'pl' ? `Co ${fmtInterval(seconds)}` : `Every ${fmtInterval(seconds)}`;
+  pollIntervalLabel.textContent = t(`Every ${fmtInterval(seconds)}`);
 }
 
 function setPollIntervalSeconds(seconds) {
@@ -1470,23 +1664,36 @@ dpInput.addEventListener('click', () => { calendar.classList.contains('open') ? 
 dpInput.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeCalendar(); });
 document.addEventListener('click', (e) => { if (!document.getElementById('datepick').contains(e.target)) closeCalendar(); });
 
-// Independent optional lower bound for eligible slots.  It deliberately uses
-// the same calendar language as the required booking date, while limiting
-// selection to the government site's known search horizon.
+// Search-start range mirrors info-kierowca.pl: from two days ahead through
+// six calendar months ahead, identically for single- and multi-center search.
+// It is deliberately independent of the user's currently booked exam date.
 const sdpInput = document.getElementById('search_start_date_display');
 const sdpValue = document.getElementById('search_start_date');
 const sdpCalendar = document.getElementById('search-start-calendar');
 const clearSearchStartDate = document.getElementById('clear-search-start-date');
-const searchHorizonDate = new Date(todayDate);
-searchHorizonDate.setDate(searchHorizonDate.getDate() + 31);
-let sdpView = new Date(todayDate.getFullYear(), todayDate.getMonth(), 1);
+const earliestSearchStartDate = new Date(todayDate);
+earliestSearchStartDate.setDate(earliestSearchStartDate.getDate() + 2);
+function addMonthsClamped(date, months) {
+  const targetMonthIndex = date.getMonth() + months;
+  const targetYear = date.getFullYear() + Math.floor(targetMonthIndex / 12);
+  const targetMonth = ((targetMonthIndex % 12) + 12) % 12;
+  const lastDay = new Date(targetYear, targetMonth + 1, 0).getDate();
+  return new Date(targetYear, targetMonth, Math.min(date.getDate(), lastDay));
+}
+const latestAllowedSearchStartDate = addMonthsClamped(todayDate, 6);
+let sdpView = new Date(earliestSearchStartDate.getFullYear(), earliestSearchStartDate.getMonth(), 1);
 let selectedSearchStartDate = null;
+
 function latestSearchStartDate() {
-  if (!selectedDate) return null;
+  // A search that starts on/after the current booking can never find an
+  // earlier slot, so cap the picker at the day before it (app.build_config()
+  // enforces the same rule server-side).
+  if (!selectedDate) return latestAllowedSearchStartDate;
   const dayBeforeBooking = new Date(selectedDate);
   dayBeforeBooking.setDate(dayBeforeBooking.getDate() - 1);
-  return dayBeforeBooking < searchHorizonDate ? dayBeforeBooking : searchHorizonDate;
+  return dayBeforeBooking < latestAllowedSearchStartDate ? dayBeforeBooking : latestAllowedSearchStartDate;
 }
+
 function clearSearchStart() {
   selectedSearchStartDate = null;
   sdpValue.value = '';
@@ -1494,9 +1701,39 @@ function clearSearchStart() {
   clearSearchStartDate.classList.remove('visible');
   closeSearchStartCalendar();
 }
+function restoreSearchStartForMode() {
+  const remembered = searchMode === 'single'
+    ? rememberedSingleSearchStartDate
+    : rememberedMultiSearchStartDate;
+
+  if (!remembered) {
+    clearSearchStart();
+    return;
+  }
+
+  const parts = remembered.split('-').map(Number);
+  if (parts.length !== 3 || parts.some((n) => Number.isNaN(n))) {
+    clearSearchStart();
+    return;
+  }
+
+  const configuredDate = new Date(parts[0], parts[1] - 1, parts[2]);
+  const latest = latestSearchStartDate();
+  if (configuredDate < earliestSearchStartDate || !latest || configuredDate > latest) {
+    clearSearchStart();
+    if (searchMode === 'single') rememberedSingleSearchStartDate = '';
+    else rememberedMultiSearchStartDate = '';
+    return;
+  }
+
+  selectedSearchStartDate = configuredDate;
+  sdpValue.value = remembered;
+  sdpInput.value = fmtDate(configuredDate);
+  clearSearchStartDate.classList.add('visible');
+}
 function updateSearchStartBound() {
   const latest = latestSearchStartDate();
-  sdpInput.disabled = !latest || latest < todayDate;
+  sdpInput.disabled = !latest || latest < earliestSearchStartDate;
   if (selectedSearchStartDate && (!latest || selectedSearchStartDate > latest)) clearSearchStart();
 }
 function renderSearchStartCalendar() {
@@ -1518,10 +1755,10 @@ function renderSearchStartCalendar() {
   for (let d = 1; d <= daysInMonth; d++) {
     const date = new Date(sdpView.getFullYear(), sdpView.getMonth(), d);
     const cell = document.createElement('div'); cell.className = 'cal-day'; cell.textContent = d;
-    if (!latest || date < todayDate || date > latest) cell.classList.add('disabled');
+    if (!latest || date < earliestSearchStartDate || date > latest) cell.classList.add('disabled');
     if (sameDay(date, todayDate)) cell.classList.add('today');
     if (sameDay(date, selectedSearchStartDate)) cell.classList.add('selected');
-    if (latest && date >= todayDate && date <= latest) cell.addEventListener('click', (e) => {
+    if (latest && date >= earliestSearchStartDate && date <= latest) cell.addEventListener('click', (e) => {
       e.stopPropagation(); selectedSearchStartDate = date; sdpValue.value = isoOf(date); sdpInput.value = fmtDate(date);
       clearSearchStartDate.classList.add('visible'); closeSearchStartCalendar();
     });
@@ -1539,11 +1776,15 @@ updateSearchStartBound();
 
 renderSelected();
 
+setSearchMode(searchMode, false);
+
 if (EXISTING_CONFIG) {
   loginMethodSelect.value = EXISTING_CONFIG.login_method || 'mobywatel';
   document.getElementById('settings-pz-username').value = EXISTING_CONFIG.pz_username || '';
   if (EXISTING_CONFIG.pz_credential_present) {
-    document.getElementById('password-status').textContent = t('Password saved securely by your operating system; its value is never shown here.');
+    const passwordStatus = document.getElementById('password-status');
+    passwordStatus.dataset.i18n = 'Password saved securely by your operating system; its value is never shown here.';
+    passwordStatus.textContent = t(passwordStatus.dataset.i18n);
   }
   updateAuthFields();
   const pageTitle = document.getElementById('page-title');
@@ -1588,22 +1829,12 @@ if (EXISTING_CONFIG) {
     }
   }
 
-  if (EXISTING_CONFIG.search_start_date) {
-    const parts = EXISTING_CONFIG.search_start_date.split('-').map(Number);
-    if (parts.length === 3 && parts.every((n) => !Number.isNaN(n))) {
-      const configuredDate = new Date(parts[0], parts[1] - 1, parts[2]);
-      if (configuredDate >= todayDate && configuredDate <= searchHorizonDate) {
-        selectedSearchStartDate = configuredDate;
-        sdpValue.value = EXISTING_CONFIG.search_start_date;
-        sdpInput.value = fmtDate(configuredDate);
-        clearSearchStartDate.classList.add('visible');
-      }
-    }
-  }
-
+  // setSearchMode() restores the earliest acceptable date belonging to the
+  // active search mode from its independent remembered value.
+  restoreSearchStartForMode();
   updateSearchStartBound();
 
-  setPollIntervalSeconds(EXISTING_CONFIG.poll_interval_seconds || 60);
+  setPollIntervalSeconds(EXISTING_CONFIG.poll_interval_seconds || 420);
   setTimeWindow(EXISTING_CONFIG.earliest_slot_hour, EXISTING_CONFIG.latest_slot_hour);
   setSwitch(phoneAlertsSwitch, EXISTING_CONFIG.phone_alerts !== false);
   setSwitch(phoneAlertsReloginSwitch, EXISTING_CONFIG.phone_alerts_relogin !== false);
@@ -1619,10 +1850,8 @@ if (EXISTING_CONFIG) {
 }
 
 window.addEventListener('ikw-language-changed', () => {
-  centerLabelHeading.textContent = ikwI18n.lang() === 'pl'
-    ? `Ośrodki WORD do obserwowania (${CENTERS.length} w kraju)`
-    : `WORD centers to watch (${CENTERS.length} nationwide)`;
-  renderSelected();
+  centerLabelHeading.textContent = t(`WORD centers to watch (${CENTERS.length} nationwide)`);
+  setSearchMode(searchMode);
   updatePollIntervalDisplay();
   updateTimeWindow();
   renderCalendar();
@@ -1688,7 +1917,24 @@ document.getElementById('form').addEventListener('submit', async (e) => {
 
     const orgIds = Array.from(selectedIds);
     if (!orgIds.length) throw new Error(t('Pick at least one WORD center.'));
-    if (orgIds.length > MAX_CENTERS) throw new Error(`Pick at most ${MAX_CENTERS} WORD centers — the site's search only accepts ${MAX_CENTERS} at a time.`);
+
+    // Persist the active selection without overwriting the remembered
+    // selection that belongs to the other search mode.
+    if (searchMode === 'single') {
+      rememberedSingleId = orgIds[0];
+      rememberedSingleSearchStartDate = sdpValue.value;
+    } else {
+      rememberedMultiIds = orgIds.slice(0, MAX_CENTERS);
+      rememberedMultiSearchStartDate = sdpValue.value;
+    }
+
+    if (searchMode === 'single' && orgIds.length !== 1) {
+      throw new Error(t('Single-center mode requires exactly one WORD center.'));
+    }
+
+    if (searchMode === 'multi' && orgIds.length > MAX_CENTERS) {
+      throw new Error(`Pick at most ${MAX_CENTERS} WORD centers — the site's search only accepts ${MAX_CENTERS} at a time.`);
+    }
 
     const profileNumber = pkkInput.value.trim();
     if (!profileNumber) throw new Error(t('PKK number is required.'));
@@ -1705,10 +1951,15 @@ document.getElementById('form').addEventListener('submit', async (e) => {
       pz_password: document.getElementById('settings-pz-password').value,
       profile_number: profileNumber,
       organization_ids: orgIds,
+      search_mode: searchMode,
+      single_organization_id: rememberedSingleId,
+      multi_organization_ids: rememberedMultiIds,
       category: category,
       exam_types: examTypes,
       current_slot_date: currentSlotDate,
       search_start_date: sdpValue.value,
+      single_search_start_date: rememberedSingleSearchStartDate,
+      multi_search_start_date: rememberedMultiSearchStartDate,
       poll_interval_seconds: parseInt(document.getElementById('poll_interval_seconds').value, 10),
       earliest_slot_hour: parseInt(timeFromHidden.value, 10),
       latest_slot_hour: parseInt(timeToHidden.value, 10),

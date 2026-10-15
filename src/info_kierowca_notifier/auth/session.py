@@ -745,6 +745,7 @@ def main():
             provider.cancelled = lambda: relogin_control.restart_requested(
                 RESTART_REQUEST_FILE, owner
             )
+
             cookies = provider.authenticate()
             password = None
         else:

@@ -28,18 +28,50 @@ def payload(**overrides):
     return value
 
 
-class SearchStartDateTests(unittest.TestCase):
-    def test_missing_and_invalid_values_preserve_today(self):
-        today = date(2026, 8, 9)
-        self.assertEqual(notifier.search_start_date(None, today=today), today)
-        self.assertEqual(notifier.search_start_date("not-a-date", today=today), today)
+def frozen_app_today(today=date(2026, 8, 9)):
+    """Pin app.build_config()'s notion of today, so date validation doesn't
+    rot as the calendar moves past the fixtures below."""
+    mocked = patch("info_kierowca_notifier.app.datetime")
 
-    def test_date_is_clamped_to_today_and_horizon(self):
+    class _Frozen:
+        def __enter__(self):
+            mocked_datetime = mocked.start()
+            mocked_datetime.now.return_value.date.return_value = today
+            mocked_datetime.fromisoformat.side_effect = __import__("datetime").datetime.fromisoformat
+            return mocked_datetime
+
+        def __exit__(self, *exc):
+            mocked.stop()
+            return False
+
+    return _Frozen()
+
+
+class SearchStartDateTests(unittest.TestCase):
+    def test_missing_and_invalid_values_fall_back_to_earliest_selectable_day(self):
         today = date(2026, 8, 9)
-        self.assertEqual(notifier.search_start_date("2026-08-01", today=today), today)
+        self.assertEqual(notifier.search_start_date(None, today=today), date(2026, 8, 11))
+        self.assertEqual(notifier.search_start_date("not-a-date", today=today), date(2026, 8, 11))
+
+    def test_date_is_raised_to_the_minimum_but_has_no_upper_clamp(self):
+        today = date(2026, 8, 9)
+        self.assertEqual(notifier.search_start_date("2026-08-01", today=today), date(2026, 8, 11))
         self.assertEqual(
-            notifier.search_start_date("2026-10-01", today=today), date(2026, 9, 9)
+            notifier.search_start_date("2026-12-01", today=today), date(2026, 12, 1)
         )
+
+    def test_config_rejects_dates_outside_two_days_to_six_months(self):
+        with frozen_app_today():
+            with self.assertRaisesRegex(ValueError, "at least 2 days"):
+                app.build_config(payload(search_start_date="2026-08-10"))
+            with self.assertRaisesRegex(ValueError, "within the next 6 months"):
+                app.build_config(payload(
+                    current_slot_date="2027-06-01", search_start_date="2027-02-10"
+                ))
+            config = app.build_config(payload(
+                current_slot_date="2027-06-01", search_start_date="2027-02-09"
+            ))
+        self.assertEqual(config["search_start_date"], "2027-02-09")
 
     def test_config_keeps_old_configs_compatible(self):
         config = app.build_config(payload())
@@ -85,7 +117,8 @@ class SearchStartDateTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             config_file, session_file = root / "config.json", root / "session.json"
-            config = app.build_config(payload(search_start_date="2026-08-20"))
+            with frozen_app_today():
+                config = app.build_config(payload(search_start_date="2026-08-20"))
             config_file.write_text(json.dumps(config))
             session_file.write_text(json.dumps({"cookies": {}}))
             calls = []

@@ -92,25 +92,47 @@ PAGE = """<!doctype html>
   #session-expiry-wrap { margin-top: 0.15rem; display: flex; align-items: center; justify-content: center; gap: 0.35rem; }
   #session-expiry { font-size: 0.85rem; opacity: 0.45; }
 
-  #history {
-    margin-top: 3rem;
+  #current-slots {
+    margin-top: 2rem;
     width: 100%;
-    max-width: 700px;
-    max-height: 28vh;
+    max-width: 760px;
+    max-height: 34vh;
     overflow-y: auto;
-    font-size: 0.85rem;
-    opacity: 0.85;
+    text-align: left;
     border-top: 1px solid rgba(255,255,255,0.15);
-    padding-top: 1rem;
+    padding: 0.9rem 0.85rem 0 0;
+    scrollbar-gutter: stable;
   }
-  /* Without this, a row that's cut off by max-height gets sliced mid-line
-     (looks broken - a sliver of barely-legible text) instead of reading
-     as "there's more, scroll for it". Only applied once poll() (below)
-     confirms the list actually overflows, so a short history with no
-     scrollbar never fades its own last, fully-visible row. */
-  #history.ikw-overflowing { mask-image: linear-gradient(to bottom, black calc(100% - 1.6rem), transparent 100%); -webkit-mask-image: linear-gradient(to bottom, black calc(100% - 1.6rem), transparent 100%); }
-  #history div { padding: 0.3rem 0; border-bottom: 1px solid rgba(255,255,255,0.06); }
-  #history .ts { opacity: 0.5; margin-right: 0.6rem; }
+  #current-slots:empty { display: none; }
+  .slots-title {
+    position: sticky;
+    top: 0;
+    padding: 0.25rem 0 0.65rem;
+    font-size: 0.9rem;
+    font-weight: 650;
+    text-align: center;
+    background: inherit;
+  }
+  .slot-day { margin: 0.45rem 0 0.8rem; }
+  .slot-day-title {
+    font-size: 0.82rem;
+    font-weight: 650;
+    opacity: 0.65;
+    padding: 0.25rem 0;
+    border-bottom: 1px solid rgba(255,255,255,0.10);
+  }
+  .slot-row {
+    display: grid;
+    grid-template-columns: 4.5rem minmax(0, 1fr) auto;
+    gap: 0.75rem;
+    align-items: baseline;
+    padding: 0.35rem 0;
+    border-bottom: 1px solid rgba(255,255,255,0.05);
+    font-size: 0.86rem;
+  }
+  .slot-time { font-variant-numeric: tabular-nums; font-weight: 650; }
+  .slot-word { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .slot-places { opacity: 0.72; white-space: nowrap; }
 </style>
 </head>
 <body class="none">
@@ -131,17 +153,19 @@ PAGE = """<!doctype html>
       <span id="session-expiry"></span>
     </div>
   </div>
-  <div id="history"></div>
+  <div id="current-slots"></div>
 
 <script>
 let isPaused = false;
 const ui = (text) => window.ikwI18n ? window.ikwI18n.t(text) : text;
-const uiLocale = () => window.ikwI18n && window.ikwI18n.lang() === "pl" ? "pl-PL" : undefined;
+const uiLocale = () => window.ikwI18n && window.ikwI18n.lang() === "pl" ? "pl-PL" : "en-GB";
+const placesLabel = (n) => window.ikwI18n && window.ikwI18n.places ? window.ikwI18n.places(n) : `${n} ${n === 1 ? "spot" : "spots"}`;
 // Epoch ms of the next scheduled check, straight off status.json's own
 // next_check_at (notifier.py's loop() writes it as the *actual* resolved
 // wait, jitter included) - so the countdown counts down to the real next
 // check instead of guessing from a fixed interval.
 let nextCheckAt = null;
+let rateLimitUntil = null;
 
 function fmtDateTime(iso) {
   if (!iso) return "";
@@ -158,6 +182,66 @@ function fmtShort(iso) {
   return d.toLocaleString(uiLocale(), {
     day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit"
   });
+}
+
+function fmtDay(iso) {
+  const d = new Date(iso);
+  return d.toLocaleDateString(uiLocale(), {
+    weekday: "long", day: "2-digit", month: "long", year: "numeric"
+  });
+}
+
+function fmtTime(iso) {
+  const d = new Date(iso);
+  return d.toLocaleTimeString(uiLocale(), {hour: "2-digit", minute: "2-digit"});
+}
+
+function dayKey(iso) {
+  const d = new Date(iso);
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+}
+
+function renderCurrentSlots(container, hits, stale = false) {
+  container.innerHTML = "";
+  if (!hits || !hits.length) return;
+
+  const sorted = hits.slice().sort((a, b) => new Date(a.datetime) - new Date(b.datetime));
+  const title = document.createElement("div");
+  title.className = "slots-title";
+  title.textContent = stale
+    ? `${ui("Last confirmed available slots")} (${sorted.length})`
+    : `${ui("Available now")} (${sorted.length})`;
+  container.appendChild(title);
+
+  let currentKey = null;
+  let dayBox = null;
+  for (const hit of sorted) {
+    const key = dayKey(hit.datetime);
+    if (key !== currentKey) {
+      currentKey = key;
+      dayBox = document.createElement("div");
+      dayBox.className = "slot-day";
+      const dayTitle = document.createElement("div");
+      dayTitle.className = "slot-day-title";
+      dayTitle.textContent = fmtDay(hit.datetime);
+      dayBox.appendChild(dayTitle);
+      container.appendChild(dayBox);
+    }
+
+    const row = document.createElement("div");
+    row.className = "slot-row";
+    const time = document.createElement("span");
+    time.className = "slot-time";
+    time.textContent = fmtTime(hit.datetime);
+    const word = document.createElement("span");
+    word.className = "slot-word";
+    word.textContent = hit.word || "";
+    const places = document.createElement("span");
+    places.className = "slot-places";
+    places.textContent = placesLabel(Number(hit.places));
+    row.append(time, word, places);
+    dayBox.appendChild(row);
+  }
 }
 
 function fastestOf(hits) {
@@ -184,9 +268,17 @@ async function poll() {
   const subline = document.getElementById("subline");
   const detail = document.getElementById("detail");
   const meta = document.getElementById("meta");
-  const history = document.getElementById("history");
+  const currentSlots = document.getElementById("current-slots");
 
   const fastest = fastestOf(data.current_hits);
+  // current_hits is a snapshot from the latest successful search. Never merge
+  // it with history: a slot seen on an earlier check may already be booked.
+  const showStaleSlots = data.outcome === "rate_limited" && data.current_hits && data.current_hits.length;
+  renderCurrentSlots(
+    currentSlots,
+    (data.outcome === "slot_found" || showStaleSlots) ? data.current_hits : [],
+    !!showStaleSlots
+  );
   isPaused = !!data.paused;
   headlineIconPause.style.display = isPaused ? "none" : "";
   headlineIconPlay.style.display = isPaused ? "" : "none";
@@ -211,8 +303,23 @@ async function poll() {
   } else if (data.outcome === "slot_found" && fastest) {
     body.className = data.urgent ? "hit-soon" : "hit-far";
     headline.textContent = fmtDateTime(fastest.datetime);
-    subline.textContent = `${fastest.word} · ${fastest.places} ${ui("spots")}`;
+    subline.textContent = `${fastest.word} · ${placesLabel(Number(fastest.places))}`;
     detail.textContent = "";
+  } else if (data.outcome === "rate_limited") {
+    body.className = "none";
+    const resume = data.rate_limit_until ? new Date(Number(data.rate_limit_until) * 1000) : null;
+    const resumeText = resume && !Number.isNaN(resume.getTime())
+      ? resume.toLocaleTimeString(uiLocale(), {hour: "2-digit", minute: "2-digit", second: "2-digit"})
+      : "";
+    headline.textContent = resumeText
+      ? ui(`Rate limit reached — search resumes at ${resumeText}`)
+      : ui("Rate limit reached");
+    subline.textContent = data.last_successful_search
+      ? `${ui("Last successful search")}: ${fmtDateTime(data.last_successful_search)}`
+      : "";
+    detail.textContent = showStaleSlots
+      ? ui("The slots below are from the last successful search and may no longer be current.")
+      : "";
   } else if (data.outcome === "auth_expired") {
     body.className = "error";
     // relogin_manual_required (see notifier.run_check()'s own comment on
@@ -241,18 +348,19 @@ async function poll() {
     detail.textContent = data.message ? ui(data.message) : ui("Unexpected response — check manually");
   } else if (data.outcome === "no_slot") {
     body.className = "none";
-    headline.textContent = ui("No slots in the next 31 days");
+    headline.textContent = ui("No available slots found");
     subline.textContent = "";
     detail.textContent = "";
   } else {
     body.className = "none";
-    headline.textContent = ui("Waiting for first check…");
+    headline.textContent = data.last_check ? ui("Waiting for next check…") : ui("Waiting for first check…");
     subline.textContent = "";
     detail.textContent = "";
   }
 
   meta.textContent = data.last_check ? `${ui("Last checked")}: ${fmtDateTime(data.last_check)}` : ui("No checks yet");
   nextCheckAt = data.next_check_at ? new Date(data.next_check_at).getTime() : null;
+  rateLimitUntil = data.rate_limit_until ? Number(data.rate_limit_until) * 1000 : null;
 
   const sessionExpiry = document.getElementById("session-expiry");
   // Estimate only - the real signal is the "Session expired" outcome above;
@@ -269,22 +377,19 @@ async function poll() {
     sessionExpiry.textContent = "";
   }
 
-  history.innerHTML = "";
-  (data.history || []).slice().reverse().forEach(entry => {
-    const div = document.createElement("div");
-    // History entries written before the schema narrowed carry the full
-    // "hits" list instead of a precomputed "fastest" — read either.
-    const f = entry.fastest || fastestOf(entry.hits);
-    const text = f ? `${fmtShort(f.datetime)} · ${f.word} (${f.places})` : ui("no slots in the next 31 days");
-    div.innerHTML = `<span class="ts">${fmtDateTime(entry.seen_at)}</span>${text}`;
-    history.appendChild(div);
-  });
-  history.classList.toggle("ikw-overflowing", history.scrollHeight > history.clientHeight + 1);
 }
 
 function tickCountdown() {
   const el = document.getElementById("countdown");
-  if (isPaused || nextCheckAt === null) { el.textContent = ""; return; }
+  if (isPaused) { el.textContent = ""; return; }
+  if (rateLimitUntil !== null && rateLimitUntil > Date.now()) {
+    const remaining = Math.ceil((rateLimitUntil - Date.now()) / 1000);
+    const m = Math.floor(remaining / 60);
+    const s = remaining % 60;
+    el.textContent = ui(`Search resumes in ${m}:${String(s).padStart(2, "0")}`);
+    return;
+  }
+  if (nextCheckAt === null) { el.textContent = ""; return; }
   const remaining = Math.round((nextCheckAt - Date.now()) / 1000);
   if (remaining <= 0) {
     el.textContent = ui("Checking any moment now…");
@@ -295,6 +400,7 @@ function tickCountdown() {
   }
 }
 
+window.addEventListener("ikw-language-changed", () => { poll(); tickCountdown(); });
 poll();
 setInterval(poll, 5000);
 setInterval(tickCountdown, 1000);

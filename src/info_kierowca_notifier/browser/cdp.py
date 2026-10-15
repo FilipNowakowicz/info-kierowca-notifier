@@ -23,7 +23,7 @@ from urllib.parse import urlparse
 
 from info_kierowca_notifier.paths import CONFIG_DIR, SESSION_FILE
 
-COOKIE_NAMES = {"__Secure-PUDOJT", "__Secure-PUDOJTMD"}
+COOKIE_NAMES = {"__Secure-PUDOJT", "__Secure-PUDOJTMD", "__Host-Http-PUDO-DeviceId"}
 DOMAIN_SUFFIX = "info-kierowca.pl"
 
 
@@ -336,24 +336,33 @@ def set_cookies(host, port, cookies):
     fetch_cookies) — call before the profile's first navigation there so the
     site sees an already-authenticated session instead of a login page.
 
-    httpOnly is deliberately False: confirmed live that the site's own
-    frontend reads these cookies via `document.cookie` to decide its logged-
-    in UI state (no `/jwt/refresh` call happens on page load), so an
-    httpOnly copy is invisible to it and it renders as logged out even
-    though the cookie is still sent correctly on every request.
+    The two __Secure-* session cookies remain script-readable because the
+    site's frontend uses document.cookie for its logged-in UI state. The
+    __Host-Http-* device cookie is different: Chromium requires it to be
+    host-only, Secure, Path=/ and HttpOnly.
     """
-    cookie_params = [
-        {
-            "name": name,
-            "value": value,
-            "domain": DOMAIN_SUFFIX,
-            "path": "/",
-            "secure": True,
-            "httpOnly": False,
-            "sameSite": "Lax",
-        }
-        for name, value in cookies.items()
-    ]
+    cookie_params = []
+    for name, value in cookies.items():
+        if name.startswith("__Host-Http-"):
+            cookie_params.append({
+                "name": name,
+                "value": value,
+                "url": f"https://{DOMAIN_SUFFIX}/",
+                "path": "/",
+                "secure": True,
+                "httpOnly": True,
+                "sameSite": "Lax",
+            })
+        else:
+            cookie_params.append({
+                "name": name,
+                "value": value,
+                "domain": DOMAIN_SUFFIX,
+                "path": "/",
+                "secure": True,
+                "httpOnly": False,
+                "sameSite": "Lax",
+            })
     with cdp_socket(browser_ws_url(host, port)) as sock:
         cdp_call(sock, 1, "Storage.setCookies", {"cookies": cookie_params})
 

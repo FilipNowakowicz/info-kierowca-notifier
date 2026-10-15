@@ -7,7 +7,7 @@ import urllib.request
 from datetime import datetime
 from pathlib import Path
 
-from info_kierowca_notifier.booking import reschedule as open_logged_in_browser
+from info_kierowca_notifier.booking import reservation as open_logged_in_browser
 from info_kierowca_notifier.browser import chrome
 from info_kierowca_notifier.paths import (
     RESCHEDULE_CONFIRM_COOLDOWN_FILE,
@@ -72,7 +72,7 @@ def _restrict_log_permissions(path):
 
 
 def trigger_open_browser(logger, config, auto_click=True, target_hit=None):
-    """Best-effort: launch booking.reschedule so a pre-authenticated
+    """Best-effort: launch booking.reservation so a pre-authenticated
     tab is already open by the moment the push notification lands — skips
     the login step that otherwise costs you the fastest-moving slots.
 
@@ -95,7 +95,7 @@ def trigger_open_browser(logger, config, auto_click=True, target_hit=None):
     target_hit, when given together with auto_click and config's
     experimental, default-off "auto_select_slot" flag, is one of
     run_check()'s hit_dicts (word/exam_type/datetime/places) — passed
-    through as --target-slot JSON so booking.reschedule can also try
+    through as --target-slot JSON so booking.reservation can also try
     to expand that date's slot group, select the matching time radio
     button, and click through to the summary/review screen, past the plain
     date-picker screen.
@@ -103,14 +103,14 @@ def trigger_open_browser(logger, config, auto_click=True, target_hit=None):
     A second, separate, also default-off flag — config's
     "auto_confirm_reschedule" — additionally passes --confirm-reschedule,
     which (only once auto_select_slot has already landed on the summary
-    screen, and only after booking.reschedule itself re-verifies
+    screen, and only after booking.reservation itself re-verifies
     that screen matches the intended slot) clicks through the final
     "Potwierdź i przejdź dalej" confirm button — actually submitting the
     reservation change. auto_confirm_reschedule alone, without
     auto_select_slot, does nothing (no --target-slot means
-    booking.reschedule never reaches that screen to confirm on).
+    booking.reservation never reaches that screen to confirm on).
     UNVERIFIED against the live site as of 2026-07-20, by explicit user
-    request that same day — see booking.reschedule's own docstrings
+    request that same day — see booking.reservation's own docstrings
     for exactly what it does and does not click, and the verification step
     that gates the final click. Both flags are omitted entirely (no
     --target-slot/--confirm-reschedule at all) whenever off, so a config
@@ -125,7 +125,7 @@ def trigger_open_browser(logger, config, auto_click=True, target_hit=None):
     The launched subprocess's stdout/stderr go to RESCHEDULE_LOG_FILE
     (append mode) rather than DEVNULL — this is a
     detached, fire-and-forget launch with no other way for its outcome to
-    reach anyone, and booking.reschedule's own print()s are the only
+    reach anyone, and booking.reservation's own print()s are the only
     record of what an auto-triggered run actually did, especially the
     "couldn't verify automatically — check yourself" messages past the
     confirm click.
@@ -155,9 +155,14 @@ def trigger_open_browser(logger, config, auto_click=True, target_hit=None):
         cmd = [sys.executable, str(OPEN_BROWSER_SCRIPT)]
     if not auto_click:
         cmd.append("--no-auto-click")
-    elif target_hit is not None and config.get("auto_select_slot", False):
+    elif target_hit is not None:
+        # The target WORD is needed even for the non-auto-select flow: search
+        # mode only discovers the winner; reservation always opens that one
+        # concrete centre through the portal's OneCenterExam path.
         cmd += ["--target-slot", json.dumps(target_hit)]
-        if config.get("auto_confirm_reschedule", False):
+        if config.get("auto_select_slot", False):
+            cmd.append("--auto-select-slot")
+        if config.get("auto_select_slot", False) and config.get("auto_confirm_reschedule", False):
             if confirm_reschedule_cooldown_active():
                 logger.info("outcome=confirm_reschedule_skipped detail=cooldown_active")
             # The cooldown is armed HERE, before the child exists — not by the

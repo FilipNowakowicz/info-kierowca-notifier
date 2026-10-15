@@ -1,23 +1,21 @@
 # Info-Kierowca Notifier — wolne terminy egzaminu na prawo jazdy
 
-### Powiadomienia i automatyczna zmiana rezerwacji
+### Notifications and reservation assistance
 
 [Pełna dokumentacja po polsku](README.pl.md) · English
 
 **Po polsku:** Bezpłatna i otwartoźródłowa alternatywa dla aplikacji takich jak
 Złap Termin, PrawkoBot, PrawkoSniper, Szybki Egzamin i SzybkiePrawko. Wyszukuje
 wolne, wcześniejsze terminy egzaminu na prawo jazdy w WORD, wysyła powiadomienia
-i może automatycznie zmienić termin istniejącej rezerwacji w info-kierowca.pl.
+i może automatycznie otworzyć proces rezerwacji znalezionego terminu w info-kierowca.pl.
 Działa na Twoim komputerze, bez abonamentu i przekazywania sesji zewnętrznemu
 operatorowi. Logujesz się raz przez Profil Zaufany, a kolejne logowania i
 odnawianie sesji odbywają się automatycznie.
 
-Find earlier Polish driving exam dates and automatically reschedule your existing booking on
+Find earlier Polish driving exam dates and quickly open or automate the reservation flow on
 [info-kierowca.pl](https://info-kierowca.pl). Sign in once with Profil Zaufany, and the app keeps
 your session active, monitors your chosen exam centers, and alerts you on the dashboard and your
-phone when a suitable slot appears. If you already have a paid booking, you can either complete the
-date change yourself or enable automatic rebooking so the app selects the matching slot, verifies
-its details, and submits the change for you.
+phone when a suitable slot appears. If you already have a booked exam, its date can be used as the comparison point. When a better slot appears, you can choose it yourself or let the optional automation select it, verify the preliminary summary, and create the reservation through the portal.
 
 ## Features
 
@@ -45,10 +43,8 @@ its details, and submits the change for you.
 3. Choose **Profil Zaufany** (recommended), enter your username and password, and pair Google
    Messages Web when prompted. This lets the app complete both the initial login and later
    session renewals automatically. mObywatel QR login remains available as a manual fallback.
-4. You need an existing booked exam: this app changes the date of that booking; it does not
-   create a new booking. Have that booking's date ready.
-5. Confirm the PKK number/license category it found for you (or fill them in manually if you
-   skipped), pick your exam center(s), **enter the date of the booking to reschedule**, and choose how you want to be notified.
+4. Confirm the PKK number/license category it found for you (or fill them in manually if needed) and pick your exam center(s).
+5. Set the earliest acceptable exam date and your other search criteria. If you want the app to compare new slots with an exam you already hold, enter that current booked exam date as the comparison point, then choose how you want to be notified.
 
 That's it — from then on, that browser tab is your dashboard, with a **Quit** button whenever you
 want to shut it down.
@@ -77,15 +73,15 @@ It checks the same two endpoints info-kierowca.pl's own site uses to show you sl
 does that automatically, on a timer, instead of you refreshing the page by hand. Checking is
 strictly read-only: no booking, no reserving, nothing beyond checking availability.
 
-If you turn on the reschedule assist (on by default, toggle with `auto_open_browser`), a matching
-slot also opens a Chrome window already logged in with your session, and clicks through to the
-"change date" screen for your existing booking. By default it stops there, on an empty date-range
-picker with nothing submitted — picking the new date and confirming is always done by you, by hand.
-Settings → Automation has two optional toggles for this, both off by default: one pre-selects the
-matching slot and reaches the summary screen, the other — requiring the first, and its own
-confirm dialog before it'll switch on — also confirms it, actually submitting the reservation
-change with no click from you at all. See [docs/ADVANCED.md](docs/ADVANCED.md) for exactly what
-each one clicks and the safeguards around the final change.
+If you turn on the reservation assist (on by default, toggle with `auto_open_browser`), a matching
+slot also opens a Chrome window already logged in with your session. Regardless of whether the slot
+was found in single- or multi-center search, the browser opens the normal reservation flow for the
+WORD where that slot was found and loads that centre's available exams. By default it stops on the
+available-exams screen so you still choose the slot yourself.
+Settings → Automation has two optional toggles, both off by default: auto-select chooses the exact
+matching slot and advances to the preliminary reservation summary without submitting anything;
+auto-confirm additionally verifies that summary and lets the portal create the reservation, leaving
+the browser open for any required confirmation/payment. See [docs/ADVANCED.md](docs/ADVANCED.md).
 
 The info-kierowca.pl session still expires after roughly an hour. With Profil Zaufany configured,
 the app starts refreshing it five minutes before the estimated expiry: it opens its dedicated

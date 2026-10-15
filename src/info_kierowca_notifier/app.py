@@ -9,6 +9,7 @@ Composes notifier (poll loop), web.server (status page), and auth.session
 them — see each module's own docstring for what it does on its own.
 """
 import http.server
+import calendar
 import json
 import os
 import re
@@ -31,7 +32,7 @@ from info_kierowca_notifier import notifier
 from info_kierowca_notifier import client
 from info_kierowca_notifier.auth import launch as auth_launch
 from info_kierowca_notifier.booking import launch as booking_launch
-from info_kierowca_notifier.booking import reschedule as open_logged_in_browser
+from info_kierowca_notifier.booking import reservation as open_logged_in_browser
 from info_kierowca_notifier import tls_transport
 from info_kierowca_notifier.paths import CATEGORIES_FILE, WORD_CENTERS_FILE
 from info_kierowca_notifier.web.templates import LOGIN_PAGE, TOOLBAR_HTML, WIZARD_PAGE
@@ -129,13 +130,12 @@ def check_session_valid():
 
 def _wait_for_relogin_and_wake(prior_captured_at, wake_event):
     """Runs in a background thread after a forced relogin is launched, so
-    the dashboard's session-expiry estimate updates the moment the QR scan
-    lands instead of waiting for the poll loop's next regularly scheduled
-    cycle (up to MAX_POLL_INTERVAL_SECONDS away). Waking the loop just
-    re-runs run_check(), which recomputes session_expires_estimate from
-    session.json's fresh captured_at - same mechanism /setup already uses
-    for an interval change, so there's still only one thread ever touching
-    dash_status/status.json.
+    the dashboard/scheduler notices the fresh session without waiting for the
+    next regularly scheduled cycle (up to MAX_POLL_INTERVAL_SECONDS away).
+    The poll loop treats this Event as a state/schedule wake-up. If a SEARCH
+    was already due and is itself waiting for authentication, notifier.py
+    keeps that due-search state separately and runs it immediately after the
+    fresh captured_at appears; a wake from Settings still only reschedules.
 
     Watches for session.json's captured_at to actually change rather than
     just the auto-refresh lock clearing, since a stuck/failed relogin
@@ -195,15 +195,57 @@ def build_config(payload):
     if not NTFY_TOPIC_PATTERN.match(ntfy_topic):
         raise ValueError(NTFY_TOPIC_ERROR)
 
+    search_mode = payload.get("search_mode", "multi")
+    if search_mode not in ("single", "multi"):
+        raise ValueError("Choose a supported search mode")
+
     organization_ids = payload.get("organization_ids")
     if not isinstance(organization_ids, list) or not organization_ids:
         raise ValueError("Pick at least one WORD center")
+
     organization_ids = to_int_list(organization_ids, "WORD center IDs")
-    if len(organization_ids) > notifier.SEARCH_ORG_ID_COUNT:
+
+    if search_mode == "single":
+        if len(organization_ids) != 1:
+            raise ValueError("Single-center mode requires exactly one WORD center")
+    else:
+        if len(organization_ids) > notifier.SEARCH_ORG_ID_COUNT:
+            raise ValueError(
+                f"Pick at most {notifier.SEARCH_ORG_ID_COUNT} WORD centers "
+                "— the site's search only accepts that many at a time"
+            )
+
+    # Keep the user's selections for both search modes. organization_ids remains
+    # the active selection consumed by notifier.py; these two fields are UI
+    # memory only, so switching single <-> multi never destroys the other mode's
+    # selection. Old configs migrate from the active organization_ids.
+    single_organization_id = payload.get("single_organization_id")
+    if single_organization_id in (None, ""):
+        single_organization_id = organization_ids[0]
+    try:
+        single_organization_id = int(single_organization_id)
+    except (TypeError, ValueError):
+        raise ValueError("Single-center WORD center ID must be numeric")
+
+    multi_organization_ids = payload.get("multi_organization_ids")
+    if multi_organization_ids is None:
+        multi_organization_ids = list(organization_ids)
+    if not isinstance(multi_organization_ids, list):
+        raise ValueError("Multi-center WORD center IDs must be a list")
+    multi_organization_ids = list(dict.fromkeys(
+        to_int_list(multi_organization_ids, "Multi-center WORD center IDs")
+    ))
+    if len(multi_organization_ids) > notifier.SEARCH_ORG_ID_COUNT:
         raise ValueError(
             f"Pick at most {notifier.SEARCH_ORG_ID_COUNT} WORD centers "
-            "— the site's search only accepts that many at a time"
+            "for multi-center mode"
         )
+
+    # The active mode is authoritative when Settings is saved.
+    if search_mode == "single":
+        single_organization_id = organization_ids[0]
+    else:
+        multi_organization_ids = list(dict.fromkeys(organization_ids))
 
     exam_types = payload.get("exam_types")
     if not isinstance(exam_types, list) or not exam_types or not set(exam_types) <= set(EXAM_TYPE_CHOICES):
@@ -254,13 +296,52 @@ def build_config(payload):
         except ValueError:
             raise ValueError("Earliest acceptable exam date must be a date like 2026-09-14")
         today = datetime.now().date()
-        horizon = today + timedelta(days=notifier.MAX_DAYS_AHEAD)
-        if not today <= parsed_search_start <= horizon:
-            raise ValueError("Earliest acceptable exam date must be within the next 31 days")
+        minimum = today + timedelta(days=notifier.SEARCH_START_MIN_DAYS_AHEAD)
+        target_month = today.month - 1 + 6
+        max_year = today.year + target_month // 12
+        max_month = target_month % 12 + 1
+        maximum = date(
+            max_year,
+            max_month,
+            min(today.day, calendar.monthrange(max_year, max_month)[1]),
+        )
+
+        if parsed_search_start < minimum:
+            raise ValueError("Earliest acceptable exam date must be at least 2 days from today")
+        if parsed_search_start > maximum:
+            raise ValueError("Earliest acceptable exam date must be within the next 6 months")
         if parsed_search_start >= parsed_current_slot:
             raise ValueError("Earliest acceptable exam date must be before the current booking date")
     else:
         search_start = ""
+
+    # Keep the optional earliest acceptable date separately for both search
+    # modes. search_start_date remains the active value consumed by notifier.py;
+    # these two fields are UI memory, mirroring the per-mode WORD-center memory.
+    # Old configs migrate the active search_start_date only to the mode that was
+    # active when saved, leaving the other mode empty.
+    single_search_start_date = payload.get("single_search_start_date")
+    multi_search_start_date = payload.get("multi_search_start_date")
+
+    if single_search_start_date is None:
+        single_search_start_date = search_start if search_mode == "single" else ""
+    if multi_search_start_date is None:
+        multi_search_start_date = search_start if search_mode == "multi" else ""
+
+    for remembered_date in (single_search_start_date, multi_search_start_date):
+        if not isinstance(remembered_date, str):
+            raise ValueError("Earliest acceptable exam date must be a date like 2026-09-14")
+        if remembered_date:
+            try:
+                date.fromisoformat(remembered_date)
+            except ValueError:
+                raise ValueError("Earliest acceptable exam date must be a date like 2026-09-14")
+
+    # The active mode is authoritative when Settings is saved.
+    if search_mode == "single":
+        single_search_start_date = search_start
+    else:
+        multi_search_start_date = search_start
 
     login_method = payload.get("login_method", "mobywatel")
     if login_method not in ("mobywatel", "profil_zaufany"):
@@ -271,13 +352,18 @@ def build_config(payload):
     config = {
         "login_method": login_method,
         "pz_username": pz_username,
+        "search_mode": search_mode,
         "organization_ids": organization_ids,
+        "single_organization_id": single_organization_id,
+        "multi_organization_ids": multi_organization_ids,
         "category": category,
         "profile_number": profile_number,
         "exam_types": exam_types,
         "ntfy_topic": ntfy_topic,
         "current_slot_date": current_slot_date,
         "search_start_date": search_start,
+        "single_search_start_date": single_search_start_date,
+        "multi_search_start_date": multi_search_start_date,
         "poll_interval_seconds": poll_interval_seconds,
         "earliest_slot_hour": earliest_slot_hour,
         "latest_slot_hour": latest_slot_hour,
@@ -542,7 +628,9 @@ class AppHandler(guard.LocalRequestGuardMixin, http.server.BaseHTTPRequestHandle
         elif self.path == "/pause":
             self._set_paused(True)
         elif self.path == "/resume":
-            self._set_paused(False)
+            payload = self._read_json_body()
+            if payload is not None:
+                self._set_paused(False, resume_choice=payload.get("expired_rate_limit_choice"))
         elif self.path == "/test-push":
             self._handle_test_push()
         elif self.path == "/reset-account":
@@ -554,16 +642,49 @@ class AppHandler(guard.LocalRequestGuardMixin, http.server.BaseHTTPRequestHandle
         else:
             self._send(404, b"not found", "text/plain")
 
-    def _set_paused(self, paused):
-        """Writes both the flag file and status.json synchronously, so the
-        dashboard and the headline's pause/resume icon reflect the change
-        the instant it's clicked instead of waiting for the poll loop's
-        next tick (which could be up to INTERVAL seconds away).
+    def _set_paused(self, paused, resume_choice=None):
+        """Apply pause/resume immediately and keep the dashboard in sync.
+
+        If a server rate-limit expired while checking was deliberately paused,
+        the first Resume request asks the UI to choose between one immediate
+        check and a normal fresh polling interval.  We stay paused until that
+        choice arrives, so merely opening the prompt cannot consume a request.
         """
+        if not paused:
+            # Covers both a running process and restart-after-expiry: make the
+            # wall-clock expiry visible before deciding whether Resume needs a
+            # choice.  clear_expired_rate_limit_status() records the pending
+            # choice when the persisted pause flag is still active.
+            AppHandler.dash_status["paused"] = notifier.is_paused()
+            notifier.clear_expired_rate_limit_status(AppHandler.dash_status)
+            pending = bool(AppHandler.dash_status.get("expired_rate_limit_pending_choice"))
+            if pending and resume_choice not in ("check_now", "wait"):
+                notifier.save_status(AppHandler.dash_status)
+                self._send_json(200, {
+                    "ok": True,
+                    "paused": True,
+                    "action": "expired_rate_limit_choice",
+                    "expired_at": AppHandler.dash_status.get("expired_rate_limit_at"),
+                })
+                return
+
         notifier.set_paused(paused)
         AppHandler.dash_status["paused"] = paused
+
+        if not paused:
+            if resume_choice == "check_now":
+                AppHandler.dash_status["force_check_now"] = True
+            AppHandler.dash_status.pop("expired_rate_limit_pending_choice", None)
+            AppHandler.dash_status.pop("expired_rate_limit_at", None)
+            notifier.clear_expired_rate_limit_status(AppHandler.dash_status)
+
+        # Publish the complete state *before* waking the poll thread.  FINAL7
+        # woke first and only then wrote force_check_now / saved status, which
+        # left a real race where the poller could observe a half-applied Resume
+        # and go back to sleep until an obsolete deadline.
         notifier.save_status(AppHandler.dash_status)
-        self._send_json(200, {"ok": True, "paused": paused})
+        AppHandler.wake_event.set()
+        self._send_json(200, {"ok": True, "paused": paused, "action": resume_choice or "updated"})
 
     def _handle_manual_login(self):
         """Backing handler for the 'Open browser' button: probes the session
@@ -760,17 +881,23 @@ class AppHandler(guard.LocalRequestGuardMixin, http.server.BaseHTTPRequestHandle
         self._send_json(200, response)
         if needs_login:
             AppHandler.logger.info("outcome=setup_complete detail=triggering_login")
-        # Wake the already-running poll loop rather than waiting for its
-        # current cycle to time out (up to the *old* poll_interval_seconds
-        # away) -- otherwise the dashboard the user's about to land on would
-        # still show whatever stale status predates this config (e.g.
-        # "Missing config.json"), and the countdown would keep counting down
-        # the interval from before this save. Waking the real loop thread
-        # (rather than spawning a second one-off run_check() here) also
-        # means there's only ever one thread touching dash_status/status.json
-        # at a time. run_check() itself calls trigger_auto_refresh() when
-        # session.json is still missing, so this covers the needs_login case
-        # too without a separate explicit call.
+        else:
+            AppHandler.logger.info(
+                "outcome=setup_complete detail=settings_saved_rescheduling_poll"
+            )
+
+        # Only an actual polling-interval change resets the local countdown.
+        # Other Settings saves still wake the scheduler (so it can observe
+        # fresh configuration) but must preserve the current countdown.
+        previous_interval = previous.get(
+            "poll_interval_seconds", notifier.DEFAULT_POLL_INTERVAL_SECONDS
+        )
+        new_interval = config.get(
+            "poll_interval_seconds", notifier.DEFAULT_POLL_INTERVAL_SECONDS
+        )
+        if previous_interval != new_interval:
+            AppHandler.dash_status["poll_interval_reset_to"] = float(new_interval)
+
         AppHandler.wake_event.set()
 
     def _handle_test_push(self):

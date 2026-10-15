@@ -111,9 +111,11 @@ class LoopWakeEventOrderingTests(unittest.TestCase):
                 stop_event.set()
 
         logger = logging.getLogger("test-info-kierowca-notifier-loop")
+        # is_paused() reads the real PAUSE_FILE; a developer machine with the
+        # app left paused would otherwise make this test wait forever.
         with mock.patch.object(notifier, "run_check", side_effect=fake_run_check), \
              mock.patch.object(notifier, "configured_poll_interval", return_value=0.3), \
-             mock.patch.object(notifier, "jittered_wait", side_effect=lambda s: s), \
+             mock.patch.object(notifier, "is_paused", return_value=False), \
              mock.patch.object(notifier, "save_status"):
             notifier.loop(logger, {}, stop_event=stop_event, wake_event=wake_event)
 
@@ -125,6 +127,160 @@ class LoopWakeEventOrderingTests(unittest.TestCase):
         # the pre-wait clear() discards it, so ~the full configured interval
         # elapses before the second run_check().
         self.assertGreaterEqual(gap, 0.2)
+
+
+class PauseCountdownRegressionTests(unittest.TestCase):
+    def test_pause_longer_than_old_deadline_preserves_remaining_countdown(self):
+        """Regression for FINAL7's stuck "check shortly" state.
+
+        If Pause lasts longer than the pre-pause wall-clock deadline, Resume
+        must still wait the frozen remainder instead of treating that obsolete
+        deadline as due.
+        """
+        stop_event = threading.Event()
+        wake_event = threading.Event()
+        paused = {"value": False}
+        checks = []
+
+        def fake_run_check(logger, dash_status):
+            checks.append(time.monotonic())
+            if len(checks) >= 2:
+                stop_event.set()
+
+        def fake_is_paused():
+            return paused["value"]
+
+        def set_pause(value):
+            paused["value"] = value
+            wake_event.set()
+
+        logger = logging.getLogger("test-pause-freeze-long")
+        with mock.patch.object(notifier, "run_check", side_effect=fake_run_check), \
+             mock.patch.object(notifier, "configured_poll_interval", return_value=0.20), \
+             mock.patch.object(notifier, "is_paused", side_effect=fake_is_paused), \
+             mock.patch.object(notifier, "save_status"):
+            thread = threading.Thread(
+                target=notifier.loop,
+                args=(logger, {}, None, stop_event, wake_event),
+            )
+            thread.start()
+            time.sleep(0.05)       # ~0.15 s should remain
+            set_pause(True)
+            time.sleep(0.30)       # longer than the obsolete original deadline
+            set_pause(False)
+            thread.join(1.0)
+
+        self.assertEqual(len(checks), 2)
+        # ~0.05 active + 0.30 paused + ~0.15 resumed = ~0.50 wall seconds.
+        self.assertGreaterEqual(checks[1] - checks[0], 0.43)
+
+    def test_repeated_pause_resume_consumes_only_unpaused_time(self):
+        """Several Pause/Resume cycles must subtract only running time."""
+        stop_event = threading.Event()
+        wake_event = threading.Event()
+        paused = {"value": False}
+        checks = []
+
+        def fake_run_check(logger, dash_status):
+            checks.append(time.monotonic())
+            if len(checks) >= 2:
+                stop_event.set()
+
+        def fake_is_paused():
+            return paused["value"]
+
+        def set_pause(value):
+            paused["value"] = value
+            wake_event.set()
+
+        logger = logging.getLogger("test-pause-freeze-repeated")
+        with mock.patch.object(notifier, "run_check", side_effect=fake_run_check), \
+             mock.patch.object(notifier, "configured_poll_interval", return_value=0.24), \
+             mock.patch.object(notifier, "is_paused", side_effect=fake_is_paused), \
+             mock.patch.object(notifier, "save_status"):
+            thread = threading.Thread(
+                target=notifier.loop,
+                args=(logger, {}, None, stop_event, wake_event),
+            )
+            thread.start()
+            for _ in range(3):
+                time.sleep(0.04)
+                set_pause(True)
+                time.sleep(0.08)
+                set_pause(False)
+            thread.join(1.0)
+
+        self.assertEqual(len(checks), 2)
+        # 0.24 s running + 3*0.08 s paused => about 0.48 s wall time.
+        self.assertGreaterEqual(checks[1] - checks[0], 0.42)
+
+
+class PollIntervalChangeSemanticsTests(unittest.TestCase):
+    def _run_two_checks(self, interval, actions):
+        stop_event = threading.Event()
+        wake_event = threading.Event()
+        paused = {"value": False}
+        dash_status = {}
+        checks = []
+
+        def fake_run_check(logger, status):
+            checks.append(time.monotonic())
+            if len(checks) >= 2:
+                stop_event.set()
+
+        def fake_is_paused():
+            return paused["value"]
+
+        logger = logging.getLogger("test-interval-change-semantics")
+        with mock.patch.object(notifier, "run_check", side_effect=fake_run_check), \
+             mock.patch.object(notifier, "configured_poll_interval", return_value=interval), \
+             mock.patch.object(notifier, "is_paused", side_effect=fake_is_paused), \
+             mock.patch.object(notifier, "save_status"):
+            thread = threading.Thread(
+                target=notifier.loop,
+                args=(logger, dash_status, None, stop_event, wake_event),
+            )
+            thread.start()
+            actions(dash_status, paused, wake_event)
+            thread.join(2.0)
+        self.assertEqual(len(checks), 2)
+        return checks[1] - checks[0]
+
+    def test_unrelated_settings_save_preserves_running_countdown(self):
+        def actions(status, paused, wake):
+            time.sleep(0.06)
+            wake.set()  # Save without poll_interval_reset_to
+
+        gap = self._run_two_checks(0.20, actions)
+        self.assertGreaterEqual(gap, 0.17)
+        self.assertLess(gap, 0.30)
+
+    def test_interval_change_resets_running_countdown(self):
+        def actions(status, paused, wake):
+            time.sleep(0.06)
+            status["poll_interval_reset_to"] = 0.18
+            wake.set()
+
+        gap = self._run_two_checks(0.20, actions)
+        # ~0.06 already elapsed, then a fresh ~0.18 countdown.
+        self.assertGreaterEqual(gap, 0.21)
+
+    def test_interval_change_while_paused_replaces_frozen_remainder(self):
+        def actions(status, paused, wake):
+            time.sleep(0.05)
+            paused["value"] = True
+            wake.set()
+            time.sleep(0.04)
+            status["poll_interval_reset_to"] = 0.18
+            wake.set()
+            time.sleep(0.04)
+            paused["value"] = False
+            wake.set()
+
+        gap = self._run_two_checks(0.20, actions)
+        # ~0.05 active + ~0.08 paused + fresh ~0.18 after Resume.
+        self.assertGreaterEqual(gap, 0.27)
+
 
 
 if __name__ == "__main__":

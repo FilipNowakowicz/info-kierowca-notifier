@@ -1,26 +1,23 @@
 # Info-Kierowca Notifier — wolne terminy egzaminu na prawo jazdy
 
-### Powiadomienia i automatyczna zmiana rezerwacji
+### Powiadomienia i wspomaganie rezerwacji
 
 [English](README.md) · Polski
 
 Bezpłatna i otwartoźródłowa alternatywa dla aplikacji takich jak Złap Termin,
 PrawkoBot, PrawkoSniper, Szybki Egzamin i SzybkiePrawko. Znajduj wcześniejsze
-terminy egzaminu na prawo jazdy i automatycznie zmieniaj datę istniejącej
-rezerwacji w [info-kierowca.pl](https://info-kierowca.pl). Program działa na
+terminy egzaminu na prawo jazdy i szybciej przechodź do rezerwacji znalezionego terminu w [info-kierowca.pl](https://info-kierowca.pl). Program działa na
 Twoim komputerze, bez abonamentu i przekazywania sesji zewnętrznemu operatorowi.
 Zaloguj się raz przez Profil Zaufany, a aplikacja będzie utrzymywać aktywną
 sesję, monitorować wybrane ośrodki WORD i informować o pasującym terminie w
-panelu oraz na telefonie. Możesz zmienić datę samodzielnie albo włączyć
-automatyczną zmianę terminu — aplikacja wybierze pasujący termin, sprawdzi jego
-dane i wyśle zmianę za Ciebie.
+panelu oraz na telefonie. Możesz samodzielnie wybrać termin w otwartej przeglądarce albo włączyć automatyczny wybór znalezionego terminu. Opcjonalne automatyczne potwierdzenie może utworzyć rezerwację po sprawdzeniu podsumowania.
 
 ## Możliwości
 
 - **Jedno logowanie:** Profil Zaufany pozwala automatycznie logować się ponownie i odnawiać sesję.
 - **Dokładne wyszukiwanie:** wybierz ośrodki WORD, typ egzaminu, daty i godziny.
 - **Natychmiastowe powiadomienia:** zobacz termin w panelu i opcjonalnie na telefonie.
-- **Automatyczna zmiana terminu:** aplikacja może wybrać, sprawdzić i potwierdzić wcześniejszy termin.
+- **Wspomaganie rezerwacji:** aplikacja może otworzyć właściwy WORD, wybrać znaleziony termin i opcjonalnie utworzyć rezerwację po sprawdzeniu podsumowania.
 - **Dane pod Twoją kontrolą:** dane logowania i sesja pozostają na Twoim komputerze.
 - **Bez opłat:** program jest otwartoźródłowy, na licencji MIT i bez abonamentu.
 
@@ -41,8 +38,8 @@ dane i wyśle zmianę za Ciebie.
 3. Wybierz **Profil Zaufany** (zalecane), wpisz nazwę użytkownika i hasło oraz sparuj Google
    Messages Web zgodnie z instrukcją. Dzięki temu pierwsze logowanie i późniejsze odnawianie sesji
    przebiegają automatycznie. Logowanie kodem QR mObywatel pozostaje ręczną opcją zapasową.
-4. Potrzebujesz już zarezerwowanego egzaminu: aplikacja zmienia datę tej rezerwacji, a nie tworzy nowej. Przygotuj datę tej rezerwacji.
-5. Potwierdź wykryty numer PKK/kategorię prawa jazdy (lub wypełnij je ręcznie), wybierz ośrodek/ośrodki egzaminacyjne, **wpisz datę rezerwacji do zmiany terminu** i wybierz sposób powiadamiania.
+4. Potwierdź wykryty numer PKK/kategorię prawa jazdy (lub wypełnij je ręcznie) oraz wybierz ośrodek/ośrodki egzaminacyjne.
+5. Ustaw najwcześniejszą akceptowalną datę egzaminu i pozostałe kryteria wyszukiwania oraz sposób powiadamiania. Jeśli używasz porównania z już zarezerwowanym egzaminem, podaj również jego datę.
 
 Od tej pory otwarta karta przeglądarki jest Twoim panelem; znajduje się w niej przycisk **Zakończ** do wyłączenia programu.
 
@@ -70,7 +67,7 @@ logowanie na żywo.
 
 Program sprawdza te same dwa endpointy, których używa strona info-kierowca.pl do wyświetlania terminów. Robi to automatycznie, według zegara, zamiast ręcznego odświeżania strony. Sprawdzanie jest ściśle tylko do odczytu: nie rezerwuje ani nie wykonuje żadnego działania poza sprawdzeniem dostępności.
 
-Jeśli włączysz pomoc przy zmianie terminu (domyślnie włączona, przełącznik `auto_open_browser`), pasujący termin otworzy także zalogowane okno Chrome na ekranie „zmień termin” istniejącej rezerwacji. Domyślnie program zatrzymuje się tam, na pustym wyborze zakresu dat, bez wysyłania danych — nową datę wybierasz i potwierdzasz ręcznie. W Ustawienia → Automatyzacja są dwa opcjonalne przełączniki, oba domyślnie wyłączone: pierwszy wybiera pasujący termin i przechodzi do podsumowania, drugi — wymagający pierwszego i własnego okna potwierdzenia przed włączeniem — również go potwierdza, faktycznie wysyłając zmianę rezerwacji bez kliknięcia użytkownika. Dokładny opis działania i zabezpieczeń końcowej zmiany znajduje się w [docs/ADVANCED.md](docs/ADVANCED.md).
+Jeśli włączysz wspomaganie rezerwacji (domyślnie włączone, przełącznik `auto_open_browser`), pasujący termin otworzy zalogowane okno Chrome w zwykłym procesie rezerwacji dla WORD-u, w którym znaleziono lepszy termin. Domyślnie program zatrzymuje się na ekranie dostępnych egzaminów, a termin wybierasz samodzielnie. W Ustawienia → Automatyzacja są dwa opcjonalne przełączniki, oba domyślnie wyłączone: pierwszy wybiera dokładnie znaleziony termin i przechodzi do „Podsumowania wstępnej rezerwacji” bez wysyłania rezerwacji; drugi, wymagający pierwszego, po sprawdzeniu podsumowania pozwala portalowi utworzyć rezerwację i pozostawia przeglądarkę otwartą na potrzeby ewentualnego potwierdzenia lub płatności. Szczegóły i zabezpieczenia opisano w [docs/ADVANCED.md](docs/ADVANCED.md).
 
 Sesja info-kierowca.pl nadal wygasa po około godzinie. Po skonfigurowaniu Profilu Zaufanego
 aplikacja rozpoczyna jej odnawianie pięć minut przed szacowanym wygaśnięciem: otwiera dedykowany

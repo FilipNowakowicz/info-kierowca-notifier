@@ -16,34 +16,38 @@ LOCALIZATION_SCRIPT = r"""
     'PKK number': 'Numer PKK', 'License category': 'Kategoria prawa jazdy', 'More categories': 'Więcej kategorii',
     'Fewer categories': 'Mniej kategorii', 'Use my PKK profile instead': 'Użyj mojego profilu PKK',
     'Exam type': 'Rodzaj egzaminu', 'Theoretical': 'Teoretyczny', 'Practical': 'Praktyczny',
+    'Search mode': 'Tryb wyszukiwania', 'Single center': 'Jeden ośrodek', 'Multiple centers': 'Wiele ośrodków',
+    'All dates made available by the selected WORD': 'Wszystkie terminy udostępnione przez wybrany WORD', 'Earliest slots made available by the selected WORD centers (up to 5 centers)': 'Najbliższe terminy udostępnione przez wybrane WORD (do 5 ośrodków)',
+    'Single-center mode — searching all available dates.': 'Tryb pojedynczego ośrodka — wyszukiwanie wszystkich dostępnych terminów.',
     'Alerts': 'Powiadomienia', 'Automation': 'Automatyzacja', 'WORD centers to watch (__CENTER_COUNT__ nationwide)': 'Ośrodki WORD do obserwowania (__CENTER_COUNT__ w kraju)',
     'Click to browse all centers, or type to filter...': 'Kliknij, aby przeglądać ośrodki, lub wpisz tekst, aby filtrować...',
     'Date of your current booked slot — a found slot on an earlier date beats this and triggers the alerts below': 'Data obecnie zarezerwowanego terminu — wolny termin wcześniejszy niż ten uruchomi poniższe powiadomienia',
     'Select a date': 'Wybierz datę', 'Preferred time of day': 'Preferowana pora dnia', 'All day': 'Cały dzień',
-    "A slot outside this window won't trigger an alert or open the reschedule browser. Checking and the dashboard still show everything found.": 'Termin poza tym przedziałem nie uruchomi powiadomienia ani przeglądarki zmiany terminu. Sprawdzanie i panel nadal pokażą wszystkie znalezione terminy.',
+    "A slot outside this window won't trigger an alert or open the reservation browser. Checking and the dashboard still show everything found.": 'Termin poza tym przedziałem nie uruchomi powiadomienia ani przeglądarki rezerwacji. Sprawdzanie i panel nadal pokażą wszystkie znalezione terminy.',
     'Send a phone alert when a slot beats your booked date': 'Wyślij powiadomienie na telefon, gdy termin jest wcześniejszy',
     'Buzzes your phone when a watched center opens a slot on or before your booked date. Turn off to just watch the dashboard.': 'Powiadamia telefon, gdy obserwowany ośrodek udostępni termin w dniu obecnej rezerwacji lub wcześniej. Wyłącz, aby tylko obserwować panel.',
     'Send a phone alert when your session expires': 'Wyślij powiadomienie na telefon po wygaśnięciu sesji',
     'Buzzes your phone when your login expires and Chrome reopens for you to scan the QR again. Turn off to only get the desktop popup.': 'Powiadamia telefon, gdy logowanie wygaśnie i Chrome otworzy się ponownie, aby zeskanować kod QR. Wyłącz, aby otrzymywać tylko komunikat na komputerze.',
     'Buzzes your phone when your login expires and needs a fresh Profil Zaufany login. Turn off to only get the desktop popup.': 'Powiadamia telefon, gdy logowanie wygaśnie i będzie potrzebne ponowne logowanie przez Profil Zaufany. Wyłącz, aby otrzymywać tylko komunikat na komputerze.',
-    'Your private notification link — install the ': 'Twój prywatny link powiadomień — zainstaluj aplikację ', ' and subscribe to it exactly:': ' i zasubskrybuj dokładnie ten link:',
+    'Your private notification link — install the': 'Twój prywatny link powiadomień — zainstaluj aplikację', 'and subscribe to it exactly:': 'i zasubskrybuj dokładnie ten link:',
     'Copy link': 'Kopiuj link', "Anyone who knows this link can read your notifications — don't share it.": 'Każdy, kto zna ten link, może odczytać powiadomienia — nie udostępniaj go.',
     'Send test push': 'Wyślij testowe powiadomienie', 'Check frequency': 'Częstotliwość sprawdzania',
     'Run automatic Profil Zaufany login in the background': 'Uruchamiaj automatyczne logowanie przez Profil Zaufany w tle',
     'Starts Chrome headlessly so no window pops up. Google Messages must already be paired.': 'Uruchamia Chrome bez interfejsu, więc nie pojawia się żadne okno. Wiadomości Google muszą być wcześniej sparowane.',
-    "Checks land a little later than this at random each time (up to +15%), so requests don't all hit the site on one exact, predictable cadence. Faster than a minute means noticeably more requests against a site with no documented rate limits.": 'Sprawdzenia odbywają się za każdym razem losowo nieco później (do +15%), aby żądania nie trafiały na stronę w identycznym rytmie. Częściej niż raz na minutę oznacza wyraźnie więcej żądań do strony bez udokumentowanych limitów.',
-    'Open my booking when a slot beats your booked date': 'Otwórz moją rezerwację, gdy znajdzie się wcześniejszy termin', 'Opens a logged-in browser at your booking\'s "change date" screen. You still pick the date and confirm yourself.': 'Otwiera zalogowaną przeglądarkę na ekranie zmiany terminu rezerwacji. Datę wybierasz i potwierdzasz samodzielnie.',
-    'Experimental: auto-select the matching slot': 'Eksperymentalne: automatycznie wybierz pasujący termin', 'Unverified against the live site. Also expands the matching date group and picks the exact exam type/time on the change-date screen, then goes to the summary/review screen. Still stops there — nothing is submitted.': 'Niezweryfikowane na działającej stronie. Rozwija także grupę pasującej daty, wybiera dokładny rodzaj/godzinę egzaminu i przechodzi do ekranu podsumowania. Na tym kończy — nic nie jest wysyłane.',
-    'Experimental: auto-confirm the reservation change': 'Eksperymentalne: automatycznie potwierdź zmianę rezerwacji', 'Requires the toggle above. Submits the actual date change with no review step — the one action in this project that can\'t be undone by closing the browser. Only turn this on once you\'ve watched auto-select pick the right slot reliably.': 'Wymaga powyższego przełącznika. Wysyła faktyczną zmianę terminu bez kroku sprawdzania — jedyne działanie w programie, którego nie można cofnąć przez zamknięcie przeglądarki. Włącz je dopiero, gdy automatyczny wybór niezawodnie wskazuje właściwy termin.',
+    'info-kierowca.pl allows about 10 searches per hour. Faster than every 6 minutes uses them up early in the hour; the app then waits for the limit to reset instead of going over it.': 'info-kierowca.pl pozwala na około 10 wyszukiwań na godzinę. Sprawdzanie częściej niż co 6 minut wyczerpuje je na początku godziny; program czeka wtedy na odnowienie limitu, zamiast go przekraczać.',
+    'Open the reservation page when an earlier slot is found': 'Otwórz rezerwację, gdy znajdzie się wcześniejszy termin', 'Opens a logged-in browser on the available-exams screen for the WORD where the better slot was found. You still choose the slot yourself.': 'Otwiera zalogowaną przeglądarkę na ekranie dostępnych egzaminów dla WORD-u, w którym znaleziono wcześniejszy termin. Termin nadal wybierasz samodzielnie.',
+    'Auto-select the matching slot': 'Automatycznie wybierz pasujący termin', 'Also selects the exact matching date/time and advances through the reservation wizard to the preliminary reservation summary. Stops there — nothing is submitted.': 'Dodatkowo wybiera dokładnie pasującą datę i godzinę oraz przechodzi przez kolejne kroki rezerwacji do ekranu podsumowania wstępnej rezerwacji. Na tym się zatrzymuje — nic nie jest wysyłane.',
+    'Auto-confirm the reservation': 'Automatycznie utwórz rezerwację', 'Requires the toggle above. After verifying the preliminary summary, creates the reservation and leaves the browser open for any required confirmation/payment. This action cannot be undone by simply closing the browser. Your existing booking is not cancelled — you may need to cancel it yourself on info-kierowca.pl.': 'Wymaga powyższego przełącznika. Po sprawdzeniu podsumowania wstępnej rezerwacji tworzy rezerwację i pozostawia przeglądarkę otwartą na potrzeby ewentualnego potwierdzenia lub płatności. Tej czynności nie można cofnąć przez samo zamknięcie przeglądarki. Twoja obecna rezerwacja nie zostanie anulowana — może być konieczne samodzielne anulowanie jej w info-kierowca.pl.',
+    'Get new session now': 'Pobierz nową sesję teraz',
     'Save and log in': 'Zapisz i zaloguj', 'Save changes': 'Zapisz zmiany', 'Reset account': 'Zresetuj konto',
     "Logs you out and clears your saved settings — you'll land back on the login screen to reconnect your account.": 'Wylogowuje i usuwa zapisane ustawienia — wrócisz do ekranu logowania, aby ponownie połączyć konto.',
     'The new Profil Zaufany account was saved, but the previous credential could not be removed from the operating-system credential store.': 'Nowe konto Profilu Zaufanego zostało zapisane, ale nie udało się usunąć poprzednich danych logowania z magazynu poświadczeń systemu operacyjnego.',
     'Local account data was reset, but the saved Profil Zaufany credential could not be removed from the operating-system credential store.': 'Lokalne dane konta zostały zresetowane, ale nie udało się usunąć zapisanych danych logowania Profilu Zaufanego z magazynu poświadczeń systemu operacyjnego.',
-    'Back to dashboard': 'Wróć do panelu', 'Show or hide PKK number': 'Pokaż lub ukryj numer PKK', 'Show or hide Profil Zaufany username': 'Pokaż lub ukryj nazwę użytkownika Profilu Zaufanego', 'Show or hide notification link': 'Pokaż lub ukryj link powiadomień',
+    'Back to dashboard': 'Wróć do panelu', 'Show or hide PKK number': 'Pokaż lub ukryj numer PKK', 'Show or hide Profil Zaufany email address': 'Pokaż lub ukryj adres e-mail użytkownika Profilu Zaufanego', 'Show or hide notification link': 'Pokaż lub ukryj link powiadomień',
     'No centers yet — search above to add one.': 'Nie wybrano jeszcze ośrodków — wyszukaj powyżej, aby dodać.', 'Remove': 'Usuń', 'No matching centers.': 'Brak pasujących ośrodków.', 'All centers added.': 'Dodano wszystkie ośrodki.',
     'Connect your account': 'Połącz konto', 'Log in with mObywatel': 'Zaloguj się przez mObywatel', 'Waiting for QR scan...': 'Oczekiwanie na skan kodu QR...', 'Skip and enter my PKK number manually': 'Pomiń i wpisz numer PKK ręcznie',
     'Choose how the notifier should authenticate. Profil Zaufany can recover expired sessions automatically after setup.': 'Wybierz sposób uwierzytelniania. Po konfiguracji Profil Zaufany może automatycznie odnawiać wygasłe sesje.',
-    'Profil Zaufany username': 'Nazwa użytkownika Profilu Zaufanego', 'Profil Zaufany password': 'Hasło Profilu Zaufanego',
+    'Profil Zaufany email address': 'Adres e-mail użytkownika Profilu Zaufanego', 'Profil Zaufany password': 'Hasło Profilu Zaufanego',
     'Pair Google Messages Web': 'Sparuj Google Messages Web',
     'Required for automatic Profil Zaufany login: pairing lets the app read the one-time SMS code from Google Messages.': 'Wymagane do automatycznego logowania przez Profil Zaufany: sparowanie pozwala aplikacji odczytać jednorazowy kod SMS z Wiadomości Google.',
     'Log in with Profil Zaufany': 'Zaloguj się przez Profil Zaufany', 'Authenticating automatically...': 'Automatyczne uwierzytelnianie...',
@@ -60,21 +64,23 @@ LOCALIZATION_SCRIPT = r"""
     "Log in once via the mObywatel QR code — this is what lets the notifier check for\n  slots on your behalf. While we're at it, we'll also find your PKK number and license category\n  automatically, so you don't have to type them in.": 'Zaloguj się raz kodem QR w aplikacji mObywatel — dzięki temu program może sprawdzać terminy w Twoim imieniu. Przy okazji automatycznie znajdzie numer PKK i kategorię prawa jazdy, więc nie trzeba ich wpisywać ręcznie.',
     "A Chrome window should open — scan the QR code in the mObywatel app. This page continues on its own once you're logged in.": 'Powinno otworzyć się okno Chrome — zeskanuj kod QR w aplikacji mObywatel. Po zalogowaniu strona przejdzie dalej automatycznie.',
     "Logging in automatically with your saved Profil Zaufany credentials and the SMS code from Google Messages. This page continues on its own once you're logged in.": 'Trwa automatyczne logowanie przy użyciu zapisanych danych Profilu Zaufanego i kodu SMS z Wiadomości Google. Po zalogowaniu strona przejdzie dalej automatycznie.',
-    'Before continuing, you need an existing booked exam. This app changes the date of that booking; it does not create a new booking.': 'Przed kontynuowaniem potrzebujesz już zarezerwowanego egzaminu. Ta aplikacja zmienia datę tej rezerwacji; nie tworzy nowej rezerwacji.',
+    'Enter your currently booked exam date. The app uses it only as a comparison point for finding earlier slots — it does not change or cancel your existing reservation.': 'Wpisz datę obecnie zarezerwowanego egzaminu. Aplikacja używa jej wyłącznie jako punktu odniesienia do wyszukiwania wcześniejszych terminów — nie zmienia ani nie anuluje istniejącej rezerwacji.',
     'Got it': 'Rozumiem', 'Dismiss booking prerequisite message': 'Ukryj informację o wymaganej istniejącej rezerwacji',
-    'Required: date of the booking to reschedule': 'Wymagane: data rezerwacji do zmiany terminu',
-    'Enter the date of the existing booking that you want the app to reschedule.': 'Wpisz datę istniejącej rezerwacji, której termin aplikacja ma zmienić.',
+    'Required: current booked exam date': 'Wymagane: data obecnie zarezerwowanego egzaminu',
+    'This date is only a comparison point for alerts and reservation automation. If you have an active reservation, the portal may require you to cancel it and wait for cancellation confirmation before creating a new one.': 'Ta data służy wyłącznie jako punkt odniesienia dla powiadomień i automatyzacji rezerwacji. Jeśli masz aktywną rezerwację, portal może wymagać jej wcześniejszego anulowania i oczekiwania na potwierdzenie anulowania przed utworzeniem nowej.',
     'Earliest acceptable exam date (optional)': 'Najwcześniejsza akceptowalna data egzaminu (opcjonalnie)',
-    'Ignore slots before this date. Leave blank to search from today; the site searches at most 31 days ahead.': 'Pomiń terminy przed tą datą. Pozostaw puste, aby szukać od dziś; strona wyszukuje najwyżej 31 dni do przodu.',
+    'Earliest search date: from 2 days from today up to 6 months ahead.': 'Najwcześniejsza data wyszukiwania: od 2 dni od dzisiaj do 6 miesięcy naprzód.',
     'Clear earliest acceptable date': 'Wyczyść najwcześniejszą akceptowalną datę',
     'Open browser': 'Otwórz przeglądarkę', 'Quit': 'Zakończ', 'Get new session': 'Pobierz nową sesję',
     'Paused': 'Wstrzymano', 'Click to resume': 'Kliknij, aby wznowić', 'Click to pause': 'Kliknij, aby wstrzymać',
-    'Dashboard lost contact with the notifier': 'Panel utracił połączenie z programem', 'spots': 'miejsc',
+    'Dashboard lost contact with the notifier': 'Panel utracił połączenie z programem', 'spots': 'miejsc', 'Available now': 'Dostępne teraz', 'Last confirmed available slots': 'Ostatnio potwierdzone dostępne terminy',
+    'Rate limit reached': 'Osiągnięto limit wyszukiwań', 'Last successful search': 'Ostatnie prawidłowe wyszukiwanie',
+    'The slots below are from the last successful search and may no longer be current.': 'Poniższe terminy pochodzą z ostatniego prawidłowego wyszukiwania i mogą być już nieaktualne.',
     'Log back in via browser and update session.json': 'Zaloguj się ponownie w przeglądarce i zaktualizuj session.json',
     "Can't reach info-kierowca.pl — will retry": 'Nie można połączyć się z info-kierowca.pl — ponowna próba nastąpi automatycznie',
     'Unexpected response — check manually': 'Nieoczekiwana odpowiedź — sprawdź ręcznie', 'Last checked': 'Ostatnie sprawdzenie',
     'No checks yet': 'Brak sprawdzeń', 'Session expires in': 'Sesja wygaśnie za', 'min': 'min',
-    'no slots in the next 31 days': 'brak terminów w ciągu najbliższych 31 dni', 'Next check in': 'Następne sprawdzenie za',
+    'No available slots found': 'Brak dostępnych terminów', 'Next check in': 'Następne sprawdzenie za',
     'Sending...': 'Wysyłanie...', 'Sent — check your phone.': 'Wysłano — sprawdź telefon.', 'Failed to send.': 'Nie udało się wysłać.',
     'Could not reach ntfy. Check your network connection.': 'Nie można połączyć się z ntfy. Sprawdź połączenie z internetem.',
     'TLS certificate verification failed. Check your system trust settings.': 'Weryfikacja certyfikatu TLS nie powiodła się. Sprawdź ustawienia zaufanych certyfikatów systemu.',
@@ -105,18 +111,20 @@ LOCALIZATION_SCRIPT = r"""
     'The old Profil Zaufany login closed, but Chrome failed to relaunch — check the log.': 'Poprzednie logowanie przez Profil Zaufany zostało zamknięte, ale Chrome nie uruchomił się ponownie — sprawdź dziennik.',
     'Could not open Chrome — try the manual option below.': 'Nie udało się otworzyć Chrome — spróbuj opcji ręcznej poniżej.',
     "Login didn't complete — the Chrome window may have been closed. Try again.": 'Logowanie nie zostało ukończone — okno Chrome mogło zostać zamknięte. Spróbuj ponownie.',
-    "This lets the app automatically click through and submit a real reservation date change the moment it finds a matching slot — no review step, and it can't be undone by closing the browser. Are you sure?": 'To pozwala programowi automatycznie przejść dalej i wysłać rzeczywistą zmianę daty rezerwacji po znalezieniu pasującego terminu — bez etapu sprawdzania i bez możliwości cofnięcia przez zamknięcie przeglądarki. Czy na pewno chcesz kontynuować?',
+    "After the matching slot is selected and the preliminary summary is verified, the app will submit a real reservation through the portal. The portal may then require confirmation or payment. Closing the browser does not undo a submitted reservation. Your existing booking is not cancelled — you may need to cancel it yourself on info-kierowca.pl. Are you sure?": 'Po wybraniu pasującego terminu i sprawdzeniu podsumowania wstępnej rezerwacji program wyśle rzeczywistą rezerwację przez portal. Portal może następnie wymagać potwierdzenia lub płatności. Zamknięcie przeglądarki nie cofa wysłanej rezerwacji. Twoja obecna rezerwacja nie zostanie anulowana — może być konieczne samodzielne anulowanie jej w info-kierowca.pl. Czy na pewno chcesz kontynuować?',
     'Invalid request.': 'Nieprawidłowe żądanie.', 'Notification topic is required': 'Temat powiadomień jest wymagany',
     'PKK number is required': 'Numer PKK jest wymagany', 'Pick at least one WORD center': 'Wybierz co najmniej jeden ośrodek WORD',
+    'Choose a supported search mode': 'Wybierz obsługiwany tryb wyszukiwania', 'Single-center mode requires exactly one WORD center': 'Tryb jednego ośrodka wymaga wybrania dokładnie jednego ośrodka WORD',
     'WORD center IDs must be numeric IDs': 'Identyfikatory ośrodków WORD muszą być liczbami', 'Pick at least one exam type': 'Wybierz co najmniej jeden rodzaj egzaminu',
     'Category must be a number': 'Kategoria musi być liczbą', 'Check frequency must be a number': 'Częstotliwość sprawdzania musi być liczbą',
     'Preferred time window must be numbers': 'Preferowany przedział godzin musi zawierać liczby', 'Preferred time window must be a valid range between 00:00 and 24:00': 'Preferowany przedział godzin musi być poprawnym zakresem od 00:00 do 24:00',
     'Current slot date is required': 'Data obecnego terminu jest wymagana', 'Current slot date must be a date like 2026-09-14': 'Data obecnego terminu musi mieć format 2026-09-14',
     'Earliest acceptable exam date must be a date like 2026-09-14': 'Najwcześniejsza akceptowalna data egzaminu musi mieć format 2026-09-14',
-    'Earliest acceptable exam date must be within the next 31 days': 'Najwcześniejsza akceptowalna data egzaminu musi przypadać w ciągu najbliższych 31 dni',
+    'Earliest acceptable exam date must be at least 2 days from today': 'Najwcześniejsza akceptowalna data egzaminu musi przypadać co najmniej 2 dni od dzisiaj', 'Earliest acceptable exam date must be within the next 6 months': 'Najwcześniejsza akceptowalna data egzaminu musi przypadać w ciągu najbliższych 6 miesięcy',
     'Earliest acceptable exam date must be before the current booking date': 'Najwcześniejsza akceptowalna data egzaminu musi przypadać przed datą obecnej rezerwacji',
     'Something went wrong.': 'Coś poszło nie tak.', 'Could not reach the app.': 'Nie można połączyć się z programem.',
     'Paused — checking will stop until you resume.': 'Wstrzymano — sprawdzanie nie będzie działać do momentu wznowienia.', 'Resumed checking.': 'Wznowiono sprawdzanie.',
+    'The search limit has expired. Check for available slots now? Choose Cancel to start the normal countdown instead.': 'Limit wyszukiwań już wygasł. Sprawdzić dostępne terminy teraz? Wybierz Anuluj, aby zamiast tego rozpocząć standardowe odliczanie.',
     'Toggle pause': 'Przełącz wstrzymanie', 'No notification topic set yet.': 'Nie ustawiono jeszcze tematu powiadomień.',
     'Session looks valid — opening a logged-in browser tab.': 'Sesja wygląda na ważną — otwieranie zalogowanej karty przeglądarki.',
     'A logged-in browser tab is already open.': 'Zalogowana karta przeglądarki jest już otwarta.',
@@ -135,12 +143,19 @@ LOCALIZATION_SCRIPT = r"""
     'Chrome failed to launch — check the log.': 'Chrome nie zostało uruchomione — sprawdź dziennik.',
     'No Chrome, Edge, or other Chromium-based browser was found on this machine — install one to continue.': 'Na tym komputerze nie znaleziono Chrome, Edge ani innej przeglądarki opartej na Chromium — zainstaluj ją, aby kontynuować.',
     'No Chrome, Edge, or other Chromium-based browser was found on this machine. Install one and try again.': 'Na tym komputerze nie znaleziono Chrome, Edge ani innej przeglądarki opartej na Chromium. Zainstaluj ją i spróbuj ponownie.',
-    'Session expired': 'Sesja wygasła', 'Offline': 'Offline', "Something's wrong": 'Coś poszło nie tak', 'No slots in the next 31 days': 'Brak terminów w ciągu najbliższych 31 dni', 'Waiting for first check…': 'Oczekiwanie na pierwsze sprawdzenie…', 'Checking any moment now…': 'Sprawdzenie nastąpi za chwilę…',
+    'Session expired': 'Sesja wygasła', 'Offline': 'Offline', "Something's wrong": 'Coś poszło nie tak', 'Waiting for first check…': 'Oczekiwanie na pierwsze sprawdzenie…', 'Waiting for next check…': 'Oczekiwanie na kolejne sprawdzenie…', 'Checking any moment now…': 'Sprawdzenie nastąpi za chwilę…',
     'Session expired — manual retry required': 'Sesja wygasła — wymagane ręczne ponowienie',
     'Automatic login is paused after repeated failures — open Settings and click "Get new session now."': 'Automatyczne logowanie jest wstrzymane po kilku nieudanych próbach — otwórz Ustawienia i kliknij „Pobierz nową sesję teraz”.',
   };
   const originals = new WeakMap();
   function lang() { return localStorage.getItem(KEY) === 'pl' ? 'pl' : 'en'; }
+  function places(count) {
+    const n = Number(count);
+    if (lang() !== 'pl') return `${n} ${n === 1 ? 'spot' : 'spots'}`;
+    const abs = Math.abs(n); const mod10 = abs % 10; const mod100 = abs % 100;
+    const word = n === 1 ? 'miejsce' : (mod10 >= 2 && mod10 <= 4 && !(mod100 >= 12 && mod100 <= 14) ? 'miejsca' : 'miejsc');
+    return `${n} ${word}`;
+  }
   function t(text) {
     if (lang() !== 'pl') return text;
     if (PL[text]) return PL[text];
@@ -150,6 +165,18 @@ LOCALIZATION_SCRIPT = r"""
     if (match) return `Wybierz najwyżej ${match[1]} ośrodków WORD — wyszukiwarka strony przyjmuje jednocześnie tylko tyle.`;
     match = text.match(/^Check frequency must be between (\d+) and (\d+) seconds$/);
     if (match) return `Częstotliwość sprawdzania musi mieścić się między ${match[1]} a ${match[2]} sekundami.`;
+    match = text.match(/^WORD centers to watch \((\d+) nationwide\)$/);
+    if (match) return `Ośrodki WORD do obserwowania (${match[1]} w kraju)`;
+    match = text.match(/^Watching (\d+) of (\d+) centers for open slots\.$/);
+    if (match) return `Obserwujesz ${match[1]} z ${match[2]} ośrodków pod kątem wolnych terminów.`;
+    match = text.match(/^Every (.+)$/);
+    if (match) return `Co ${match[1]}`;
+    match = text.match(/^The search limit expired at (.+)\. Check for available slots now\? Choose Cancel to start the normal countdown instead\.$/);
+    if (match) return `Limit wyszukiwań wygasł o ${match[1]}. Sprawdzić dostępne terminy teraz? Wybierz Anuluj, aby zamiast tego rozpocząć standardowe odliczanie.`;
+    match = text.match(/^Rate limit reached — search resumes at (.+)$/);
+    if (match) return `Osiągnięto limit wyszukiwań — wznowienie o ${match[1]}`;
+    match = text.match(/^Search resumes in (.+)$/);
+    if (match) return `Wznowienie wyszukiwania za ${match[1]}`;
     return text;
   }
   function translateNode(node) {
@@ -182,7 +209,7 @@ LOCALIZATION_SCRIPT = r"""
     box.querySelectorAll('button').forEach(b => b.addEventListener('click', () => { localStorage.setItem(KEY, b.dataset.lang); apply(); window.dispatchEvent(new Event('ikw-language-changed')); if (window.parent !== window) window.parent.postMessage({type: 'ikw-language-changed'}, window.location.origin); }));
     target.appendChild(box); apply();
   }
-  window.ikwI18n = { apply, installSwitcher, t, lang };
+  window.ikwI18n = { apply, installSwitcher, t, lang, places };
   window.addEventListener('ikw-language-changed', apply);
   document.addEventListener('DOMContentLoaded', () => {
     apply();
