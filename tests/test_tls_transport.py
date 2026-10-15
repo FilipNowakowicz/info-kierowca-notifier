@@ -40,6 +40,7 @@ class _LocalTLSServer:
         )
         self.server = HTTPServer(("127.0.0.1", 0), _OKHandler)
         server_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        server_context.minimum_version = ssl.TLSVersion.TLSv1_2
         server_context.load_cert_chain(cert, key)
         self.server.socket = server_context.wrap_socket(self.server.socket, server_side=True)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
