@@ -310,6 +310,8 @@ def build_config(payload):
             raise ValueError("Earliest acceptable exam date must be at least 2 days from today")
         if parsed_search_start > maximum:
             raise ValueError("Earliest acceptable exam date must be within the next 6 months")
+        if parsed_search_start >= parsed_current_slot:
+            raise ValueError("Earliest acceptable exam date must be before the current booking date")
     else:
         search_start = ""
 

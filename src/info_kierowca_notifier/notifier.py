@@ -51,7 +51,7 @@ SEARCH_ORG_ID_COUNT = 5
 # MIN is a hard floor, not a UI default — a deliberate good-citizen limit on an
 # undocumented API; don't lower it without an explicit request. MAX is a sanity
 # cap so "watching" doesn't become effectively "not watching".
-DEFAULT_POLL_INTERVAL_SECONDS = 60
+DEFAULT_POLL_INTERVAL_SECONDS = 420
 MIN_POLL_INTERVAL_SECONDS = 15
 MAX_POLL_INTERVAL_SECONDS = 1800
 
@@ -76,6 +76,7 @@ PZ_PROACTIVE_RELOGIN_LEAD_SECONDS = 5 * 60
 RATE_LIMIT_MAX_SEARCHES = 10
 RATE_LIMIT_WINDOW_SECONDS = 60 * 60
 RATE_LIMIT_SAFETY_SECONDS = 5
+PAUSE_RECHECK_SECONDS = 5
 
 
 
@@ -836,6 +837,24 @@ def run_check(logger, dash_status):
     if rate_limit_until:
         dash_status["rate_limit_until"] = None
 
+    # Stay under the portal's quota instead of discovering it through a 429:
+    # going over has been reported to earn a ban of several hours, far longer
+    # than the 429's own reset. A rolling window over our own accepted
+    # searches is never more permissive than the portal's fixed hourly one.
+    recent_searches = _successful_search_times(dash_status, now_ts)
+    if len(recent_searches) >= RATE_LIMIT_MAX_SEARCHES:
+        resume_at = recent_searches[0] + RATE_LIMIT_WINDOW_SECONDS + RATE_LIMIT_SAFETY_SECONDS
+        if dash_status.get("outcome") in ("slot_found", "no_slot"):
+            dash_status["rate_limit_previous_outcome"] = dash_status.get("outcome")
+        update_status(dash_status, "rate_limited", "Search rate limit reached")
+        dash_status["rate_limit_until"] = resume_at
+        save_status(dash_status)
+        logger.info(
+            "outcome=rate_limited stage=search detail=local_quota resume_at=%s",
+            datetime.fromtimestamp(resume_at).isoformat(),
+        )
+        return
+
     now = datetime.now()
     search_mode = config.get("search_mode", "multi")
 
@@ -952,6 +971,12 @@ def run_check(logger, dash_status):
         "outcome=search_rate_limit status=200 limit=%r remaining=%r reset=%r retry_after=%r",
         limit, remaining, reset, retry_after,
     )
+    # The server says this was the last allowed search: hold off until its
+    # reset rather than spending the next poll on a guaranteed 429.
+    if str(remaining).strip() == "0":
+        server_reset = _parse_rate_limit_reset(search_headers)
+        if server_reset and server_reset > time.time():
+            dash_status["rate_limit_until"] = server_reset + RATE_LIMIT_SAFETY_SECONDS
 
     try:
         results = json.loads(body)
@@ -1262,7 +1287,10 @@ def loop(logger, dash_status, interval=None, stop_event=None, wake_event=None):
                 if not is_paused():
                     # Resume raced with clear(); do not block.
                     continue
-                wake_event.wait()
+                # Bounded: the app's Resume sets wake_event, but the standalone
+                # --loop has nothing that would, so re-check the pause file
+                # periodically rather than block forever.
+                wake_event.wait(PAUSE_RECHECK_SECONDS)
                 if stop_event.is_set():
                     break
                 if is_paused():

@@ -897,9 +897,9 @@ WIZARD_PAGE = """<!doctype html>
       <!-- Steps must stay within notifier.MIN_POLL_INTERVAL_SECONDS/MAX_POLL_INTERVAL_SECONDS
            (see POLL_INTERVAL_STEPS below) - poll_interval_seconds is the hidden field actually
            submitted; the range input is just an index into that array. -->
-      <input type="range" id="poll_interval_slider" min="0" max="18" step="1" value="6">
-      <input type="hidden" id="poll_interval_seconds" value="60">
-      <div class="hint" style="margin-top:-0.35rem;">Checks land a little later than this at random each time (up to +15%), so requests don't all hit the site on one exact, predictable cadence. Faster than a minute means noticeably more requests against a site with no documented rate limits.</div>
+      <input type="range" id="poll_interval_slider" min="0" max="18" step="1" value="14">
+      <input type="hidden" id="poll_interval_seconds" value="420">
+      <div class="hint" style="margin-top:-0.35rem;">info-kierowca.pl allows about 10 searches per hour. Faster than every 6 minutes uses them up early in the hour; the app then waits for the limit to reset instead of going over it.</div>
 
       <div class="divider"></div>
 
@@ -1684,7 +1684,13 @@ let sdpView = new Date(earliestSearchStartDate.getFullYear(), earliestSearchStar
 let selectedSearchStartDate = null;
 
 function latestSearchStartDate() {
-  return latestAllowedSearchStartDate;
+  // A search that starts on/after the current booking can never find an
+  // earlier slot, so cap the picker at the day before it (app.build_config()
+  // enforces the same rule server-side).
+  if (!selectedDate) return latestAllowedSearchStartDate;
+  const dayBeforeBooking = new Date(selectedDate);
+  dayBeforeBooking.setDate(dayBeforeBooking.getDate() - 1);
+  return dayBeforeBooking < latestAllowedSearchStartDate ? dayBeforeBooking : latestAllowedSearchStartDate;
 }
 
 function clearSearchStart() {
@@ -1827,7 +1833,7 @@ if (EXISTING_CONFIG) {
   restoreSearchStartForMode();
   updateSearchStartBound();
 
-  setPollIntervalSeconds(EXISTING_CONFIG.poll_interval_seconds || 60);
+  setPollIntervalSeconds(EXISTING_CONFIG.poll_interval_seconds || 420);
   setTimeWindow(EXISTING_CONFIG.earliest_slot_hour, EXISTING_CONFIG.latest_slot_hour);
   setSwitch(phoneAlertsSwitch, EXISTING_CONFIG.phone_alerts !== false);
   setSwitch(phoneAlertsReloginSwitch, EXISTING_CONFIG.phone_alerts_relogin !== false);

@@ -349,7 +349,7 @@ def _print_abstention(result, seen):
     )
 
 
-def _poll_until_truthy(host, port, js, timeout=20, target=None):
+def _poll_until_truthy(host, port, js, timeout=20, target=None, strict=False):
     """Evaluate `js` in the page every 0.5s until it returns truthy or
     `timeout`s elapse. Shared body of every wait_*/wait_and_click below: this
     SPA renders content asynchronously after navigation or a prior click, so a
@@ -361,6 +361,14 @@ def _poll_until_truthy(host, port, js, timeout=20, target=None):
     read-only or idempotent-by-matching. The one click that is neither — the
     final confirm — deliberately does NOT use this function; see
     click_confirm_once().
+
+    strict=True is for the wizard clicks leading up to that final one. Every
+    step's "next" button and the final create button share the label
+    "Zapisz i przejdź dalej", so retrying a step-3 click whose CDP response was
+    lost (the click may well have run) could land on step 4 and create a
+    reservation even with auto-confirm off. In strict mode an exception means
+    "outcome unknown": stop and return False instead of retrying. Only a
+    returned not-clicked result is retried.
     """
     deadline = time.monotonic() + timeout
     reasons_seen = set()
@@ -372,8 +380,11 @@ def _poll_until_truthy(host, port, js, timeout=20, target=None):
                     _print_click_result(sanitize_click_diagnostics(result))
                 return True
             _print_abstention(result, reasons_seen)
-        except Exception:
-            pass
+        except Exception as exc:
+            if strict:
+                print(f"Click result unknown ({type(exc).__name__}) — not retrying; "
+                      "finish this step yourself.")
+                return False
         time.sleep(0.5)
     return False
 
@@ -384,7 +395,8 @@ def wait_and_select_slot(host, port, exam_label, time_str, date_str, center="",
     the matching slot row may not be in the DOM yet right after the date
     group is expanded."""
     return _poll_until_truthy(
-        host, port, select_slot_js(exam_label, time_str, date_str, center), timeout, target
+        host, port, select_slot_js(exam_label, time_str, date_str, center), timeout, target,
+        strict=True,
     )
 
 
@@ -421,11 +433,14 @@ def click_enabled_button_js(text):
 """ % json.dumps(text)
 
 
-def wait_and_click_enabled(host, port, text, timeout=20, target=None):
+def wait_and_click_enabled(host, port, text, timeout=20, target=None, strict=False):
     """Same polling shape as wait_and_click(), for click_enabled_button_js()
     instead — the target button needs a moment to go from disabled to
-    enabled after whatever step precedes it completes."""
-    return _poll_until_truthy(host, port, click_enabled_button_js(text), timeout, target)
+    enabled after whatever step precedes it completes. See
+    _poll_until_truthy() for strict."""
+    return _poll_until_truthy(
+        host, port, click_enabled_button_js(text), timeout, target, strict=strict
+    )
 
 
 # --- the one non-idempotent click in this project ---------------------------
@@ -1827,10 +1842,10 @@ def try_select_target_slot(host, port, target_slot_json, confirm=False, page_tar
     # the exact row structurally by date + exam type + time and clicks that row;
     # do not depend on mat-mdc-checkbox-NNN IDs.
     # Selecting a slot opens "Potwierdź wybrany egzamin".
-    if not wait_and_click_enabled(host, port, "Potwierdź i przejdź dalej", timeout=15, target=page_target):
+    if not wait_and_click_enabled(host, port, "Potwierdź i przejdź dalej", timeout=15, target=page_target, strict=True):
         print("Couldn't confirm the selected slot modal."); abandon(); return
     # Back on step 2, the chosen slot is checked; this advances to language.
-    if not wait_and_click_enabled(host, port, "Zapisz i przejdź dalej", timeout=15, target=page_target):
+    if not wait_and_click_enabled(host, port, "Zapisz i przejdź dalej", timeout=15, target=page_target, strict=True):
         print("Couldn't advance from the term step."); abandon(); return
     if not wait_for_page_text(host, port, "Wybór języka egzaminu", timeout=15, target=page_target):
         print("Language step did not appear."); abandon(); return
@@ -1839,7 +1854,7 @@ def try_select_target_slot(host, port, target_slot_json, confirm=False, page_tar
         host, port, "language", "Polish", timeout=8, target=page_target
     ):
         print("Couldn't select Polish on the language step."); abandon(); return
-    if not wait_and_click_enabled(host, port, "Zapisz i przejdź dalej", timeout=15, target=page_target):
+    if not wait_and_click_enabled(host, port, "Zapisz i przejdź dalej", timeout=15, target=page_target, strict=True):
         print("Couldn't advance from the language step."); abandon(); return
     if not summary_matches_target(host, port, target, page_target=page_target, timeout=20):
         print("Preliminary reservation summary did not match the intended slot — stopping.")

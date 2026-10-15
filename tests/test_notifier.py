@@ -111,8 +111,11 @@ class LoopWakeEventOrderingTests(unittest.TestCase):
                 stop_event.set()
 
         logger = logging.getLogger("test-info-kierowca-notifier-loop")
+        # is_paused() reads the real PAUSE_FILE; a developer machine with the
+        # app left paused would otherwise make this test wait forever.
         with mock.patch.object(notifier, "run_check", side_effect=fake_run_check), \
              mock.patch.object(notifier, "configured_poll_interval", return_value=0.3), \
+             mock.patch.object(notifier, "is_paused", return_value=False), \
              mock.patch.object(notifier, "save_status"):
             notifier.loop(logger, {}, stop_event=stop_event, wake_event=wake_event)
 
