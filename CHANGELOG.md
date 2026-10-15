@@ -5,6 +5,22 @@ All notable changes to **Info Kierowca Notifier** are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 
+## [2.5.0] - 2026-10-15
+First release from this repository since 2.3.1. Includes the 2.4.x work by @dragon791 (#95, merged via #96; details in the 2.4.x entries below). Highlights and follow-up fixes:
+
+### Fixed
+- Session handling: the `__Host-Http-PUDO-DeviceId` cookie is now captured and sent, and a proactive relogin no longer continues with the old session (#92).
+- Auto-select can no longer create a reservation by accident: wizard clicks before the final one are not retried after a lost browser response, since steps 2–4 share the "Zapisz i przejdź dalej" label.
+- Restored the rule that the earliest acceptable exam date must be before the current booking.
+- A paused standalone `--loop` resumes when the pause file is removed instead of waiting forever.
+- Fixed the malformed User-Agent string.
+
+### Changed
+- Searching now stops before the site's ~10 searches/hour limit (from local search history and `x-ratelimit-remaining`), not only after a 429.
+- Default check interval is now 7 minutes (was 60 seconds); the systemd timer runs every 7 minutes (was every minute).
+- Auto-confirm's toggle and confirmation dialog state that the existing booking is not cancelled.
+- README, ADVANCED.md and CLAUDE.md updated for the reservation flow, search modes and rate limit.
+
 ## [2.4.6] - 2026-10-11
 - Settings: changing the polling interval now resets the local countdown to the full new value even while paused; saving unrelated settings preserves the current countdown.
 
