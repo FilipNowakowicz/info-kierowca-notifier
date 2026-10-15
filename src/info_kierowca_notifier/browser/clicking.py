@@ -79,11 +79,17 @@ function __ikw_hasExcludedStructure(el) {
   var cur = el;
   for (var i = 0; i < 8 && cur; i++, cur = cur.parentElement) {
     var tag = (cur.tagName || '').toLowerCase();
-    var identity = ((cur.id || '') + ' ' + (cur.className || '') + ' ' +
-      (cur.getAttribute('role') || '') + ' ' + (cur.getAttribute('aria-label') || '')).toLowerCase();
+    if (tag.indexOf('expansion') !== -1) continue;
+    var className = String(cur.className || '').toLowerCase();
+    if (className.indexOf('day__') !== -1 || className.indexOf('exam__') !== -1) continue;
+
     if (tag === 'header' || tag === 'footer' || tag === 'nav' || tag === 'app-logo' ||
-        tag === 'app-wk-footer' || tag === 'app-wk-language-switcher' ||
-        /(^|[ _-])(logo|footer|header|navigation|nav|language|lang|go-back|back|help|policy|terms)([ _-]|$)/.test(identity)) {
+        tag === 'app-wk-footer' || tag === 'app-wk-language-switcher') {
+      return true;
+    }
+    var identity = ((cur.id || '') + ' ' + className + ' ' +
+      (cur.getAttribute('role') || '') + ' ' + (cur.getAttribute('aria-label') || '')).toLowerCase();
+    if (/(^|[ _-])(logo|footer|header|navigation|nav|language|lang|go-back|back|help|policy|terms)([ _-]|$)/.test(identity)) {
       return true;
     }
   }
