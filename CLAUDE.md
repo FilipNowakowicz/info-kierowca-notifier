@@ -1,9 +1,10 @@
 # info-kierowca-notifier
 
-Slot checker for info-kierowca.pl (Polish driving exam booking). Polls two endpoints on a timer;
-on a matching hit it can also open a pre-authenticated browser and click through to the reschedule
-date-picker for your existing booking, but stops there — picking the new date and every confirm
-step past that is always a real click from you (see `src/info_kierowca_notifier/booking/reschedule.py`). Runtime HTTPS
+Slot checker for info-kierowca.pl (Polish driving exam booking). Polls the session-refresh endpoint
+plus one search endpoint (multi- or single-center) on a timer; on a matching hit it can also open a
+pre-authenticated browser on the site's `/reservation` wizard for the winning center. By default it
+stops on the available-exams list; selecting the slot and creating the reservation are separate
+opt-ins (see `src/info_kierowca_notifier/booking/reservation.py`). Runtime HTTPS
 trust uses `truststore` (Python 3.10+) and `certifi`; source runs install these from
 `pyproject.toml` with `uv sync`, while release binaries bundle both.
 
@@ -70,15 +71,29 @@ automation. Regenerate the static snapshots with `tools/fetch_word_centers.py` /
     instead of asking blind. Also returns `pesel`/`firstName`/`lastName`/`birthDate`, which are
     dropped — only `pkkNumber`/`categoryName` are kept, matching this project's minimal-footprint
     PII stance. Returns `[]` on any failure, so a fetch hiccup just falls back to manual entry.
+  - Two search modes (`config["search_mode"]`, wizard toggle, added in v2.4): `multi` posts to
+    `MultipleCentersExams` (the 5-id padding rule below) and `single` posts to `OneCenterExam` for
+    exactly one center, which reaches much further ahead. `search_start_date` must be 2 days to 6
+    months out **and** before `current_slot_date` (a later start could never find an earlier slot);
+    there is no 31-day cap any more.
   - Poll interval is `config.json`'s `poll_interval_seconds` (set via `src/info_kierowca_notifier/app.py`'s Settings),
     re-read fresh every cycle by `configured_poll_interval()` and clamped to
     `[MIN_POLL_INTERVAL_SECONDS, MAX_POLL_INTERVAL_SECONDS]` = `[15, 1800]` — the 15s floor is a
-    deliberate good-citizen limit, lowered from 60s by explicit user request. `loop()`'s `interval`
-    arg (from `--interval`/`src/info_kierowca_notifier/app.py`'s `INTERVAL`) is only the fallback for before `config.json` has
-    a `poll_interval_seconds` yet. Every wait also goes through `jittered_wait()`, which adds up to
-    `POLL_JITTER_FRACTION` (15%) extra delay — never subtracted, so the effective cadence never
-    beats what's configured — expressed as a fraction of the interval so the randomness scales with
-    whatever's picked.
+    deliberate good-citizen limit, lowered from 60s by explicit user request. The default is 420s.
+    `loop()`'s `interval` arg (from `--interval`/`src/info_kierowca_notifier/app.py`'s `INTERVAL`)
+    is only the fallback for before `config.json` has a `poll_interval_seconds` yet. There is no
+    jitter any more (removed in v2.4 for a predictable countdown).
+  - **Search rate limit** (reported by users 2026-09, confirmed by the site's `x-ratelimit-*`
+    headers): about 10 searches per hour, and going over has been reported to earn a multi-hour
+    ban. `run_check()` therefore refuses to search once `successful_search_times` (persisted in
+    `status.json`) holds `RATE_LIMIT_MAX_SEARCHES` within the last hour, and also holds off until
+    `x-ratelimit-reset` after a 200 reporting `x-ratelimit-remaining: 0` — both set
+    `rate_limit_until`, which `loop()` waits out as an absolute wall-clock deadline (it keeps
+    elapsing while paused). A 429 is handled the same way, from `Retry-After`/`x-ratelimit-reset`.
+  - Pause is still the `PAUSE_FILE` flag, but `loop()` now freezes the remaining countdown on
+    Pause and resumes from it. While paused it waits on `wake_event` (set by the app's Resume) with
+    a `PAUSE_RECHECK_SECONDS` timeout — the standalone `--loop` has no Resume handler, so an
+    unbounded wait there would never notice the file being removed.
   - `run_check()`'s hit-building loop also filters on hour-of-day:
     `config["earliest_slot_hour"]`/`["latest_slot_hour"]` (wizard's dual-handle time slider, 0-24,
     upper bound exclusive against `dt.hour`) are checked alongside the existing `wanted_types`/
@@ -86,10 +101,9 @@ automation. Regenerate the static snapshots with `tools/fetch_word_centers.py` /
     all — no push, no `trigger_open_browser()`, nothing in `status.json`'s history either. Both
     keys default to `0`/`24` (the full day) via `config.get(...)` when absent, so a config
     predating this feature filters nothing, same as always.
-  - `loop()` computes the exact post-jitter wait once per cycle and writes it forward as
-    `dash_status["next_check_at"]` (an absolute timestamp) before sleeping — this is what both
-    dashboards' next-check countdown reads instead of re-deriving an estimate from the base
-    interval, so the countdown shown is the *exact* resolved time, jitter included.
+  - `loop()` writes the exact next-check time forward as `dash_status["next_check_at"]` (an
+    absolute timestamp) before sleeping — this is what both dashboards' next-check countdown reads
+    instead of re-deriving an estimate from the base interval.
   - `loop()` also takes a `wake_event` — `src/info_kierowca_notifier/app.py`'s `/setup` handler sets it right after saving a
     new `poll_interval_seconds` so the loop's current sleep (which could otherwise be up to the
     *old* interval long) is cut short immediately: the loop wakes, clears the event, re-checks, and
@@ -110,10 +124,10 @@ automation. Regenerate the static snapshots with `tools/fetch_word_centers.py` /
   otherwise be rewritten every cycle and re-parsed by the page every 5s. Entries written before
   that narrowing still carry `hits`; the page reads `entry.fastest || fastestOf(entry.hits)`, so
   don't drop that fallback while anyone's `status.json` predates it. The next-check countdown reads
-  `status.json`'s `next_check_at` directly (jitter already baked in — see `src/info_kierowca_notifier/notifier.py` above):
+  `status.json`'s `next_check_at` directly (see `src/info_kierowca_notifier/notifier.py` above):
   `poll()` parses it into a page-level epoch-ms value, and `tickCountdown()` just diffs that against
   `Date.now()` every second — no client-side interval constant involved, so the display can't drift
-  out of sync with a Settings-page interval change or the actual post-jitter wait.
+  out of sync with a Settings-page interval change or a rate-limit wait.
   `#session-expiry`'s text comes from `status.json`'s `session_expires_estimate`, which
   `src/info_kierowca_notifier/notifier.py`'s `run_check()` only sets for `login_method: "mobywatel"`
   — that session ends in a manual QR rescan, so a countdown is a genuine heads-up; a Profil Zaufany
@@ -410,7 +424,23 @@ automation. Regenerate the static snapshots with `tools/fetch_word_centers.py` /
     verification for the rest of the budget, reporting UNKNOWN for a reschedule that actually
     succeeded. Only `cdp.TargetNotFoundError`/`StaleTargetError` (a target genuinely gone) stop
     retrying now; transient errors cost one attempt and are recorded as `verification_attempt_failed`.
-- `src/info_kierowca_notifier/booking/reschedule.py` — launches Chrome in its own dedicated profile (port `9555`, distinct
+- `src/info_kierowca_notifier/booking/reservation.py` — **what `booking.launch` runs since v2.4.**
+  The site replaced the `/cases` "Zmień termin" (change date) flow below with a `/reservation`
+  wizard, so this module drives that instead: step 1 picks single-WORD mode, the winning hit's
+  center and the PKK profile; step 2 lists that center's exams. With only `auto_open_browser` it
+  stops there with the target date expanded. `auto_select_slot` (`--auto-select-slot`) selects the
+  exact slot, passes the language step and stops on "Podsumowanie wstępnej rezerwacji", verified
+  against date/time/type/center. `auto_confirm_reschedule` (`--confirm-reschedule`) then clicks
+  step 4's "Zapisz i przejdź dalej" once via `click_confirm_once()`, which makes the portal itself
+  POST `Reservations/create` — **a new reservation; the existing booking is not cancelled**, and
+  the browser is left open for any confirmation/payment. Steps 2, 3 and 4 share that button label,
+  so every click before the final one goes through `_poll_until_truthy(..., strict=True)`: a CDP
+  exception means "outcome unknown" and the flow stops instead of retrying, because a retried
+  step-3 click could land on step 4. Developed and live-tested by a contributor (dragon791,
+  2026-10); the maintainer can no longer test against the site.
+- `src/info_kierowca_notifier/booking/reschedule.py` — **no longer called** (kept with its tests,
+  since its matching logic is still covered there); the notes below describe the pre-v2.4 `/cases`
+  flow. Launches Chrome in its own dedicated profile (port `9555`, distinct
   from `src/info_kierowca_notifier/auth/session.py`'s and from a regular browsing profile) and injects the cookies
   already saved in `session.json` via `cdp_client.set_cookies()` before navigating to `/cases`, so
   it opens already authenticated. `set_cookies()` deliberately sets `httpOnly: False` — confirmed
@@ -935,8 +965,13 @@ isolation, set `auto_refresh_chrome: false` in the sandboxed `config.json` first
 
 ## Constraints to respect when changing this code
 
-- Polling/checking stays strictly read-only. The one deliberate exception is
-  `src/info_kierowca_notifier/booking/reschedule.py`'s reschedule assist. By explicit user request, the policy ceiling was
+- Polling/checking stays strictly read-only. The one deliberate exception is the booking assist,
+  now `src/info_kierowca_notifier/booking/reservation.py` (see its bullet above). Its ceiling, by
+  explicit user sign-off on 2026-10-15: `auto_confirm_reschedule` may click the `/reservation`
+  wizard's final "Zapisz i przejdź dalej" once, creating a new reservation; nothing past that
+  click (confirmation, payment, cancelling the old booking) is automated. The paragraph below
+  describes the same ceiling for the retired `reschedule.py` flow.
+  Historically, `src/info_kierowca_notifier/booking/reschedule.py`'s reschedule assist. By explicit user request, the policy ceiling was
   raised to allow fuller automation in future. By default the build still stops
   at the date-range picker: it clicks only "Zmień termin" and "Zmień termin rezerwacji" and lands on
   the empty "Wybierz datę początkową dla nowego terminu" screen with nothing selected. Picking the

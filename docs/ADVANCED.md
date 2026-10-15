@@ -94,16 +94,13 @@ extra setup.
    | `ntfy_topic` | Your [ntfy.sh](https://ntfy.sh) topic for phone push (pick a long random string — anyone who knows it can read your notifications) |
    | `current_slot_date` | Date (`"YYYY-MM-DD"`) of your current booked slot. A found slot beats this (turns the dashboard red, and — when `phone_alerts` is on — sends a phone push) only if it's on a strictly earlier date; a different time on the same date doesn't count on its own (see `notifier.is_urgent()`). |
    | `search_start_date` *(optional)* | Earliest acceptable available exam date (`"YYYY-MM-DD"`). Leave it blank (or omit it in an older config) to search from today. This lower bound is separate from `current_slot_date`; slots before it are ignored even if the API returns them. It must fall within the site's 31-day search horizon. |
-   | `poll_interval_seconds` *(optional, default `60`)* | Seconds between checks, clamped to 15–1800. Lower is more responsive but hits an undocumented API harder — 15s is a deliberate floor. Set with the dashboard Settings slider, or by hand. |
+   | `poll_interval_seconds` *(optional, default `420`)* | Seconds between checks, clamped to 15–1800. info-kierowca.pl allows about 10 searches per hour; faster settings use them up early and the app then waits for the limit to reset rather than going over it. Set with the dashboard Settings slider, or by hand. |
    | `earliest_slot_hour` / `latest_slot_hour` *(optional, default `0` / `24`)* | Preferred time-of-day window in whole hours, `latest` exclusive. A slot outside `[earliest, latest)` is ignored entirely — no push, no dashboard entry, nothing in history. Defaults span the whole day. Set with the dashboard's dual-handle time slider. |
    | `phone_alerts` *(optional, default `true`)* | Whether a slot that beats your booked date sends a phone push at all. Set to `false` to just watch the dashboard silently; the dashboard's red/gray colouring and `auto_open_browser` still work. |
    | `phone_alerts_relogin` *(optional, default `true`)* | Whether login recovery may send a phone push. With mObywatel this asks for a QR scan; with Profil Zaufany it reports an automatic-login failure that needs attention. Independent of slot-alert pushes. |
    | `auto_refresh_chrome` *(optional, app-managed as `true`)* | Whether an `auth_expired` outcome should automatically launch `src/info_kierowca_notifier/auth/session.py` (see below). The app keeps this enabled: mObywatel reopens the QR screen, while Profil Zaufany logs in automatically. Advanced headless setups may set it to `false` directly to require manual relogin. |
    | `headless_pz_login` *(optional, default `false`)* | Run automatic Profil Zaufany relogin in headless Chrome so no window appears. Google Messages Web must first be paired in the dedicated profile. This does not apply to the mObywatel QR flow. |
-   | `auto_open_browser` *(optional, default `true`)* | Whether a found slot that beats your booked date should also launch `src/info_kierowca_notifier/booking/reschedule.py` (see [Reschedule assist](#reschedule-assist) below). Set to `false` to disable. |
-
-   Slots are only ever considered within 31 days out — that's a hard line on info-kierowca.pl
-   itself, not something this project can (or needs to) make configurable.
+   | `auto_open_browser` *(optional, default `true`)* | Whether a found slot that beats your booked date should also launch `src/info_kierowca_notifier/booking/reservation.py` (see [Reservation assist](#reservation-assist) below). Set to `false` to disable. |
 
 5. Run it — pick whichever fits your OS:
 
@@ -124,7 +121,7 @@ extra setup.
    ```
    Leave this running in a terminal, or set your OS to start it in the background for you (e.g. a
    Windows Task Scheduler task running at log-on, or a macOS `launchd` agent). It checks on
-   `config.json`'s `poll_interval_seconds` (default 60s, clamped to 15–1800), re-read fresh each
+   `config.json`'s `poll_interval_seconds` (default 420s, clamped to 15–1800), re-read fresh each
    cycle; `--interval` only sets the fallback used before that key exists.
 
    **Option C — systemd user units (Linux only, recommended if available: survives reboots and

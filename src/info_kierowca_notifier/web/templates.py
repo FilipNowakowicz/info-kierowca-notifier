@@ -923,7 +923,7 @@ WIZARD_PAGE = """<!doctype html>
       <div class="toggle-row" id="auto-confirm-row">
         <div class="toggle-text">
           <div class="tt-title" style="color:#d98c8c;">Auto-confirm the reservation</div>
-          <div class="tt-sub">Requires the toggle above. After verifying the preliminary summary, creates the reservation and leaves the browser open for any required confirmation/payment. This action cannot be undone by simply closing the browser.</div>
+          <div class="tt-sub">Requires the toggle above. After verifying the preliminary summary, creates the reservation and leaves the browser open for any required confirmation/payment. This action cannot be undone by simply closing the browser. Your existing booking is not cancelled — you may need to cancel it yourself on info-kierowca.pl.</div>
         </div>
         <div class="switch" id="auto_confirm_reschedule" role="switch" aria-checked="false" tabindex="0"></div>
       </div>
@@ -1325,7 +1325,8 @@ function toggleAutoConfirm() {
   if (turningOn && !confirm(t(
     "After the matching slot is selected and the preliminary summary is verified, the app will "
     + "submit a real reservation through the portal. The portal may then require confirmation or "
-    + "payment. Closing the browser does not undo a submitted reservation. Are you sure?"
+    + "payment. Closing the browser does not undo a submitted reservation. Your existing booking is "
+    + "not cancelled — you may need to cancel it yourself on info-kierowca.pl. Are you sure?"
   ))) return;
   setSwitch(autoConfirmSwitch, turningOn);
 }
