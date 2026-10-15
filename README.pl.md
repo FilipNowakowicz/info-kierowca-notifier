@@ -29,7 +29,13 @@ panelu oraz na telefonie. Możesz samodzielnie wybrać termin w otwartej przegl�
 
 [Wszystkie wydania i informacje o zmianach](../../releases)
 
-![Panel z wolnym terminem](docs/dashboard.png)
+---
+
+<p align="center">
+  <img src="docs/dashboard.png" alt="Panel z wolnym terminem" width="760">
+  <br>
+  <em>Panel po znalezieniu wcześniejszego terminu</em>
+</p>
 
 ## Szybki start
 

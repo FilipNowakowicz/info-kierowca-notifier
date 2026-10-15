@@ -15,7 +15,7 @@ odnawianie sesji odbywają się automatycznie.
 Find earlier Polish driving exam dates and quickly open or automate the reservation flow on
 [info-kierowca.pl](https://info-kierowca.pl). Sign in once with Profil Zaufany, and the app keeps
 your session active, monitors your chosen exam centers, and alerts you on the dashboard and your
-phone when a suitable slot appears. If you already have a booked exam, its date can be used as the comparison point. When a better slot appears, you can choose it yourself or let the optional automation select it, verify the preliminary summary, and create the reservation through the portal.
+phone when a suitable slot appears. Slots earlier than your current booking count as better. When one appears, you can choose it yourself or let the optional automation select it, verify the preliminary summary, and create the reservation through the portal.
 
 ## Features
 
@@ -34,7 +34,13 @@ phone when a suitable slot appears. If you already have a booked exam, its date 
 
 [View all releases and release notes](../../releases)
 
-![Dashboard showing a found slot](docs/dashboard.png)
+---
+
+<p align="center">
+  <img src="docs/dashboard.png" alt="Dashboard showing a found slot" width="760">
+  <br>
+  <em>The dashboard when an earlier slot is found</em>
+</p>
 
 ## Get started
 
