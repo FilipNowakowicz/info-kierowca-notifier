@@ -1,17 +1,5 @@
 # Contributing
 
-**Po polsku:** Zgłoszenia i pull requesty są mile widziane, po polsku lub po angielsku.
-Zdałem już egzaminy i **nie mam dostępu do info-kierowca.pl**, więc nie mogę samodzielnie
-przetestować zmian na prawdziwej stronie. Przetestuj swoją zmianę na żywo i opisz w PR, co
-dokładnie sprawdziłeś (metoda logowania, system, który proces, co się stało). Wysyłaj małe PR-y
-dotyczące jednej rzeczy i zaznacz „Allow edits by maintainers”. Testy
-(`uv run python -m unittest discover -s tests -v`) i pyflakes muszą przechodzić, a każdy nowy
-tekst w interfejsie potrzebuje polskiego tłumaczenia w `web/localization.py`. Nie obniżaj limitu
-częstotliwości sprawdzania (strona pozwala na ok. 10 wyszukiwań na godzinę), automatyczna
-rezerwacja musi pozostać domyślnie wyłączona i przerywać działanie, gdy nie ma pewności, a
-pliki cookie sesji i numer PKK nie mogą trafiać nigdzie poza info-kierowca.pl. Zgłaszając błąd,
-usuń z logów dane osobowe (numer PKK, imię i nazwisko, PESEL, cookies, numer telefonu, temat ntfy).
-
 Thanks for helping out! Issues and pull requests are welcome, in English or Polish.
 
 ## Project status — please read first
@@ -26,8 +14,6 @@ reproduce bugs or test changes against the live site myself. That means:
 
 ## Pull requests
 
-- **Keep each PR focused on one thing.** A bug fix, a feature, or a refactor — not all three.
-  Small PRs get reviewed and merged quickly; a release-sized PR is very hard to review safely.
 - **Tick "Allow edits by maintainers"** when opening the PR, so I can push small fixes directly
   instead of asking you for another round trip.
 - Don't bump the version or edit `CHANGELOG`-style release notes in a PR — that happens at release.

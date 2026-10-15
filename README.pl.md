@@ -93,9 +93,9 @@ Chcesz uruchomić program ze źródeł, używać go w Linuksie z systemd lub poz
 
 ## Współpraca
 
-Zgłoszenia i PR-y są mile widziane. To małe narzędzie o jednym celu, dlatego prosimy o skupione zmiany.
+Zgłoszenia i PR-y są mile widziane.
 Nie mam już dostępu do info-kierowca.pl, więc zmiany musi przetestować na żywej stronie ich autor.
-Konfiguracja i zasady: [CONTRIBUTING.md](CONTRIBUTING.md) (z podsumowaniem po polsku).
+Konfiguracja i zasady: [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Licencja
 
