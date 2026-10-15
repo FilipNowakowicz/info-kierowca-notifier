@@ -14,6 +14,7 @@ First release from this repository since 2.3.1. Includes the 2.4.x work by @drag
 - Restored the rule that the earliest acceptable exam date must be before the current booking.
 - A paused standalone `--loop` resumes when the pause file is removed instead of waiting forever.
 - Fixed the malformed User-Agent string.
+- Network timeouts and dropped connections now count as "offline, will retry" instead of crashing a check; the request timeout is 25s (was 15s). Thanks @n1ghtmare13.
 
 ### Changed
 - Searching now stops before the site's ~10 searches/hour limit (from local search history and `x-ratelimit-remaining`), not only after a 429.

@@ -1,4 +1,7 @@
+import io
 import unittest
+import urllib.error
+from unittest import mock
 
 from info_kierowca_notifier import client
 
@@ -85,6 +88,39 @@ class CookieOriginScopeTests(unittest.TestCase):
         session = {"cookies": {}}
         client.parse_set_cookies(Headers(["session=value; Path=/"]), session)
         self.assertEqual(session["cookies"], {"session": "value"})
+
+
+class DoRequestNetworkErrorTests(unittest.TestCase):
+    """A slow or dropped response must surface as status None (the quiet
+    network_error outcome), not escape as an exception that crashes a check."""
+
+    def request_with(self, urlopen):
+        with mock.patch.object(client.tls_transport, "urlopen", side_effect=urlopen):
+            return client.do_request("https://info-kierowca.pl/x", {"cookies": {}})
+
+    def test_timeout_waiting_for_the_response_is_a_network_error(self):
+        status, body, headers = self.request_with(TimeoutError("timed out"))
+        self.assertIsNone(status)
+        self.assertEqual(body, b"timed out")
+        self.assertIsNone(headers)
+
+    def test_timeout_while_reading_the_body_is_a_network_error(self):
+        response = mock.MagicMock()
+        response.__enter__.return_value.read.side_effect = TimeoutError("read timed out")
+        status, _body, _headers = self.request_with(lambda *_a, **_k: response)
+        self.assertIsNone(status)
+
+    def test_dropped_connection_is_a_network_error(self):
+        status, _body, _headers = self.request_with(ConnectionResetError("reset by peer"))
+        self.assertIsNone(status)
+
+    def test_http_errors_still_return_their_status(self):
+        error = urllib.error.HTTPError(
+            "https://info-kierowca.pl/x", 429, "Too Many Requests", {}, io.BytesIO(b"slow down")
+        )
+        status, body, _headers = self.request_with(error)
+        self.assertEqual(status, 429)
+        self.assertEqual(body, b"slow down")
 
 
 if __name__ == "__main__":
