@@ -32,7 +32,7 @@ uv run python -m unittest discover -s tests -v   # tests
 uv run python -m pyflakes src tools tests        # lint
 ```
 
-Both the tests and pyflakes must pass — CI runs them on Python 3.9, 3.11 and 3.13.
+Both the tests and pyflakes must pass — CI runs them on Python 3.10, 3.11 and 3.13.
 
 Runtime code lives in `src/info_kierowca_notifier/`, manual maintenance scripts in `tools/`, and
 tests in the flat `tests/` directory. `docs/ADVANCED.md` explains running from source, systemd,
